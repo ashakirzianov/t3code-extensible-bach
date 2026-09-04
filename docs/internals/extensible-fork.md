@@ -28,8 +28,8 @@ fork's operational half and does not restate it.
   history permanently; rebasing rewrites merge bases and turns the next uptake into a
   conflict storm. Frequent small merges beat rare large ones — design §8 leans on frequent
   uptakes to keep the fork's migration set close to upstream's.
-- Fixes that are genuinely upstream's problem (the home lock, the migration guard) go
-  upstream as small standalone PRs, not as fork-only carry.
+- Fixes that are genuinely upstream's problem (the migration guard) go upstream as small
+  standalone PRs, not as fork-only carry.
 
 ## Where fork code lives
 
@@ -46,9 +46,13 @@ churn on the host side so extensions only ever see the protocol. Fill this table
 seam lands — one row per file, so an uptake conflict is a lookup rather than an
 investigation.
 
-| Host file                               | What the fork changes | Why it cannot live in `extensions/` |
-| --------------------------------------- | --------------------- | ----------------------------------- |
-| _(empty — the seam has not landed yet)_ |                       |                                     |
+| Host file                                      | What the fork changes                                                                                                                               | Why it cannot live in `extensions/`                                                                                                           |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/server/src/persistence/Migrations.ts`    | Guard in `runMigrations` refusing a database migrated past `latestKnownMigrationId`, plus a `databasePath` option so the refusal can name the home. | The check has to run inside the one function every on-disk open already passes through, before the migrator concludes there is nothing to do. |
+| `apps/server/src/persistence/Layers/Sqlite.ts` | `setup` takes migration options, so `makeSqlitePersistenceLive` can pass the database path down to the guard.                                       | The path is only known where the on-disk layer is built; the in-memory layer has no home to name.                                             |
+
+The migration guard is a candidate to send upstream (see the spike note), which
+would retire both rows from this table.
 
 ## Never touch
 
@@ -73,8 +77,9 @@ a fix belongs without implementing it.
   single-instance lock does not substitute for one: it is scoped to Electron's `userData`,
   not the T3 home (and on macOS is never requested). The desktop backend port scan
   (`apps/desktop/src/app/DesktopApp.ts:71-104`) then lets a second app take the next free
-  port and open the same home. The lock belongs in `makeSqlitePersistenceLive`
-  (`apps/server/src/persistence/Layers/Sqlite.ts:43-61`).
+  port and open the same home. The note records where a lock would belong
+  (`makeSqlitePersistenceLive`, `apps/server/src/persistence/Layers/Sqlite.ts:43-61`); the
+  fork is not building one, and relies on the switching guidance below instead.
 - [MCP client behaviour](extensions/spikes/mcp-client-behaviour.md) — `tools/list_changed` is
   **undeliverable** (the MCP transport is POST-only) and Claude Code caches tools and resources
   at connect, so a new tool reaches an agent only when its provider process restarts; handler
@@ -92,8 +97,8 @@ a fix belongs without implementing it.
 Four knobs, three of which change (design §8):
 
 - **T3 home: shared** with upstream (`~/.t3`), so switching over does not lose data. Safe
-  only as long as the fork adds no migrations to the host database, and only once the two
-  guards above exist.
+  only as long as the fork adds no migrations to the host database, and only with the
+  migration guard above in place. The two-servers-one-home hazard is not fixed — see below.
 - **App id: the fork's own**, in the desktop build script and the runtime app-user-model id.
   Drives Launch Services identity, notification attribution, Windows taskbar grouping, the
   Linux desktop entry, and the Electron support-directory name.
@@ -104,7 +109,8 @@ Four knobs, three of which change (design §8):
   scheme race while both apps are installed — whichever launched last owns it — which loses
   nothing beyond a sign-in that completes in the wrong app.
 
-Until the home lock ships, the guidance for anyone switching is: **uninstall upstream after
+No home lock exists anywhere — upstream has none, and the fork is not adding one — so the
+guidance for anyone switching is standing rather than interim: **uninstall upstream after
 moving over.** That removes both the scheme race and the two-servers-one-home hazard.
 
 ## Running the fork

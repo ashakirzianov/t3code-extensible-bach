@@ -10,6 +10,8 @@
 
 import * as Migrator from "effect/unstable/sql/Migrator";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 // Import all migrations statically
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
@@ -122,6 +124,54 @@ export const migrationEntries = [
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
 
+/** Highest migration id this build knows about. */
+export const latestKnownMigrationId = migrationEntries.reduce((max, [id]) => Math.max(max, id), 0);
+
+/**
+ * Raised when a home has been migrated past what this build understands, which
+ * happens when a newer T3 Code (upstream, or a newer fork) opened it first.
+ */
+export class DatabaseMigratedAheadError extends Schema.TaggedErrorClass<DatabaseMigratedAheadError>()(
+  "DatabaseMigratedAheadError",
+  {
+    storedMigrationId: Schema.Int,
+    knownMigrationId: Schema.Int,
+    databasePath: Schema.optional(Schema.String),
+  },
+) {
+  override get message(): string {
+    const target = this.databasePath ?? "this T3 Code database";
+    return (
+      `This T3 Code build cannot open ${target}: the database has been migrated to schema ` +
+      `${this.storedMigrationId} by a newer version, and this build only knows up to ` +
+      `${this.knownMigrationId}. Update T3 Code, or point this build at a different data ` +
+      `directory with --home-dir.`
+    );
+  }
+}
+
+/**
+ * Highest migration id recorded in the database, or 0 when the migrations table
+ * does not exist yet — a home no T3 Code has opened before. Mirrors the
+ * migrator's own `latestMigration` query so the two read the same number.
+ *
+ * The table is looked up before it is read rather than querying it and
+ * recovering from "no such table": a failed statement is worth surfacing here,
+ * and swallowing one would hide a genuinely unreadable database.
+ */
+const readStoredMigrationId = Effect.fn("readStoredMigrationId")(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const tables = yield* sql<{ readonly name: string }>`
+    SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'
+  `.withoutTransform;
+  if (tables.length === 0) return 0;
+
+  const rows = yield* sql<{ readonly migration_id: number }>`
+    SELECT migration_id FROM effect_sql_migrations ORDER BY migration_id DESC LIMIT 1
+  `.withoutTransform;
+  return rows[0]?.migration_id ?? 0;
+});
+
 export const makeMigrationLoader = (throughId?: number) =>
   Migrator.fromRecord(
     Object.fromEntries(
@@ -139,6 +189,8 @@ const run = Migrator.make({});
 
 export interface RunMigrationsOptions {
   readonly toMigrationInclusive?: number | undefined;
+  /** Named in the refusal message when the database is migrated ahead. */
+  readonly databasePath?: string | undefined;
 }
 
 /**
@@ -153,7 +205,21 @@ export interface RunMigrationsOptions {
  */
 export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
+  databasePath,
 }: RunMigrationsOptions = {}) {
+  // The migrator only ever skips migrations it already knows (`id <= latest`),
+  // so a marker ahead of this build's set reads as "nothing to do" and the
+  // server would open a schema it has never seen. Refuse instead. Compared
+  // against the full set, not the loader, so subset runs still work.
+  const storedMigrationId = yield* readStoredMigrationId();
+  if (storedMigrationId > latestKnownMigrationId) {
+    return yield* new DatabaseMigratedAheadError({
+      storedMigrationId,
+      knownMigrationId: latestKnownMigrationId,
+      ...(databasePath === undefined ? {} : { databasePath }),
+    });
+  }
+
   const executedMigrations = yield* run({ loader: makeMigrationLoader(toMigrationInclusive) });
   const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
   yield* migrations.length === 0
