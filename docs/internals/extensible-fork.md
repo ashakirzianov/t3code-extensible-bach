@@ -1,0 +1,128 @@
+# Maintaining the extensible fork
+
+## What this fork is
+
+`t3code-extensible` is a public fork of [T3 Code](https://github.com/pingdotgg/t3code)
+maintained by [ashakirzianov](https://github.com/ashakirzianov), not affiliated with T3
+Tools. It exists to add one thing upstream does not have: a seam that lets **extensions**
+run as separate processes and act as privileged clients of the T3 Code server, contributing
+tools, storage, and their own web UI mounted into the host. The work happens in a fork
+rather than upstream because the seam is not something upstream has committed to, and
+because the tree that hosts the reference extension cannot absorb a change this large.
+Upstream's own README invites this ("fork and build the editor that you want"). The design
+record lives in the Bach repository as `docs/bach/extensibility-design.md`; this note is the
+fork's operational half and does not restate it.
+
+## Branch model
+
+- `main` is `upstream/main` plus the fork's commits. No other long-lived branches.
+- Remotes: `origin` → `ashakirzianov/t3code-extensible`, `upstream` → `pingdotgg/t3code`.
+- Uptake is a merge, always:
+
+  ```bash
+  git fetch upstream
+  git merge upstream/main
+  ```
+
+- **Never rebase and never force-push `main`.** Fork commits interleave with upstream
+  history permanently; rebasing rewrites merge bases and turns the next uptake into a
+  conflict storm. Frequent small merges beat rare large ones — design §8 leans on frequent
+  uptakes to keep the fork's migration set close to upstream's.
+- Fixes that are genuinely upstream's problem (the home lock, the migration guard) go
+  upstream as small standalone PRs, not as fork-only carry.
+
+## Where fork code lives
+
+Host-side additions live in new directories so uptakes conflict as little as possible
+(design §12):
+
+- `apps/server/src/extensions/`
+- `apps/web/src/extensions/`
+- `packages/contracts/src/extensions.ts`
+
+Everything else is a **host-file touch point**: an edit inside a file upstream also edits,
+which must be re-reconciled on every uptake. Keep those few, in low-churn files, and absorb
+churn on the host side so extensions only ever see the protocol. Fill this table in as the
+seam lands — one row per file, so an uptake conflict is a lookup rather than an
+investigation.
+
+| Host file                               | What the fork changes | Why it cannot live in `extensions/` |
+| --------------------------------------- | --------------------- | ----------------------------------- |
+| _(empty — the seam has not landed yet)_ |                       |                                     |
+
+## Never touch
+
+- `AGENTS.md`, `CONTRIBUTING.md`, `LICENSE` — unchanged from upstream, always.
+- `CLAUDE.md` — a symlink to `AGENTS.md`. Leave it as a symlink.
+- `README.md` — the single non-affiliation line at the top is the only fork edit. It carries
+  no upstream logo or icon today (the header is a plain `# T3 Code`), so nothing had to be
+  preserved; when the fork gets its own identity assets, they go here and in the desktop
+  build, and this line is where they land.
+
+## Spike findings
+
+Verification notes live in [`extensions/spikes/`](extensions/spikes/). They answer the
+"verify in the first build, not assume" items in design §11 with evidence, and record where
+a fix belongs without implementing it.
+
+- [Migration guard](extensions/spikes/migration-guard.md) — upstream does **not** guard
+  against opening a database migrated past the build's known set. It ignores the unknown
+  migrations and runs anyway, with no message at the default log level. The guard belongs in
+  `runMigrations` (`apps/server/src/persistence/Migrations.ts:154-163`).
+- [Home lock](extensions/spikes/home-lock.md) — there is **no** home lock, and Electron's
+  single-instance lock does not substitute for one: it is scoped to Electron's `userData`,
+  not the T3 home (and on macOS is never requested). The desktop backend port scan
+  (`apps/desktop/src/app/DesktopApp.ts:71-104`) then lets a second app take the next free
+  port and open the same home. The lock belongs in `makeSqlitePersistenceLive`
+  (`apps/server/src/persistence/Layers/Sqlite.ts:43-61`).
+- [MCP client behaviour](extensions/spikes/mcp-client-behaviour.md) — `tools/list_changed` is
+  **undeliverable** (the MCP transport is POST-only) and Claude Code caches tools and resources
+  at connect, so a new tool reaches an agent only when its provider process restarts; handler
+  behaviour is live. Server `instructions` need a 5-line hunk in the existing `effect` patch,
+  now carried in `patches/`.
+
+## Fork identity
+
+Four knobs, three of which change (design §8):
+
+- **T3 home: shared** with upstream (`~/.t3`), so switching over does not lose data. Safe
+  only as long as the fork adds no migrations to the host database, and only once the two
+  guards above exist.
+- **App id: the fork's own**, in the desktop build script and the runtime app-user-model id.
+  Drives Launch Services identity, notification attribution, Windows taskbar grouping, the
+  Linux desktop entry, and the Electron support-directory name.
+- **Updater feed: the fork's own** publish owner/repo. Keeping upstream's feed would make
+  the fork check upstream's releases and update itself into upstream.
+- **URL scheme: unchanged** (`t3code://`), so OAuth callbacks stay on a scheme Clerk's
+  allowlist knows and the server's renderer-origin allowlist needs no edit. The cost is a
+  scheme race while both apps are installed — whichever launched last owns it — which loses
+  nothing beyond a sign-in that completes in the wrong app.
+
+Until the home lock ships, the guidance for anyone switching is: **uninstall upstream after
+moving over.** That removes both the scheme race and the two-servers-one-home hazard.
+
+## Running the fork
+
+This checkout is not a git worktree, so the T3 home does **not** default to a local `.t3`.
+Always pass it explicitly, and confirm `baseDir` in the `[dev-runner]` line before doing
+anything else:
+
+```bash
+eval "$(fnm env)"                        # if node is not on PATH
+CI=true pnpm install                     # or: vp i
+export PATH="$PWD/node_modules/.bin:$PATH"   # dev-runner spawns `vp`; it is not global
+node scripts/dev-runner.ts dev --home-dir "$PWD/.t3"
+```
+
+Verified on 2026-09-04: this boots the server and web app, runs all 47 migrations into a
+fresh `.t3/userdata`, and prints the ports and pairing URL:
+
+```
+[dev-runner] mode=dev source=default ports serverPort=13773 webPort=5733 baseDir=.../.t3
+INFO: Migrations ran successfully  migrations: [ '1_OrchestrationEvents', ... '47_ProjectionProjectIcon' ]
+INFO: Listening on http://127.0.0.1:13773
+INFO: Authentication required. Open T3 Code using the pairing URL.  pairingUrl: http://localhost:5733/pair#token=...
+```
+
+Read the real ports from that `[dev-runner]` line rather than assuming — they derive from
+the checkout path and shift when occupied. Never set `VITE_HTTP_URL` or `VITE_WS_URL`.
