@@ -61,6 +61,7 @@ investigation.
 | `apps/desktop/src/app/DesktopAppIdentity.test.ts`                                                                                        | Legacy-userData assertions use the fork's legacy dir name                                                                                           | Mirrors the value change above.                                                                                                                                                                                            |
 | `scripts/build-desktop-artifact.ts`                                                                                                      | `DESKTOP_APP_ID` = `FORK_APP_ID`; `resolveGitHubPublishConfig` falls back to `FORK_UPDATE_REPOSITORY`                                               | electron-builder config is assembled in this one script.                                                                                                                                                                   |
 | `scripts/build-desktop-artifact.test.ts`                                                                                                 | `appId` assertions use the fork's app id                                                                                                            | Mirrors the file above.                                                                                                                                                                                                    |
+| `package.json`                                                                                                                           | Adds the `generate:extension-guide` script.                                                                                                         | Upstream owns the root script list.                                                                                                                                                                                        |
 | `apps/server/src/mcp/McpSessionRegistry.ts`                                                                                              | `DEFAULT_LIVENESS_WINDOW_MS` 24h → 30d, plus the why                                                                                                | One constant inside upstream's registry.                                                                                                                                                                                   |
 | `apps/server/src/mcp/McpSessionRegistry.test.ts`                                                                                         | Adds a default-window expiry test; `makeRegistry` takes a `null` opt-out                                                                            | Mirrors the file above.                                                                                                                                                                                                    |
 | `apps/server/src/cloud/bootService.ts`                                                                                                   | `BOOT_SERVICE_NAME` and `BOOT_SERVICE_LAUNCHD_LABEL` derived from `forkIdentity`                                                                    | Boot-service naming is two constants inside upstream's installer.                                                                                                                                                          |
@@ -76,9 +77,13 @@ The migration guard, and the fatal-startup marker that surfaces it in the deskto
 candidates to send upstream (see the spike note), which would retire six of these rows from
 this table.
 
-One fork-owned new file carries no uptake risk and is not listed:
-`packages/shared/src/fatalStartup.ts`, the marker's format, shared by both sides of the
-process boundary.
+Fork-owned new files carry no uptake risk and are not listed here:
+`packages/shared/src/fatalStartup.ts` (the fatal-startup marker's format, shared by both
+sides of the process boundary), `scripts/extensionGuide.ts` and
+`scripts/generate-extension-guide.ts` (the guide generator),
+`scripts/extension-guide/scaffold-preamble.md` (the one hand-written fragment of the
+scaffold), `scripts/extensionGuide.test.ts` (the drift test), and the two generated guides
+under `docs/internals/extensions/`.
 
 The constants themselves live in `packages/shared/src/forkIdentity.ts`, a fork-owned file, so
 each touch point above is an import plus a reference rather than a literal to re-reconcile.
