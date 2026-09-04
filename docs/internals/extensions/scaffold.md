@@ -49,8 +49,8 @@ this scaffold honest.
   "name": "t3code-reference-extension",
   "version": "1.0.0",
   "private": true,
-  "description": "Reference T3 Code extension. Standalone: ordinary dependencies, no workspace links.",
   "type": "module",
+  "description": "Reference T3 Code extension. Standalone: ordinary dependencies, no workspace links.",
   "scripts": {
     "build": "node build.mjs",
     "test": "node build.mjs && node --test \"test/**/*.test.mjs\""
@@ -312,9 +312,7 @@ export function readHostEnvironment(source: NodeJS.ProcessEnv = process.env): Ho
   // what we then negotiate with, and the host rejects it if it cannot speak it.
   const protocolVersion = rawProtocolVersion ? Number.parseInt(rawProtocolVersion, 10) : 1;
   if (!Number.isInteger(protocolVersion) || protocolVersion < 1) {
-    throw new Error(
-      `${ENV_PROTOCOL_VERSION} must be a positive integer, got "${rawProtocolVersion}".`,
-    );
+    throw new Error(`${ENV_PROTOCOL_VERSION} must be a positive integer, got "${rawProtocolVersion}".`);
   }
 
   return { name, token, wsUrl, dataDirectory, protocolVersion };
@@ -422,9 +420,15 @@ async function main(): Promise<void> {
     });
 
     // 1. Handshake. The host answers with the negotiated version and our paths.
+    // The host-assigned name overrides the manifest's own. The token's subject
+    // is `extension:<name>`, and a token minted for one extension cannot say
+    // hello as another — so the same built folder installed twice must
+    // introduce itself as the installation it was spawned for, not as whatever
+    // name it was built with. `extensions.connect` is verified against this.
+    const manifest: ExtensionManifest = { ...MANIFEST, name: env.name };
     const ack = await client.call<ExtensionHelloAck>("extensions.hello", {
-      protocolVersion: MANIFEST.protocolVersion,
-      manifest: MANIFEST satisfies ExtensionManifest,
+      protocolVersion: manifest.protocolVersion,
+      manifest,
     });
     console.log(
       `[reference] connected to host ${ack.hostVersion} (protocol v${String(ack.protocolVersion)}), ` +
@@ -432,16 +436,15 @@ async function main(): Promise<void> {
     );
 
     // 2. Declarative registrations. Each is answered; a rejection is not fatal.
-    const registered = await client.call<ExtensionRegisterToolsResult>("extensions.registerTools", {
-      tools: TOOLS,
-    });
+    const registered = await client.call<ExtensionRegisterToolsResult>(
+      "extensions.registerTools",
+      { tools: TOOLS },
+    );
     for (const entry of registered.tools) {
       if (entry.status === "rejected") {
         // Losing a tool name is survivable: the rest of the extension still runs,
         // and Settings shows the reason. Do not exit.
-        console.error(
-          `[reference] tool "${entry.name}" rejected (${entry.reason}): ${entry.message}`,
-        );
+        console.error(`[reference] tool "${entry.name}" rejected (${entry.reason}): ${entry.message}`);
       }
     }
 
@@ -463,9 +466,8 @@ async function main(): Promise<void> {
 
       client.stream(
         "extensions.connect",
-        // The host-assigned name, not the manifest's: the same folder can be
-        // installed twice, and this process is only one of those registrations.
-        { name: env.name },
+        // The same name we said hello with; the host verifies the match.
+        { name: manifest.name },
         (raw) => {
           const event = raw as ExtensionStreamEvent;
           switch (event.type) {
@@ -709,10 +711,7 @@ export class RpcClient {
   #streams = new Map<RpcRequestId, StreamSubscription>();
   #closed = false;
 
-  private constructor(
-    socket: WebSocket,
-    private readonly onClose: RpcClientOptions["onClose"],
-  ) {
+  private constructor(socket: WebSocket, private readonly onClose: RpcClientOptions["onClose"]) {
     this.#socket = socket;
     socket.on("message", (raw: Buffer | string) => this.#receive(raw.toString()));
     socket.on("close", (code: number) => this.#fail(new RpcConnectionClosedError(code)));
@@ -809,9 +808,7 @@ export class RpcClient {
         const stream = this.#streams.get(id);
         if (stream) {
           this.#streams.delete(id);
-          stream.onEnd(
-            exit._tag === "Success" ? undefined : new RpcCallError("stream", exit.cause),
-          );
+          stream.onEnd(exit._tag === "Success" ? undefined : new RpcCallError("stream", exit.cause));
         }
         return;
       }
@@ -934,8 +931,7 @@ import type { EchoStore } from "./store.js";
 export type EchoToolResult = Omit<ExtensionToolResult, "connectionId">;
 
 export function runEchoTool(store: EchoStore, invocation: ExtensionToolInvocation): EchoToolResult {
-  const message =
-    typeof invocation.arguments.message === "string" ? invocation.arguments.message : "";
+  const message = typeof invocation.arguments.message === "string" ? invocation.arguments.message : "";
   if (message.length === 0) {
     // A bad argument is a tool error the agent can read and correct, not an
     // exception: the extension stays up and the agent gets a usable message.

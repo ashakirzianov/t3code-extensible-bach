@@ -75,25 +75,43 @@ needs arrives as environment variables; nothing is inferred from the process.
 | ------------------------- | ----------------------------------------------------------------------------------------------- |
 | `T3_EXT_NAME`             | The name the host registered this extension under; authoritative over the manifest's own `name` |
 | `T3_EXT_TOKEN`            | Bearer token carrying the `extension` scope plus whatever orchestration scopes it was granted   |
-| `T3_EXT_WS_URL`           | Absolute `ws://` or `wss://` URL, connected to verbatim                                         |
+| `T3_EXT_WS_URL`           | Absolute `ws://` or `wss://` URL for the host's ordinary client socket, connected to verbatim   |
 | `T3_EXT_DATA_DIR`         | Absolute path to the per-environment directory the extension owns                               |
 | `T3_EXT_PROTOCOL_VERSION` | Protocol version the host intends to speak; absent means 1                                      |
 
-`T3_EXT_NAME` is what `extensions.connect` must send. The same built folder can be
-installed more than once, so the host decides which registration a given process is;
-an extension that assumed its manifest's `name` would connect as the wrong one.
+`T3_EXT_NAME` is what the extension must introduce itself as, in both
+`extensions.hello` and `extensions.connect` — the host verifies that the two agree.
+It overrides the manifest's own `name`: the token's subject is `extension:<name>`,
+and a token minted for one extension cannot say hello as another, so the same built
+folder installed twice must introduce itself as the installation it was spawned for.
+
+The host refuses `hello` for a name it does not already know. A name comes from a
+settings entry or an `--extension name=path` launch flag first; `npx t3 pair
+--extension <name>` mints the credential and prints the environment block.
+
+**The URL is the host's ordinary client socket** (`ws://<host>:<port>/ws`), not a
+per-extension endpoint. An extension _is_ a plain client; what the `extension` scope
+buys is access to the `extensions.*` methods on that same connection, alongside the
+whole existing client API.
 
 The token travels as `Authorization: Bearer <token>` on the WebSocket handshake.
-Browsers cannot set handshake headers and use the host's ticket query parameter
-instead, but a spawned extension is not a browser and takes the header.
+`authenticateWebSocketUpgrade` (`apps/server/src/auth/EnvironmentAuth.ts:984`) checks
+a `?ticket=` query parameter first — that exists because browsers cannot set
+handshake headers — and otherwise takes the `Authorization` header, which is the path
+a spawned extension uses.
 
 A fully-formed URL rather than a base keeps host, port, and scheme entirely the
 host's business, so remote, relay, and tunnel modes need no change in any extension.
 
-**Do not depend on `cwd`.** A bundled extension can ship inside the packaged app's
-`app.asar`, and a path inside an asar cannot be a process `cwd` — the packaged server
-sets its cwd to the home directory for exactly this reason. An extension resolves its
-own files from `import.meta.url`.
+Only `hello` names the extension. `registerTools`, `registerHttpPrefix`,
+`registerWebEntry`, and `setBadge` carry no name: the socket's identity is
+established by the handshake and held for the connection.
+
+**`cwd` is the extension folder, but do not depend on it.** A bundled extension can
+ship inside the packaged app's `app.asar`, and a path inside an asar cannot be a
+process `cwd` — the packaged server sets its cwd to the home directory for exactly
+this reason ([spike](spikes/electron-runtime.md)). An extension that resolves its own
+files from `import.meta.url` keeps working if that day comes.
 
 **The extension folder is read-only.** Everything the extension writes goes under
 `T3_EXT_DATA_DIR`.

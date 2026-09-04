@@ -47,9 +47,15 @@ async function main(): Promise<void> {
     });
 
     // 1. Handshake. The host answers with the negotiated version and our paths.
+    // The host-assigned name overrides the manifest's own. The token's subject
+    // is `extension:<name>`, and a token minted for one extension cannot say
+    // hello as another — so the same built folder installed twice must
+    // introduce itself as the installation it was spawned for, not as whatever
+    // name it was built with. `extensions.connect` is verified against this.
+    const manifest: ExtensionManifest = { ...MANIFEST, name: env.name };
     const ack = await client.call<ExtensionHelloAck>("extensions.hello", {
-      protocolVersion: MANIFEST.protocolVersion,
-      manifest: MANIFEST satisfies ExtensionManifest,
+      protocolVersion: manifest.protocolVersion,
+      manifest,
     });
     console.log(
       `[reference] connected to host ${ack.hostVersion} (protocol v${String(ack.protocolVersion)}), ` +
@@ -88,9 +94,8 @@ async function main(): Promise<void> {
 
       client.stream(
         "extensions.connect",
-        // The host-assigned name, not the manifest's: the same folder can be
-        // installed twice, and this process is only one of those registrations.
-        { name: env.name },
+        // The same name we said hello with; the host verifies the match.
+        { name: manifest.name },
         (raw) => {
           const event = raw as ExtensionStreamEvent;
           switch (event.type) {

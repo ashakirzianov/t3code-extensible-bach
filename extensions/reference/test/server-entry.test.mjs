@@ -86,7 +86,9 @@ test("with a host that is not listening it fails without corrupting its data dir
     T3_EXT_NAME: "reference",
     T3_EXT_TOKEN: "test-token",
     // Port 1 is reserved and never listening, so this is a connect failure.
-    T3_EXT_WS_URL: "ws://127.0.0.1:1/ext/reference",
+    // The host's ordinary client socket: an extension is a plain client,
+    // and the `extension` scope is what unlocks the extensions.* methods on it.
+    T3_EXT_WS_URL: "ws://127.0.0.1:1/ws",
     T3_EXT_DATA_DIR: dataDir,
     T3_EXT_PROTOCOL_VERSION: "1",
   });

@@ -52,7 +52,11 @@ Read in this order; the comments carry the reasoning.
   app's `app.asar`, and a path inside an asar cannot be a process `cwd`. Resolve
   from `import.meta.url`.
 - **Write only to the data directory.** The extension folder is read-only when
-  it ships inside an app bundle.
+  it ships inside an app bundle, and `cwd` — though it is the extension folder
+  today — cannot be one inside an `app.asar`.
+- **Introduce yourself as `T3_EXT_NAME`, not as the manifest's name.** The token's
+  subject is `extension:<name>`, and the host checks that `hello` and
+  `extensions.connect` agree.
 
 Both of the first two, and the `node:sqlite` availability the store relies on,
 are measured in
