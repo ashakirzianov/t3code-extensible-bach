@@ -153,14 +153,14 @@ The manifest an extension sends with `extensions.hello`.
 
 ### ExtensionManifest
 
-| Field             | Type                                                    | Required | Constraints                 |
-| ----------------- | ------------------------------------------------------- | -------- | --------------------------- |
-| `name`            | [`ExtensionName`](#extensionname)                       | yes      |                             |
-| `version`         | string                                                  | yes      | min length 1, max length 64 |
-| `protocolVersion` | [`ExtensionProtocolVersion`](#extensionprotocolversion) | yes      |                             |
-| `minHostVersion`  | string                                                  | no       | min length 1, max length 64 |
-| `server`          | [`ExtensionServerEntry`](#extensionserverentry)         | yes      |                             |
-| `web`             | [`ExtensionWebEntry`](#extensionwebentry)               | no       |                             |
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `name` | [`ExtensionName`](#extensionname) | yes |  |
+| `version` | string | yes | min length 1, max length 64 |
+| `protocolVersion` | [`ExtensionProtocolVersion`](#extensionprotocolversion) | yes |  |
+| `minHostVersion` | string | no | min length 1, max length 64 |
+| `server` | [`ExtensionServerEntry`](#extensionserverentry) | yes |  |
+| `web` | [`ExtensionWebEntry`](#extensionwebentry) | no |  |
 
 ## Methods
 
@@ -239,28 +239,28 @@ One of 3 shapes.
 
 **kind = `"none"`**
 
-| Field  | Type     | Required |
-| ------ | -------- | -------- |
-| `kind` | `"none"` | yes      |
+| Field | Type | Required |
+| --- | --- | --- |
+| `kind` | `"none"` | yes |
 
 **kind = `"dot"`**
 
-| Field  | Type    | Required |
-| ------ | ------- | -------- |
-| `kind` | `"dot"` | yes      |
+| Field | Type | Required |
+| --- | --- | --- |
+| `kind` | `"dot"` | yes |
 
 **kind = `"count"`**
 
-| Field   | Type      | Required | Constraints     |
-| ------- | --------- | -------- | --------------- |
-| `kind`  | `"count"` | yes      |                 |
-| `count` | integer   | yes      | min 0, max 9999 |
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `kind` | `"count"` | yes |  |
+| `count` | integer | yes | min 0, max 9999 |
 
 ### ExtensionConnectInput
 
-| Field  | Type                              | Required |
-| ------ | --------------------------------- | -------- |
-| `name` | [`ExtensionName`](#extensionname) | yes      |
+| Field | Type | Required |
+| --- | --- | --- |
+| `name` | [`ExtensionName`](#extensionname) | yes |
 
 ### ExtensionConnectionId
 
@@ -296,28 +296,28 @@ No fields.
 
 ### ExtensionHandshakeRequiredError
 
-| Field    | Type                                | Required | Constraints                  |
-| -------- | ----------------------------------- | -------- | ---------------------------- |
-| `_tag`   | `"ExtensionHandshakeRequiredError"` | yes      |                              |
-| `method` | string                              | yes      | min length 1, max length 128 |
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `_tag` | `"ExtensionHandshakeRequiredError"` | yes |  |
+| `method` | string | yes | min length 1, max length 128 |
 
 ### ExtensionHelloAck
 
-| Field                  | Type                                                             | Required | Constraints                 |
-| ---------------------- | ---------------------------------------------------------------- | -------- | --------------------------- |
-| `protocolVersion`      | [`ExtensionProtocolVersion`](#extensionprotocolversion)          | yes      |                             |
-| `hostProtocolVersions` | array of [`ExtensionProtocolVersion`](#extensionprotocolversion) | yes      |                             |
-| `hostVersion`          | string                                                           | yes      | min length 1, max length 64 |
-| `environmentId`        | string                                                           | yes      |                             |
-| `extensionPath`        | [`ExtensionHostPath`](#extensionhostpath)                        | yes      |                             |
-| `dataDirectory`        | [`ExtensionHostPath`](#extensionhostpath)                        | yes      |                             |
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `protocolVersion` | [`ExtensionProtocolVersion`](#extensionprotocolversion) | yes |  |
+| `hostProtocolVersions` | array of [`ExtensionProtocolVersion`](#extensionprotocolversion) | yes |  |
+| `hostVersion` | string | yes | min length 1, max length 64 |
+| `environmentId` | string | yes |  |
+| `extensionPath` | [`ExtensionHostPath`](#extensionhostpath) | yes |  |
+| `dataDirectory` | [`ExtensionHostPath`](#extensionhostpath) | yes |  |
 
 ### ExtensionHelloInput
 
-| Field             | Type                                                    | Required |
-| ----------------- | ------------------------------------------------------- | -------- |
-| `protocolVersion` | [`ExtensionProtocolVersion`](#extensionprotocolversion) | yes      |
-| `manifest`        | [`ExtensionManifest`](#extensionmanifest)               | yes      |
+| Field | Type | Required |
+| --- | --- | --- |
+| `protocolVersion` | [`ExtensionProtocolVersion`](#extensionprotocolversion) | yes |
+| `manifest` | [`ExtensionManifest`](#extensionmanifest) | yes |
 
 ### ExtensionHostPath
 
@@ -325,10 +325,10 @@ No fields.
 
 ### ExtensionHttpBody
 
-| Field      | Type                   | Required | Constraints        |
-| ---------- | ---------------------- | -------- | ------------------ |
-| `encoding` | `"utf8"` \| `"base64"` | yes      |                    |
-| `data`     | string                 | yes      | max length 8388608 |
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `encoding` | `"utf8"` \| `"base64"` | yes |  |
+| `data` | string | yes | max length 8388608 |
 
 ### ExtensionHttpHeaders
 
@@ -344,23 +344,23 @@ No fields.
 
 ### ExtensionHttpPrefixCollisionError
 
-| Field    | Type                                          | Required |
-| -------- | --------------------------------------------- | -------- |
-| `_tag`   | `"ExtensionHttpPrefixCollisionError"`         | yes      |
-| `prefix` | [`ExtensionHttpPrefix`](#extensionhttpprefix) | yes      |
-| `owner`  | [`ExtensionName`](#extensionname)             | no       |
+| Field | Type | Required |
+| --- | --- | --- |
+| `_tag` | `"ExtensionHttpPrefixCollisionError"` | yes |
+| `prefix` | [`ExtensionHttpPrefix`](#extensionhttpprefix) | yes |
+| `owner` | [`ExtensionName`](#extensionname) | no |
 
 ### ExtensionHttpRequest
 
-| Field           | Type                                                | Required | Constraints                    |
-| --------------- | --------------------------------------------------- | -------- | ------------------------------ |
-| `requestId`     | [`ExtensionHttpRequestId`](#extensionhttprequestid) | yes      |                                |
-| `method`        | [`ExtensionHttpMethod`](#extensionhttpmethod)       | yes      |                                |
-| `path`          | string                                              | yes      | max length 2048, pattern `^\/` |
-| `query`         | string                                              | no       | max length 4096                |
-| `headers`       | [`ExtensionHttpHeaders`](#extensionhttpheaders)     | yes      |                                |
-| `body`          | [`ExtensionHttpBody`](#extensionhttpbody)           | no       |                                |
-| `environmentId` | string                                              | yes      |                                |
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `requestId` | [`ExtensionHttpRequestId`](#extensionhttprequestid) | yes |  |
+| `method` | [`ExtensionHttpMethod`](#extensionhttpmethod) | yes |  |
+| `path` | string | yes | max length 2048, pattern `^\/` |
+| `query` | string | no | max length 4096 |
+| `headers` | [`ExtensionHttpHeaders`](#extensionhttpheaders) | yes |  |
+| `body` | [`ExtensionHttpBody`](#extensionhttpbody) | no |  |
+| `environmentId` | string | yes |  |
 
 ### ExtensionHttpRequestId
 
@@ -368,13 +368,13 @@ No fields.
 
 ### ExtensionHttpResponse
 
-| Field          | Type                                                | Required | Constraints      |
-| -------------- | --------------------------------------------------- | -------- | ---------------- |
-| `connectionId` | [`ExtensionConnectionId`](#extensionconnectionid)   | yes      |                  |
-| `requestId`    | [`ExtensionHttpRequestId`](#extensionhttprequestid) | yes      |                  |
-| `status`       | integer                                             | yes      | min 100, max 599 |
-| `headers`      | [`ExtensionHttpHeaders`](#extensionhttpheaders)     | yes      |                  |
-| `body`         | [`ExtensionHttpBody`](#extensionhttpbody)           | no       |                  |
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `connectionId` | [`ExtensionConnectionId`](#extensionconnectionid) | yes |  |
+| `requestId` | [`ExtensionHttpRequestId`](#extensionhttprequestid) | yes |  |
+| `status` | integer | yes | min 100, max 599 |
+| `headers` | [`ExtensionHttpHeaders`](#extensionhttpheaders) | yes |  |
+| `body` | [`ExtensionHttpBody`](#extensionhttpbody) | no |  |
 
 ### ExtensionInvocationId
 
@@ -386,12 +386,12 @@ No fields.
 
 ### ExtensionProtocolMismatchError
 
-| Field               | Type                                                             | Required |
-| ------------------- | ---------------------------------------------------------------- | -------- |
-| `_tag`              | `"ExtensionProtocolMismatchError"`                               | yes      |
-| `extensionName`     | [`ExtensionName`](#extensionname)                                | no       |
-| `requestedVersion`  | [`ExtensionProtocolVersion`](#extensionprotocolversion)          | yes      |
-| `supportedVersions` | array of [`ExtensionProtocolVersion`](#extensionprotocolversion) | yes      |
+| Field | Type | Required |
+| --- | --- | --- |
+| `_tag` | `"ExtensionProtocolMismatchError"` | yes |
+| `extensionName` | [`ExtensionName`](#extensionname) | no |
+| `requestedVersion` | [`ExtensionProtocolVersion`](#extensionprotocolversion) | yes |
+| `supportedVersions` | array of [`ExtensionProtocolVersion`](#extensionprotocolversion) | yes |
 
 ### ExtensionProtocolVersion
 
@@ -399,34 +399,34 @@ No fields.
 
 ### ExtensionRegisterHttpPrefixInput
 
-| Field    | Type                                          | Required |
-| -------- | --------------------------------------------- | -------- |
-| `prefix` | [`ExtensionHttpPrefix`](#extensionhttpprefix) | yes      |
+| Field | Type | Required |
+| --- | --- | --- |
+| `prefix` | [`ExtensionHttpPrefix`](#extensionhttpprefix) | yes |
 
 ### ExtensionRegisterHttpPrefixResult
 
-| Field      | Type                                          | Required | Constraints                  |
-| ---------- | --------------------------------------------- | -------- | ---------------------------- |
-| `prefix`   | [`ExtensionHttpPrefix`](#extensionhttpprefix) | yes      |                              |
-| `basePath` | string                                        | yes      | min length 1, max length 512 |
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `prefix` | [`ExtensionHttpPrefix`](#extensionhttpprefix) | yes |  |
+| `basePath` | string | yes | min length 1, max length 512 |
 
 ### ExtensionRegisterToolsInput
 
-| Field   | Type                                                           | Required | Constraints  |
-| ------- | -------------------------------------------------------------- | -------- | ------------ |
-| `tools` | array of [`ExtensionToolDefinition`](#extensiontooldefinition) | yes      | max items 64 |
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `tools` | array of [`ExtensionToolDefinition`](#extensiontooldefinition) | yes | max items 64 |
 
 ### ExtensionRegisterToolsResult
 
-| Field   | Type                                                               | Required |
-| ------- | ------------------------------------------------------------------ | -------- |
-| `tools` | array of [`ExtensionToolRegistration`](#extensiontoolregistration) | yes      |
+| Field | Type | Required |
+| --- | --- | --- |
+| `tools` | array of [`ExtensionToolRegistration`](#extensiontoolregistration) | yes |
 
 ### ExtensionRegisterWebEntryInput
 
-| Field | Type                                      | Required |
-| ----- | ----------------------------------------- | -------- |
-| `web` | [`ExtensionWebEntry`](#extensionwebentry) | yes      |
+| Field | Type | Required |
+| --- | --- | --- |
+| `web` | [`ExtensionWebEntry`](#extensionwebentry) | yes |
 
 ### ExtensionRelativePath
 
@@ -434,15 +434,15 @@ No fields.
 
 ### ExtensionServerEntry
 
-| Field   | Type                                              | Required |
-| ------- | ------------------------------------------------- | -------- |
-| `entry` | [`ExtensionRelativePath`](#extensionrelativepath) | yes      |
+| Field | Type | Required |
+| --- | --- | --- |
+| `entry` | [`ExtensionRelativePath`](#extensionrelativepath) | yes |
 
 ### ExtensionSetBadgeInput
 
-| Field   | Type                                | Required |
-| ------- | ----------------------------------- | -------- |
-| `badge` | [`ExtensionBadge`](#extensionbadge) | yes      |
+| Field | Type | Required |
+| --- | --- | --- |
+| `badge` | [`ExtensionBadge`](#extensionbadge) | yes |
 
 ### ExtensionStreamEvent
 
@@ -450,35 +450,35 @@ One of 3 shapes.
 
 **type = `"attached"`**
 
-| Field          | Type                                              | Required |
-| -------------- | ------------------------------------------------- | -------- |
-| `type`         | `"attached"`                                      | yes      |
-| `connectionId` | [`ExtensionConnectionId`](#extensionconnectionid) | yes      |
+| Field | Type | Required |
+| --- | --- | --- |
+| `type` | `"attached"` | yes |
+| `connectionId` | [`ExtensionConnectionId`](#extensionconnectionid) | yes |
 
 **type = `"invokeTool"`**
 
-| Field          | Type                                                  | Required |
-| -------------- | ----------------------------------------------------- | -------- |
-| `type`         | `"invokeTool"`                                        | yes      |
-| `connectionId` | [`ExtensionConnectionId`](#extensionconnectionid)     | yes      |
-| `invocation`   | [`ExtensionToolInvocation`](#extensiontoolinvocation) | yes      |
+| Field | Type | Required |
+| --- | --- | --- |
+| `type` | `"invokeTool"` | yes |
+| `connectionId` | [`ExtensionConnectionId`](#extensionconnectionid) | yes |
+| `invocation` | [`ExtensionToolInvocation`](#extensiontoolinvocation) | yes |
 
 **type = `"proxyHttp"`**
 
-| Field          | Type                                              | Required |
-| -------------- | ------------------------------------------------- | -------- |
-| `type`         | `"proxyHttp"`                                     | yes      |
-| `connectionId` | [`ExtensionConnectionId`](#extensionconnectionid) | yes      |
-| `request`      | [`ExtensionHttpRequest`](#extensionhttprequest)   | yes      |
+| Field | Type | Required |
+| --- | --- | --- |
+| `type` | `"proxyHttp"` | yes |
+| `connectionId` | [`ExtensionConnectionId`](#extensionconnectionid) | yes |
+| `request` | [`ExtensionHttpRequest`](#extensionhttprequest) | yes |
 
 ### ExtensionToolCaller
 
-| Field                | Type   | Required | Constraints                  |
-| -------------------- | ------ | -------- | ---------------------------- |
-| `environmentId`      | string | yes      |                              |
-| `threadId`           | string | yes      |                              |
-| `providerSessionId`  | string | yes      | min length 1, max length 256 |
-| `providerInstanceId` | string | yes      |                              |
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `environmentId` | string | yes |  |
+| `threadId` | string | yes |  |
+| `providerSessionId` | string | yes | min length 1, max length 256 |
+| `providerInstanceId` | string | yes |  |
 
 ### ExtensionToolContent
 
@@ -486,35 +486,35 @@ One of 2 shapes.
 
 **type = `"text"`**
 
-| Field  | Type     | Required | Constraints        |
-| ------ | -------- | -------- | ------------------ |
-| `type` | `"text"` | yes      |                    |
-| `text` | string   | yes      | max length 1048576 |
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `type` | `"text"` | yes |  |
+| `text` | string | yes | max length 1048576 |
 
 **type = `"image"`**
 
-| Field      | Type      | Required | Constraints                  |
-| ---------- | --------- | -------- | ---------------------------- |
-| `type`     | `"image"` | yes      |                              |
-| `data`     | string    | yes      | max length 8388608           |
-| `mimeType` | string    | yes      | min length 1, max length 100 |
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `type` | `"image"` | yes |  |
+| `data` | string | yes | max length 8388608 |
+| `mimeType` | string | yes | min length 1, max length 100 |
 
 ### ExtensionToolDefinition
 
-| Field         | Type                                      | Required | Constraints                   |
-| ------------- | ----------------------------------------- | -------- | ----------------------------- |
-| `name`        | [`ExtensionToolName`](#extensiontoolname) | yes      |                               |
-| `description` | string                                    | yes      | min length 1, max length 4096 |
-| `inputSchema` | object                                    | yes      |                               |
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `name` | [`ExtensionToolName`](#extensiontoolname) | yes |  |
+| `description` | string | yes | min length 1, max length 4096 |
+| `inputSchema` | object | yes |  |
 
 ### ExtensionToolInvocation
 
-| Field          | Type                                              | Required |
-| -------------- | ------------------------------------------------- | -------- |
-| `invocationId` | [`ExtensionInvocationId`](#extensioninvocationid) | yes      |
-| `name`         | [`ExtensionToolName`](#extensiontoolname)         | yes      |
-| `arguments`    | object                                            | yes      |
-| `caller`       | [`ExtensionToolCaller`](#extensiontoolcaller)     | yes      |
+| Field | Type | Required |
+| --- | --- | --- |
+| `invocationId` | [`ExtensionInvocationId`](#extensioninvocationid) | yes |
+| `name` | [`ExtensionToolName`](#extensiontoolname) | yes |
+| `arguments` | object | yes |
+| `caller` | [`ExtensionToolCaller`](#extensiontoolcaller) | yes |
 
 ### ExtensionToolName
 
@@ -522,11 +522,11 @@ One of 2 shapes.
 
 ### ExtensionToolNameCollisionError
 
-| Field      | Type                                      | Required |
-| ---------- | ----------------------------------------- | -------- |
-| `_tag`     | `"ExtensionToolNameCollisionError"`       | yes      |
-| `toolName` | [`ExtensionToolName`](#extensiontoolname) | yes      |
-| `owner`    | [`ExtensionName`](#extensionname)         | no       |
+| Field | Type | Required |
+| --- | --- | --- |
+| `_tag` | `"ExtensionToolNameCollisionError"` | yes |
+| `toolName` | [`ExtensionToolName`](#extensiontoolname) | yes |
+| `owner` | [`ExtensionName`](#extensionname) | no |
 
 ### ExtensionToolRegistration
 
@@ -534,19 +534,19 @@ One of 2 shapes.
 
 **variant 1**
 
-| Field    | Type                                      | Required |
-| -------- | ----------------------------------------- | -------- |
-| `status` | `"accepted"`                              | yes      |
-| `name`   | [`ExtensionToolName`](#extensiontoolname) | yes      |
+| Field | Type | Required |
+| --- | --- | --- |
+| `status` | `"accepted"` | yes |
+| `name` | [`ExtensionToolName`](#extensiontoolname) | yes |
 
 **variant 2**
 
-| Field     | Type                                                            | Required | Constraints                  |
-| --------- | --------------------------------------------------------------- | -------- | ---------------------------- |
-| `status`  | `"rejected"`                                                    | yes      |                              |
-| `name`    | [`ExtensionToolName`](#extensiontoolname)                       | yes      |                              |
-| `reason`  | [`ExtensionToolRejectionReason`](#extensiontoolrejectionreason) | yes      |                              |
-| `message` | string                                                          | yes      | min length 1, max length 512 |
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `status` | `"rejected"` | yes |  |
+| `name` | [`ExtensionToolName`](#extensiontoolname) | yes |  |
+| `reason` | [`ExtensionToolRejectionReason`](#extensiontoolrejectionreason) | yes |  |
+| `message` | string | yes | min length 1, max length 512 |
 
 ### ExtensionToolRejectionReason
 
@@ -554,22 +554,22 @@ One of 2 shapes.
 
 ### ExtensionToolResult
 
-| Field               | Type                                                     | Required |
-| ------------------- | -------------------------------------------------------- | -------- |
-| `connectionId`      | [`ExtensionConnectionId`](#extensionconnectionid)        | yes      |
-| `invocationId`      | [`ExtensionInvocationId`](#extensioninvocationid)        | yes      |
-| `content`           | array of [`ExtensionToolContent`](#extensiontoolcontent) | yes      |
-| `isError`           | boolean                                                  | no       |
-| `structuredContent` | object                                                   | no       |
+| Field | Type | Required |
+| --- | --- | --- |
+| `connectionId` | [`ExtensionConnectionId`](#extensionconnectionid) | yes |
+| `invocationId` | [`ExtensionInvocationId`](#extensioninvocationid) | yes |
+| `content` | array of [`ExtensionToolContent`](#extensiontoolcontent) | yes |
+| `isError` | boolean | no |
+| `structuredContent` | object | no |
 
 ### ExtensionUnavailableError
 
-| Field           | Type                                                        | Required |
-| --------------- | ----------------------------------------------------------- | -------- |
-| `_tag`          | `"ExtensionUnavailableError"`                               | yes      |
-| `extensionName` | [`ExtensionName`](#extensionname)                           | yes      |
-| `reason`        | [`ExtensionUnavailableReason`](#extensionunavailablereason) | yes      |
-| `toolName`      | [`ExtensionToolName`](#extensiontoolname)                   | no       |
+| Field | Type | Required |
+| --- | --- | --- |
+| `_tag` | `"ExtensionUnavailableError"` | yes |
+| `extensionName` | [`ExtensionName`](#extensionname) | yes |
+| `reason` | [`ExtensionUnavailableReason`](#extensionunavailablereason) | yes |
+| `toolName` | [`ExtensionToolName`](#extensiontoolname) | no |
 
 ### ExtensionUnavailableReason
 
@@ -577,17 +577,17 @@ One of 2 shapes.
 
 ### ExtensionUnknownToolError
 
-| Field           | Type                                      | Required |
-| --------------- | ----------------------------------------- | -------- |
-| `_tag`          | `"ExtensionUnknownToolError"`             | yes      |
-| `toolName`      | [`ExtensionToolName`](#extensiontoolname) | yes      |
-| `extensionName` | [`ExtensionName`](#extensionname)         | no       |
+| Field | Type | Required |
+| --- | --- | --- |
+| `_tag` | `"ExtensionUnknownToolError"` | yes |
+| `toolName` | [`ExtensionToolName`](#extensiontoolname) | yes |
+| `extensionName` | [`ExtensionName`](#extensionname) | no |
 
 ### ExtensionWebEntry
 
-| Field   | Type                                              | Required | Constraints                 |
-| ------- | ------------------------------------------------- | -------- | --------------------------- |
-| `entry` | [`ExtensionRelativePath`](#extensionrelativepath) | yes      |                             |
-| `css`   | [`ExtensionRelativePath`](#extensionrelativepath) | no       |                             |
-| `label` | string                                            | yes      | min length 1, max length 64 |
-| `icon`  | [`ExtensionRelativePath`](#extensionrelativepath) | no       |                             |
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `entry` | [`ExtensionRelativePath`](#extensionrelativepath) | yes |  |
+| `css` | [`ExtensionRelativePath`](#extensionrelativepath) | no |  |
+| `label` | string | yes | min length 1, max length 64 |
+| `icon` | [`ExtensionRelativePath`](#extensionrelativepath) | no |  |

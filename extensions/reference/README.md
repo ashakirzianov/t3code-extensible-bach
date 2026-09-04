@@ -14,7 +14,7 @@ own can do.
 ## Build and test
 
 ```bash
-pnpm install --ignore-workspace   # --ignore-workspace: not a workspace member
+pnpm install                      # installs here: pnpm-workspace.yaml makes this a root
 pnpm build                        # emits dist/
 pnpm test                         # builds, then runs the checks below
 ```

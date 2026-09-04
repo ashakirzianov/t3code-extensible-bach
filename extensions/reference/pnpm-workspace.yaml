@@ -1,8 +1,11 @@
 # This extension is standalone: it is deliberately NOT a member of the T3 Code
 # repo's workspace (whose globs are apps/*, infra/*, packages/*, scripts — none
-# of which match extensions/*). Install it with `pnpm install --ignore-workspace`.
+# of which match extensions/*). This file is what makes that true: its presence
+# makes this directory a workspace root of its own, so a plain
+# `pnpm install` here installs here.
 #
-# The file exists only to allow esbuild's install script under pnpm 11; without
-# it every install ends in ERR_PNPM_IGNORED_BUILDS.
+# Do NOT pass --ignore-workspace. That flag skips this file, which also carries
+# the esbuild build allowance below, and every install then ends in
+# ERR_PNPM_IGNORED_BUILDS.
 allowBuilds:
   esbuild: true

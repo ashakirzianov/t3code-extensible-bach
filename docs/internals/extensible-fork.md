@@ -82,8 +82,13 @@ Fork-owned new files carry no uptake risk and are not listed here:
 sides of the process boundary), `scripts/extensionGuide.ts` and
 `scripts/generate-extension-guide.ts` (the guide generator),
 `scripts/extension-guide/scaffold-preamble.md` (the one hand-written fragment of the
-scaffold), `scripts/extensionGuide.test.ts` (the drift test), and the two generated guides
-under `docs/internals/extensions/`.
+scaffold), `scripts/extensionGuide.test.ts` (the drift test), the two generated guides under
+`docs/internals/extensions/`, `.prettierignore` (which keeps the formatter off them), and
+`.github/workflows/extension-seam.yml`.
+
+The workflow sits beside upstream's `ci.yml` rather than inside it, so an uptake never has to
+reconcile fork jobs with upstream's. Its runner, Node, and install lines are copied from
+`ci.yml` on purpose: if upstream changes how it sets up, change this file to match.
 
 The constants themselves live in `packages/shared/src/forkIdentity.ts`, a fork-owned file, so
 each touch point above is an import plus a reference rather than a literal to re-reconcile.

@@ -1,0 +1,81 @@
+# Fork-owned. Upstream has no extension seam, so this lives beside ci.yml
+# rather than inside it: an uptake merge never has to reconcile our jobs with
+# theirs. Runner, Node, and install lines are copied from ci.yml on purpose —
+# if upstream changes how it sets up, this file should be changed to match.
+name: Extension Seam
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: extension-seam-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  extension_seam:
+    name: Extension Seam
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      # The generated protocol artifacts and the two guides are committed, and
+      # what an extension author reads. A change that skips either generator
+      # has to fail here rather than ship a contract that describes something
+      # else.
+      - name: Check generated artifacts are current
+        run: vp test run packages/contracts/src/extensionsGenerated.test.ts scripts/extensionGuide.test.ts
+
+      - name: Test contracts
+        run: vp run --filter @t3tools/contracts test
+
+      # The reference extension is standalone on purpose: its own dependencies,
+      # its own build, no workspace membership. Installing it the way an author
+      # would is the only thing that proves that claim, so it gets its own
+      # install rather than riding on the workspace one above.
+      - name: Expose pnpm
+        run: |
+          pnpm_version="$(node --print "require('./package.json').packageManager.split('@').pop()")"
+          vp_pnpm_bin="$HOME/.vite-plus/package_manager/pnpm/$pnpm_version/pnpm/bin"
+          echo "$vp_pnpm_bin" >> "$GITHUB_PATH"
+          "$vp_pnpm_bin/pnpm" --version
+
+      # No --ignore-workspace: the extension's own pnpm-workspace.yaml makes
+      # this directory a workspace root, and that same file carries the esbuild
+      # build allowance. Passing the flag skips it and the install exits 1.
+      - name: Install reference extension
+        working-directory: extensions/reference
+        run: pnpm install --frozen-lockfile
+
+      - name: Test reference extension
+        working-directory: extensions/reference
+        run: pnpm test
+
+      # PLACEHOLDER — end-to-end smoke (design §7). Enable once the extension
+      # lifecycle lands host-side: start a dev server against a scratch home,
+      # register the built reference extension, and assert it handshakes,
+      # registers its tool, and answers an invocation. Until the host can spawn
+      # an extension there is nothing to start, so this stays commented out
+      # rather than silently passing.
+      #
+      # - name: Smoke start the reference extension
+      #   run: node scripts/extension-smoke.ts --home-dir "$RUNNER_TEMP/.t3"

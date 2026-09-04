@@ -16,8 +16,10 @@ your own.
 1. **Copy the folder** and rename it. `package.json` `name`, and the `name` in
    `src/server/manifest.ts`, are yours to change; the manifest name must be lowercase
    kebab-case.
-2. **Install** with `pnpm install --ignore-workspace`. The flag matters: without it, pnpm
-   walks up to a parent workspace and installs into it instead.
+2. **Install** with `pnpm install`. The `pnpm-workspace.yaml` in the folder is what keeps
+   this local — it makes the directory a workspace root, so pnpm installs here rather than
+   walking up to a parent workspace. Do not add `--ignore-workspace`: that skips the file,
+   including the build allowance it carries, and the install fails.
 3. **Build** with `pnpm build`. This writes `dist/`, which is what the host runs: the server
    entry and, if you keep the web entry, an ES module the client imports.
 4. **Vendor the protocol types.** The reference extension keeps a copy of
@@ -75,10 +77,13 @@ this scaffold honest.
 ```yaml
 # This extension is standalone: it is deliberately NOT a member of the T3 Code
 # repo's workspace (whose globs are apps/*, infra/*, packages/*, scripts — none
-# of which match extensions/*). Install it with `pnpm install --ignore-workspace`.
+# of which match extensions/*). This file is what makes that true: its presence
+# makes this directory a workspace root of its own, so a plain
+# `pnpm install` here installs here.
 #
-# The file exists only to allow esbuild's install script under pnpm 11; without
-# it every install ends in ERR_PNPM_IGNORED_BUILDS.
+# Do NOT pass --ignore-workspace. That flag skips this file, which also carries
+# the esbuild build allowance below, and every install then ends in
+# ERR_PNPM_IGNORED_BUILDS.
 allowBuilds:
   esbuild: true
 ```
