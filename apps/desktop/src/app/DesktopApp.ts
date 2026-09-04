@@ -153,6 +153,15 @@ const bootstrap = Effect.gen(function* () {
   const appActivation = yield* DesktopAppActivation.DesktopAppActivation;
   yield* logBootstrapInfo("bootstrap start");
 
+  // A backend that refuses to start does so after bootstrap has returned, so
+  // it cannot fail this Effect. Watch for it instead, and end the same way a
+  // fatal bootstrap error would rather than waiting forever for a window.
+  yield* Effect.forkScoped(
+    Effect.flatMap(pool.primaryFatalStartup, (failure) =>
+      handleFatalStartupError("backend", new Error(failure.message)),
+    ),
+  );
+
   if (environment.isDevelopment && Option.isNone(environment.configuredBackendPort)) {
     return yield* new DesktopDevelopmentBackendPortRequiredError();
   }

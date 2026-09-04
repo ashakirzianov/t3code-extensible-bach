@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./fatalStartup": {
+      "types": "./src/fatalStartup.ts",
+      "import": "./src/fatalStartup.ts"
+    },
     "./forkIdentity": {
       "types": "./src/forkIdentity.ts",
       "import": "./src/forkIdentity.ts"

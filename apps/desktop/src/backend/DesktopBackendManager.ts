@@ -32,6 +32,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
+import * as FatalStartup from "@t3tools/shared/fatalStartup";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -295,6 +296,10 @@ export interface BackendInstanceSpec {
   // between "fired onReady" and "currentConfig already advanced".
   readonly onReady?: (httpBaseUrl: URL) => Effect.Effect<void>;
   readonly onShutdown?: () => Effect.Effect<void>;
+  // Fired when the backend announced a startup failure a restart cannot fix.
+  // The instance stops instead of restarting, so the handler owns telling the
+  // user; nothing else will.
+  readonly onFatalStartup?: (failure: FatalStartup.FatalStartupFailure) => Effect.Effect<void>;
   // Fired once when a fatal or bounded preflight failure has exhausted its
   // retries. Returns true when the callback changed configuration and the
   // manager should resolve once more; false stops the failed instance.
@@ -632,6 +637,35 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
 // nothing is shared between instances created from separate
 // makeBackendInstance calls. The instance shuts down automatically when
 // the calling scope closes (typically the application scope).
+/**
+ * Watches a run's output for the fatal-startup marker.
+ *
+ * Chunk boundaries do not respect line boundaries, so text is buffered until a
+ * newline before any of it is examined; the marker is only meaningful whole.
+ */
+const makeFatalStartupScanner = Effect.fn("desktop.backendInstance.fatalStartupScanner")(
+  function* () {
+    const decoder = new TextDecoder();
+    const pending = yield* Ref.make("");
+    const found = yield* Ref.make(Option.none<FatalStartup.FatalStartupFailure>());
+
+    const scan = (chunk: Uint8Array) =>
+      Ref.modify(pending, (buffered) => {
+        const lines = (buffered + decoder.decode(chunk, { stream: true })).split("\n");
+        return [lines.slice(0, -1), lines.at(-1) ?? ""] as const;
+      }).pipe(
+        Effect.flatMap((lines) => {
+          const failure = lines
+            .map(FatalStartup.parseFatalStartupLine)
+            .find((parsed) => parsed !== undefined);
+          return failure === undefined ? Effect.void : Ref.set(found, Option.some(failure));
+        }),
+      );
+
+    return { scan, failure: Ref.get(found) } as const;
+  },
+);
+
 export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
   spec: BackendInstanceSpec,
 ): Effect.fn.Return<
@@ -825,6 +859,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
             nextRunId: latest.nextRunId + 1,
           },
         ]);
+        const fatalStartupScanner = yield* makeFatalStartupScanner();
 
         const finalizeRun = Effect.fn("desktop.backendInstance.finalizeRun")(function* (
           reason: string,
@@ -898,6 +933,17 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               }
 
               if (isCurrentRun && nextState.desiredRunning) {
+                const fatalStartup = yield* fatalStartupScanner.failure;
+                if (Option.isSome(fatalStartup)) {
+                  // Restarting cannot fix this one, and the loop is what hides
+                  // it behind a spinner. Stop, and let the handler speak.
+                  yield* logInstanceError("backend refused to start", {
+                    tag: fatalStartup.value.tag,
+                    reason: fatalStartup.value.message,
+                  });
+                  yield* spec.onFatalStartup?.(fatalStartup.value) ?? Effect.void;
+                  return;
+                }
                 yield* scheduleRestart(reason);
               }
             }),
@@ -964,7 +1010,10 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               });
             },
           ),
-          onOutput: (streamName, chunk) => backendOutputLog.writeOutputChunk(streamName, chunk),
+          onOutput: (streamName, chunk) =>
+            backendOutputLog
+              .writeOutputChunk(streamName, chunk)
+              .pipe(Effect.andThen(fatalStartupScanner.scan(chunk))),
         }).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provideService(HttpClient.HttpClient, httpClient),

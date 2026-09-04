@@ -12,6 +12,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
+import * as FatalStartup from "@t3tools/shared/fatalStartup";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -124,6 +125,7 @@ interface MakeInstanceInput {
   readonly onPreflightFailed?: (
     failure: DesktopBackendManager.PreflightFailure,
   ) => Effect.Effect<boolean>;
+  readonly onFatalStartup?: (failure: FatalStartup.FatalStartupFailure) => Effect.Effect<void>;
   readonly config?: DesktopBackendManager.DesktopBackendStartConfig;
   readonly configResolve?: Effect.Effect<
     DesktopBackendManager.DesktopBackendStartConfig,
@@ -185,6 +187,7 @@ function makeTestInstance(input: MakeInstanceInput) {
     ...(input.onReady ? { onReady: () => input.onReady! } : {}),
     ...(input.onShutdown ? { onShutdown: () => input.onShutdown! } : {}),
     ...(input.onPreflightFailed ? { onPreflightFailed: input.onPreflightFailed } : {}),
+    ...(input.onFatalStartup ? { onFatalStartup: input.onFatalStartup } : {}),
   });
 
   return instance.pipe(Effect.provide(servicesLayer));
@@ -1501,6 +1504,113 @@ describe("DesktopBackendManager", () => {
         assert.equal(yield* Queue.size(starts), 0);
         assert.equal((yield* instance.snapshot).desiredRunning, false);
       }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+});
+
+describe("fatal startup failures", () => {
+  const encode = (text: string) => new TextEncoder().encode(text);
+  const migratedAhead = {
+    tag: "DatabaseMigratedAheadError",
+    message:
+      "This T3 Code build cannot open /Users/x/.t3/userdata: schema 49, this build knows 47.",
+  };
+
+  // Counts spawns so a restart is observable as a real event rather than a wait.
+  const countingSpawner = (
+    process: () => ChildProcessSpawner.ChildProcessHandle,
+    onSpawn: (count: number) => Effect.Effect<void>,
+  ) =>
+    Effect.gen(function* () {
+      const spawns = yield* Ref.make(0);
+      return Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() =>
+          Ref.updateAndGet(spawns, (count) => count + 1).pipe(
+            Effect.tap(onSpawn),
+            Effect.as(process()),
+          ),
+        ),
+      );
+    });
+
+  const failingProcess = (chunks: ReadonlyArray<string>) => () =>
+    makeProcess({
+      stderr: Stream.fromIterable(chunks.map(encode)),
+      exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+    });
+
+  it.effect("surfaces the failure and stops restarting", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const surfaced = yield* Deferred.make<FatalStartup.FatalStartupFailure>();
+        const spawnerLayer = yield* countingSpawner(
+          failingProcess([`${FatalStartup.formatFatalStartupLine(migratedAhead)}\n`]),
+          () => Effect.void,
+        );
+        const instance = yield* makeTestInstance({
+          spawnerLayer,
+          onFatalStartup: (failure) => Deferred.succeed(surfaced, failure).pipe(Effect.asVoid),
+        });
+
+        yield* instance.start;
+        const failure = yield* Deferred.await(surfaced);
+
+        assert.deepEqual(failure, migratedAhead);
+        // The handler runs in place of scheduleRestart, so by now the loop is
+        // over rather than merely delayed.
+        const snapshot = yield* instance.snapshot;
+        assert.isFalse(snapshot.restartScheduled);
+      }),
+    ),
+  );
+
+  it.effect("reads a marker split across output chunks", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const line = FatalStartup.formatFatalStartupLine(migratedAhead);
+        const surfaced = yield* Deferred.make<FatalStartup.FatalStartupFailure>();
+        const spawnerLayer = yield* countingSpawner(
+          failingProcess(["some earlier log line\n", line.slice(0, 20), `${line.slice(20)}\n`]),
+          () => Effect.void,
+        );
+        const instance = yield* makeTestInstance({
+          spawnerLayer,
+          onFatalStartup: (failure) => Deferred.succeed(surfaced, failure).pipe(Effect.asVoid),
+        });
+
+        yield* instance.start;
+        assert.deepEqual(yield* Deferred.await(surfaced), migratedAhead);
+      }),
+    ),
+  );
+
+  it.effect("leaves an ordinary failure to the restart loop", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        // persistFailure runs inside finalizeRun's critical section, so a stop
+        // requested after it must queue behind finalizeRun on the same mutex.
+        // Awaiting both is a barrier: the fatal branch has been taken or not.
+        const finalizing = yield* Deferred.make<void>();
+        const surfaced = yield* Ref.make(false);
+        const spawnerLayer = yield* countingSpawner(
+          failingProcess(["INFO: something ordinary went wrong\n"]),
+          () => Effect.void,
+        );
+        const instance = yield* makeTestInstance({
+          spawnerLayer,
+          backendOutputLog: {
+            persistFailure: () => Deferred.succeed(finalizing, undefined).pipe(Effect.asVoid),
+          },
+          onFatalStartup: () => Ref.set(surfaced, true),
+        });
+
+        yield* instance.start;
+        yield* Deferred.await(finalizing);
+        yield* instance.stop();
+
+        assert.isFalse(yield* Ref.get(surfaced));
+      }),
     ),
   );
 });

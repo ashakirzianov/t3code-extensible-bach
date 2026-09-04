@@ -82,6 +82,7 @@
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FatalStartup from "@t3tools/shared/fatalStartup";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -151,6 +152,11 @@ export class DesktopBackendPool extends Context.Service<
     // exposed as a typed effect so consumers don't have to handle the
     // Option for the case that's guaranteed to be present.
     readonly primary: Effect.Effect<DesktopBackendInstance>;
+    // Resolves once, if ever, when the primary backend reports a startup
+    // failure a restart cannot fix. The instance has already stopped by then;
+    // awaiting this is how the app learns to say so instead of waiting forever
+    // for a window. Never resolves on a healthy launch.
+    readonly primaryFatalStartup: Effect.Effect<FatalStartup.FatalStartupFailure>;
     // Build a fresh DesktopBackendInstance from `spec` and add it to the
     // registry. The pool owns the instance's scope: unregister(id) or pool
     // teardown closes it and runs the instance's auto-stop finalizer. The
@@ -214,6 +220,9 @@ export const layer = Layer.effect(
     const desktopWindow = yield* DesktopWindow.DesktopWindow;
     const electronDialog = yield* ElectronDialog.ElectronDialog;
     const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
+    // Reported, not handled: the pool has no business owning a dialog, and the
+    // app is the only thing that knows how a fatal startup should look.
+    const primaryFatalStartup = yield* Deferred.make<FatalStartup.FatalStartupFailure>();
     // Anchor the pool's lifetime to its layer scope so registered
     // instance scopes can be forked off it. Without this, instance
     // scopes are orphaned: they only close via explicit unregister()
@@ -277,6 +286,15 @@ export const layer = Layer.effect(
       },
     );
 
+    // The primary backend is the app: if it will not start there is nothing to
+    // fall back to, so this is announced once and whoever is watching decides.
+    const handlePrimaryFatalStartup = Effect.fn("desktop.backendPool.primaryFatalStartup")(
+      function* (failure: FatalStartup.FatalStartupFailure) {
+        yield* logBackendPoolWarning("primary backend refused to start", { tag: failure.tag });
+        yield* Deferred.succeed(primaryFatalStartup, failure);
+      },
+    );
+
     const primary = yield* DesktopBackendManager.makeBackendInstance({
       id: DesktopBackendManager.PRIMARY_INSTANCE_ID,
       // Keep this lazy. The pool layer is initialized before startup loads
@@ -300,6 +318,7 @@ export const layer = Layer.effect(
           ),
         ),
       onShutdown: () => desktopWindow.handleBackendNotReady,
+      onFatalStartup: handlePrimaryFatalStartup,
       onPreflightFailed: handlePrimaryPreflightFailure,
     });
 
@@ -429,6 +448,7 @@ export const layer = Layer.effect(
             return entry?._tag === "Active" ? Option.some(entry.instance) : Option.none();
           }),
         ),
+      primaryFatalStartup: Deferred.await(primaryFatalStartup),
       list: SynchronizedRef.get(instancesRef).pipe(
         Effect.map((instances) =>
           Array.from(instances.values()).flatMap((entry) =>
@@ -467,6 +487,9 @@ export const layerTest = (
         get: (id) => Effect.succeed(Option.fromNullishOr(byId.get(id))),
         list: Effect.succeed(Array.from(byId.values())),
         primary: Effect.succeed(primary),
+        // Tests that do not exercise it should hang rather than resolve to a
+        // fake failure that looks like the backend refused to start.
+        primaryFatalStartup: Effect.never,
         register: () => Effect.die("DesktopBackendPool.layerTest does not support register"),
         unregister: () => Effect.die("DesktopBackendPool.layerTest does not support unregister"),
       });

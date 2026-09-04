@@ -28,6 +28,7 @@ import * as ExternalLauncher from "./process/externalLauncher.ts";
 import { pullRequestHttpApiLayer } from "./pullRequest/http.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
+import * as FatalStartup from "@t3tools/shared/fatalStartup";
 import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
@@ -770,5 +771,19 @@ export const makeServerLayer = Layer.unwrap(
   }),
 );
 
+/**
+ * Announces a startup failure a restart cannot fix, for a desktop shell
+ * supervising this process. Written straight to stderr rather than logged, so
+ * the line stays byte-stable regardless of log level or formatter.
+ */
+const reportFatalStartup = (failure: FatalStartup.FatalStartupFailure) =>
+  Effect.sync(() => {
+    process.stderr.write(`${FatalStartup.formatFatalStartupLine(failure)}\n`);
+  });
+
 // The CLI supplies configuration.
-export const runServer = Layer.launch(makeServerLayer);
+export const runServer = Layer.launch(makeServerLayer).pipe(
+  Effect.tapErrorTag("DatabaseMigratedAheadError", (error) =>
+    reportFatalStartup({ tag: error._tag, message: error.message }),
+  ),
+);

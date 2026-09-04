@@ -5,7 +5,10 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as FatalStartup from "@t3tools/shared/fatalStartup";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
@@ -41,21 +44,34 @@ function makeStubInstance(
   };
 }
 
+// Most tests here only assert registry composition, so every moving part
+// below dies by default; a test that wants a real backend run overrides just
+// the pieces it needs.
+interface PoolLayerOverrides {
+  readonly spawner?: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>;
+  readonly httpClient?: Layer.Layer<HttpClient.HttpClient>;
+  readonly fileSystem?: Layer.Layer<FileSystem.FileSystem>;
+  readonly resolvePrimary?: DesktopBackendConfiguration.DesktopBackendConfiguration["Service"]["resolvePrimary"];
+}
+
 function makePoolLayer(
   labelRef: Ref.Ref<string>,
+  overrides: PoolLayerOverrides = {},
 ): Layer.Layer<DesktopBackendPool.DesktopBackendPool> {
   return DesktopBackendPool.layer.pipe(
     Layer.provideMerge(
       Layer.mergeAll(
-        FileSystem.layerNoop({}),
-        Layer.succeed(
-          ChildProcessSpawner.ChildProcessSpawner,
-          ChildProcessSpawner.make(() => Effect.die("unexpected child process spawn")),
-        ),
-        Layer.succeed(
-          HttpClient.HttpClient,
-          HttpClient.make(() => Effect.die("unexpected HTTP request")),
-        ),
+        overrides.fileSystem ?? FileSystem.layerNoop({}),
+        overrides.spawner ??
+          Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() => Effect.die("unexpected child process spawn")),
+          ),
+        overrides.httpClient ??
+          Layer.succeed(
+            HttpClient.HttpClient,
+            HttpClient.make(() => Effect.die("unexpected HTTP request")),
+          ),
         Layer.succeed(DesktopObservability.DesktopBackendOutputLogFactory, {
           forInstance: () =>
             Effect.succeed({
@@ -79,7 +95,8 @@ function makePoolLayer(
           updateCancellations: Stream.empty,
         }),
         Layer.succeed(DesktopBackendConfiguration.DesktopBackendConfiguration, {
-          resolvePrimary: Effect.die("unexpected primary config resolve"),
+          resolvePrimary:
+            overrides.resolvePrimary ?? Effect.die("unexpected primary config resolve"),
           resolvePrimaryLabel: Ref.get(labelRef),
           resolveWsl: () => Effect.die("unexpected WSL config resolve"),
         } satisfies DesktopBackendConfiguration.DesktopBackendConfiguration["Service"]),
@@ -155,4 +172,86 @@ describe("DesktopBackendPool", () => {
       }),
     ),
   );
+
+  it.effect("reports a primary backend that refuses to start", () => {
+    const failure = {
+      tag: "DatabaseMigratedAheadError",
+      message: "This T3 Code build cannot open /tmp/t3/userdata: schema 49, this build knows 47.",
+    };
+    const primaryConfig: DesktopBackendStartConfig = {
+      executablePath: "/electron",
+      args: ["/server/bin.mjs", "--bootstrap-fd", "3"],
+      entryPath: "/server/bin.mjs",
+      cwd: "/server",
+      env: { ELECTRON_RUN_AS_NODE: "1" },
+      bootstrap: {
+        mode: "desktop",
+        noBrowser: true,
+        port: 3773,
+        t3Home: "/tmp/t3",
+        host: "127.0.0.1",
+        desktopBootstrapToken: "token",
+        tailscaleServeEnabled: false,
+        tailscaleServePort: 443,
+        desktopTelemetryFd: 4,
+        desktopTelemetryControlFd: 5,
+      },
+      bootstrapDelivery: "fd3",
+      extendEnv: true,
+      httpBaseUrl: new URL("http://127.0.0.1:3773"),
+      captureOutput: true,
+      preflightFailure: Option.none(),
+    };
+
+    return Effect.gen(function* () {
+      const labelRef = yield* Ref.make("Windows");
+      return yield* Effect.gen(function* () {
+        const pool = yield* DesktopBackendPool.DesktopBackendPool;
+        const primary = yield* pool.primary;
+
+        yield* primary.start;
+
+        // The manager detects the marker; the pool's job is only to pass it
+        // on, so this resolving is the whole assertion.
+        assert.deepEqual(yield* pool.primaryFatalStartup, failure);
+      }).pipe(
+        Effect.provide(
+          makePoolLayer(labelRef, {
+            fileSystem: FileSystem.layerNoop({ exists: () => Effect.succeed(true) }),
+            httpClient: Layer.succeed(
+              HttpClient.HttpClient,
+              HttpClient.make((request) =>
+                Effect.succeed(
+                  HttpClientResponse.fromWeb(request, new Response(null, { status: 200 })),
+                ),
+              ),
+            ),
+            resolvePrimary: Effect.succeed(primaryConfig),
+            spawner: Layer.succeed(
+              ChildProcessSpawner.ChildProcessSpawner,
+              ChildProcessSpawner.make(() =>
+                Effect.succeed(
+                  ChildProcessSpawner.makeHandle({
+                    pid: ChildProcessSpawner.ProcessId(123),
+                    stdout: Stream.empty,
+                    stderr: Stream.make(
+                      new TextEncoder().encode(`${FatalStartup.formatFatalStartupLine(failure)}\n`),
+                    ),
+                    all: Stream.empty,
+                    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+                    isRunning: Effect.succeed(false),
+                    kill: () => Effect.void,
+                    stdin: Sink.drain,
+                    getInputFd: () => Sink.drain,
+                    getOutputFd: () => Stream.empty,
+                    unref: Effect.succeed(Effect.void),
+                  }),
+                ),
+              ),
+            ),
+          }),
+        ),
+      );
+    });
+  });
 });
