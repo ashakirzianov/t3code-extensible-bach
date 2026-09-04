@@ -1,0 +1,928 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://t3code-extensible.dev/schemas/extensions/protocol-v1.json",
+  "title": "T3 Code extension protocol",
+  "description": "Generated from packages/contracts/src/extensions.ts. Do not edit. See docs/internals/extensions/protocol.md.",
+  "x-protocolVersion": 1,
+  "x-supportedProtocolVersions": [1],
+  "x-methods": {
+    "extensions.hello": {
+      "direction": "extension-to-host",
+      "summary": "Handshake. Sends the manifest and the protocol version; receives the host's facts.",
+      "payload": "ExtensionHelloInput",
+      "success": "ExtensionHelloAck"
+    },
+    "extensions.registerTools": {
+      "direction": "extension-to-host",
+      "summary": "Declares the complete MCP tool surface. Answered per tool.",
+      "payload": "ExtensionRegisterToolsInput",
+      "success": "ExtensionRegisterToolsResult"
+    },
+    "extensions.registerHttpPrefix": {
+      "direction": "extension-to-host",
+      "summary": "Claims one path prefix under the host's own origin and auth.",
+      "payload": "ExtensionRegisterHttpPrefixInput",
+      "success": "ExtensionRegisterHttpPrefixResult"
+    },
+    "extensions.registerWebEntry": {
+      "direction": "extension-to-host",
+      "summary": "Declares the web bundle and nav entry the host mounts.",
+      "payload": "ExtensionRegisterWebEntryInput"
+    },
+    "extensions.setBadge": {
+      "direction": "extension-to-host",
+      "summary": "Sets the nav badge. Held by the host across reconnects.",
+      "payload": "ExtensionSetBadgeInput"
+    },
+    "extensions.connect": {
+      "direction": "host-to-extension",
+      "summary": "Opens the stream the host pushes calls on. Opening it declares the extension ready.",
+      "payload": "ExtensionConnectInput",
+      "success": "ExtensionStreamEvent"
+    },
+    "extensions.respondTool": {
+      "direction": "extension-to-host",
+      "summary": "Answers one invokeTool event.",
+      "payload": "ExtensionToolResult"
+    },
+    "extensions.respondHttp": {
+      "direction": "extension-to-host",
+      "summary": "Answers one proxyHttp event.",
+      "payload": "ExtensionHttpResponse"
+    }
+  },
+  "$defs": {
+    "ExtensionBadge": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": ["none"]
+            }
+          },
+          "required": ["kind"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": ["dot"]
+            }
+          },
+          "required": ["kind"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": ["count"]
+            },
+            "count": {
+              "type": "integer",
+              "allOf": [
+                {
+                  "minimum": 0
+                },
+                {
+                  "maximum": 9999
+                }
+              ]
+            }
+          },
+          "required": ["kind", "count"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ExtensionConnectInput": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/ExtensionName"
+        }
+      },
+      "required": ["name"],
+      "additionalProperties": false
+    },
+    "ExtensionConnectionId": {
+      "type": "string",
+      "allOf": [
+        {
+          "minLength": 1
+        },
+        {
+          "maxLength": 64
+        }
+      ]
+    },
+    "ExtensionError": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ExtensionProtocolMismatchError"
+        },
+        {
+          "$ref": "#/$defs/ExtensionHandshakeRequiredError"
+        },
+        {
+          "$ref": "#/$defs/ExtensionToolNameCollisionError"
+        },
+        {
+          "$ref": "#/$defs/ExtensionUnknownToolError"
+        },
+        {
+          "$ref": "#/$defs/ExtensionUnavailableError"
+        },
+        {
+          "$ref": "#/$defs/ExtensionHttpPrefixCollisionError"
+        }
+      ]
+    },
+    "ExtensionHandshakeRequiredError": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": ["ExtensionHandshakeRequiredError"]
+        },
+        "method": {
+          "type": "string",
+          "allOf": [
+            {
+              "minLength": 1
+            },
+            {
+              "maxLength": 128
+            }
+          ]
+        }
+      },
+      "required": ["_tag", "method"],
+      "additionalProperties": false
+    },
+    "ExtensionHelloAck": {
+      "type": "object",
+      "properties": {
+        "protocolVersion": {
+          "$ref": "#/$defs/ExtensionProtocolVersion"
+        },
+        "hostProtocolVersions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ExtensionProtocolVersion"
+          }
+        },
+        "hostVersion": {
+          "type": "string",
+          "allOf": [
+            {
+              "minLength": 1
+            },
+            {
+              "maxLength": 64
+            }
+          ]
+        },
+        "environmentId": {
+          "type": "string"
+        },
+        "extensionPath": {
+          "$ref": "#/$defs/ExtensionHostPath"
+        },
+        "dataDirectory": {
+          "$ref": "#/$defs/ExtensionHostPath"
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "hostProtocolVersions",
+        "hostVersion",
+        "environmentId",
+        "extensionPath",
+        "dataDirectory"
+      ],
+      "additionalProperties": false
+    },
+    "ExtensionHelloInput": {
+      "type": "object",
+      "properties": {
+        "protocolVersion": {
+          "$ref": "#/$defs/ExtensionProtocolVersion"
+        },
+        "manifest": {
+          "$ref": "#/$defs/ExtensionManifest"
+        }
+      },
+      "required": ["protocolVersion", "manifest"],
+      "additionalProperties": false
+    },
+    "ExtensionHostPath": {
+      "type": "string",
+      "allOf": [
+        {
+          "minLength": 1
+        },
+        {
+          "maxLength": 1024
+        }
+      ]
+    },
+    "ExtensionHttpBody": {
+      "type": "object",
+      "properties": {
+        "encoding": {
+          "type": "string",
+          "enum": ["utf8", "base64"]
+        },
+        "data": {
+          "type": "string",
+          "allOf": [
+            {
+              "maxLength": 8388608
+            }
+          ]
+        }
+      },
+      "required": ["encoding", "data"],
+      "additionalProperties": false
+    },
+    "ExtensionHttpHeaders": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "ExtensionHttpMethod": {
+      "type": "string",
+      "enum": ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+    },
+    "ExtensionHttpPrefix": {
+      "type": "string",
+      "allOf": [
+        {
+          "minLength": 1
+        },
+        {
+          "maxLength": 64
+        },
+        {
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        }
+      ]
+    },
+    "ExtensionHttpPrefixCollisionError": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": ["ExtensionHttpPrefixCollisionError"]
+        },
+        "prefix": {
+          "$ref": "#/$defs/ExtensionHttpPrefix"
+        },
+        "owner": {
+          "$ref": "#/$defs/ExtensionName"
+        }
+      },
+      "required": ["_tag", "prefix"],
+      "additionalProperties": false
+    },
+    "ExtensionHttpRequest": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "$ref": "#/$defs/ExtensionHttpRequestId"
+        },
+        "method": {
+          "$ref": "#/$defs/ExtensionHttpMethod"
+        },
+        "path": {
+          "type": "string",
+          "allOf": [
+            {
+              "maxLength": 2048
+            },
+            {
+              "pattern": "^\\/"
+            }
+          ]
+        },
+        "query": {
+          "type": "string",
+          "allOf": [
+            {
+              "maxLength": 4096
+            }
+          ]
+        },
+        "headers": {
+          "$ref": "#/$defs/ExtensionHttpHeaders"
+        },
+        "body": {
+          "$ref": "#/$defs/ExtensionHttpBody"
+        },
+        "environmentId": {
+          "type": "string"
+        }
+      },
+      "required": ["requestId", "method", "path", "headers", "environmentId"],
+      "additionalProperties": false
+    },
+    "ExtensionHttpRequestId": {
+      "type": "string",
+      "allOf": [
+        {
+          "minLength": 1
+        },
+        {
+          "maxLength": 128
+        }
+      ]
+    },
+    "ExtensionHttpResponse": {
+      "type": "object",
+      "properties": {
+        "connectionId": {
+          "$ref": "#/$defs/ExtensionConnectionId"
+        },
+        "requestId": {
+          "$ref": "#/$defs/ExtensionHttpRequestId"
+        },
+        "status": {
+          "type": "integer",
+          "allOf": [
+            {
+              "minimum": 100,
+              "maximum": 599
+            }
+          ]
+        },
+        "headers": {
+          "$ref": "#/$defs/ExtensionHttpHeaders"
+        },
+        "body": {
+          "$ref": "#/$defs/ExtensionHttpBody"
+        }
+      },
+      "required": ["connectionId", "requestId", "status", "headers"],
+      "additionalProperties": false
+    },
+    "ExtensionInvocationId": {
+      "type": "string",
+      "allOf": [
+        {
+          "minLength": 1
+        },
+        {
+          "maxLength": 128
+        }
+      ]
+    },
+    "ExtensionManifest": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/ExtensionName"
+        },
+        "version": {
+          "type": "string",
+          "allOf": [
+            {
+              "minLength": 1
+            },
+            {
+              "maxLength": 64
+            }
+          ]
+        },
+        "protocolVersion": {
+          "$ref": "#/$defs/ExtensionProtocolVersion"
+        },
+        "minHostVersion": {
+          "type": "string",
+          "allOf": [
+            {
+              "minLength": 1
+            },
+            {
+              "maxLength": 64
+            }
+          ]
+        },
+        "server": {
+          "$ref": "#/$defs/ExtensionServerEntry"
+        },
+        "web": {
+          "$ref": "#/$defs/ExtensionWebEntry"
+        }
+      },
+      "required": ["name", "version", "protocolVersion", "server"],
+      "additionalProperties": false
+    },
+    "ExtensionName": {
+      "type": "string",
+      "allOf": [
+        {
+          "minLength": 1
+        },
+        {
+          "maxLength": 64
+        },
+        {
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        }
+      ]
+    },
+    "ExtensionProtocolMismatchError": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": ["ExtensionProtocolMismatchError"]
+        },
+        "extensionName": {
+          "$ref": "#/$defs/ExtensionName"
+        },
+        "requestedVersion": {
+          "$ref": "#/$defs/ExtensionProtocolVersion"
+        },
+        "supportedVersions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ExtensionProtocolVersion"
+          }
+        }
+      },
+      "required": ["_tag", "requestedVersion", "supportedVersions"],
+      "additionalProperties": false
+    },
+    "ExtensionProtocolVersion": {
+      "type": "integer",
+      "allOf": [
+        {
+          "minimum": 1
+        }
+      ]
+    },
+    "ExtensionRegisterHttpPrefixInput": {
+      "type": "object",
+      "properties": {
+        "prefix": {
+          "$ref": "#/$defs/ExtensionHttpPrefix"
+        }
+      },
+      "required": ["prefix"],
+      "additionalProperties": false
+    },
+    "ExtensionRegisterHttpPrefixResult": {
+      "type": "object",
+      "properties": {
+        "prefix": {
+          "$ref": "#/$defs/ExtensionHttpPrefix"
+        },
+        "basePath": {
+          "type": "string",
+          "allOf": [
+            {
+              "minLength": 1
+            },
+            {
+              "maxLength": 512
+            }
+          ]
+        }
+      },
+      "required": ["prefix", "basePath"],
+      "additionalProperties": false
+    },
+    "ExtensionRegisterToolsInput": {
+      "type": "object",
+      "properties": {
+        "tools": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ExtensionToolDefinition"
+          },
+          "allOf": [
+            {
+              "maxItems": 64
+            }
+          ]
+        }
+      },
+      "required": ["tools"],
+      "additionalProperties": false
+    },
+    "ExtensionRegisterToolsResult": {
+      "type": "object",
+      "properties": {
+        "tools": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ExtensionToolRegistration"
+          }
+        }
+      },
+      "required": ["tools"],
+      "additionalProperties": false
+    },
+    "ExtensionRegisterWebEntryInput": {
+      "type": "object",
+      "properties": {
+        "web": {
+          "$ref": "#/$defs/ExtensionWebEntry"
+        }
+      },
+      "required": ["web"],
+      "additionalProperties": false
+    },
+    "ExtensionRelativePath": {
+      "type": "string",
+      "allOf": [
+        {
+          "minLength": 1
+        },
+        {
+          "maxLength": 512
+        },
+        {
+          "pattern": "^(?!.*(?:^|\\/)\\.\\.(?:\\/|$))[A-Za-z0-9._-]+(?:\\/[A-Za-z0-9._-]+)*$"
+        }
+      ]
+    },
+    "ExtensionServerEntry": {
+      "type": "object",
+      "properties": {
+        "entry": {
+          "$ref": "#/$defs/ExtensionRelativePath"
+        }
+      },
+      "required": ["entry"],
+      "additionalProperties": false
+    },
+    "ExtensionSetBadgeInput": {
+      "type": "object",
+      "properties": {
+        "badge": {
+          "$ref": "#/$defs/ExtensionBadge"
+        }
+      },
+      "required": ["badge"],
+      "additionalProperties": false
+    },
+    "ExtensionStreamEvent": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": ["attached"]
+            },
+            "connectionId": {
+              "$ref": "#/$defs/ExtensionConnectionId"
+            }
+          },
+          "required": ["type", "connectionId"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": ["invokeTool"]
+            },
+            "connectionId": {
+              "$ref": "#/$defs/ExtensionConnectionId"
+            },
+            "invocation": {
+              "$ref": "#/$defs/ExtensionToolInvocation"
+            }
+          },
+          "required": ["type", "connectionId", "invocation"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": ["proxyHttp"]
+            },
+            "connectionId": {
+              "$ref": "#/$defs/ExtensionConnectionId"
+            },
+            "request": {
+              "$ref": "#/$defs/ExtensionHttpRequest"
+            }
+          },
+          "required": ["type", "connectionId", "request"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ExtensionToolCaller": {
+      "type": "object",
+      "properties": {
+        "environmentId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "providerSessionId": {
+          "type": "string",
+          "allOf": [
+            {
+              "minLength": 1
+            },
+            {
+              "maxLength": 256
+            }
+          ]
+        },
+        "providerInstanceId": {
+          "type": "string"
+        }
+      },
+      "required": ["environmentId", "threadId", "providerSessionId", "providerInstanceId"],
+      "additionalProperties": false
+    },
+    "ExtensionToolContent": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": ["text"]
+            },
+            "text": {
+              "type": "string",
+              "allOf": [
+                {
+                  "maxLength": 1048576
+                }
+              ]
+            }
+          },
+          "required": ["type", "text"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": ["image"]
+            },
+            "data": {
+              "type": "string",
+              "allOf": [
+                {
+                  "maxLength": 8388608
+                }
+              ]
+            },
+            "mimeType": {
+              "type": "string",
+              "allOf": [
+                {
+                  "minLength": 1
+                },
+                {
+                  "maxLength": 100
+                }
+              ]
+            }
+          },
+          "required": ["type", "data", "mimeType"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ExtensionToolDefinition": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/ExtensionToolName"
+        },
+        "description": {
+          "type": "string",
+          "allOf": [
+            {
+              "minLength": 1
+            },
+            {
+              "maxLength": 4096
+            }
+          ]
+        },
+        "inputSchema": {
+          "type": "object"
+        }
+      },
+      "required": ["name", "description", "inputSchema"],
+      "additionalProperties": false
+    },
+    "ExtensionToolInvocation": {
+      "type": "object",
+      "properties": {
+        "invocationId": {
+          "$ref": "#/$defs/ExtensionInvocationId"
+        },
+        "name": {
+          "$ref": "#/$defs/ExtensionToolName"
+        },
+        "arguments": {
+          "type": "object"
+        },
+        "caller": {
+          "$ref": "#/$defs/ExtensionToolCaller"
+        }
+      },
+      "required": ["invocationId", "name", "arguments", "caller"],
+      "additionalProperties": false
+    },
+    "ExtensionToolName": {
+      "type": "string",
+      "allOf": [
+        {
+          "minLength": 1
+        },
+        {
+          "maxLength": 64
+        },
+        {
+          "pattern": "^[A-Za-z0-9_-]+$"
+        }
+      ]
+    },
+    "ExtensionToolNameCollisionError": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": ["ExtensionToolNameCollisionError"]
+        },
+        "toolName": {
+          "$ref": "#/$defs/ExtensionToolName"
+        },
+        "owner": {
+          "$ref": "#/$defs/ExtensionName"
+        }
+      },
+      "required": ["_tag", "toolName"],
+      "additionalProperties": false
+    },
+    "ExtensionToolRegistration": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": ["accepted"]
+            },
+            "name": {
+              "$ref": "#/$defs/ExtensionToolName"
+            }
+          },
+          "required": ["status", "name"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": ["rejected"]
+            },
+            "name": {
+              "$ref": "#/$defs/ExtensionToolName"
+            },
+            "reason": {
+              "$ref": "#/$defs/ExtensionToolRejectionReason"
+            },
+            "message": {
+              "type": "string",
+              "allOf": [
+                {
+                  "minLength": 1
+                },
+                {
+                  "maxLength": 512
+                }
+              ]
+            }
+          },
+          "required": ["status", "name", "reason", "message"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ExtensionToolRejectionReason": {
+      "type": "string",
+      "enum": ["name-collision", "invalid-input-schema", "unsupported"]
+    },
+    "ExtensionToolResult": {
+      "type": "object",
+      "properties": {
+        "connectionId": {
+          "$ref": "#/$defs/ExtensionConnectionId"
+        },
+        "invocationId": {
+          "$ref": "#/$defs/ExtensionInvocationId"
+        },
+        "content": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ExtensionToolContent"
+          }
+        },
+        "isError": {
+          "type": "boolean"
+        },
+        "structuredContent": {
+          "type": "object"
+        }
+      },
+      "required": ["connectionId", "invocationId", "content"],
+      "additionalProperties": false
+    },
+    "ExtensionUnavailableError": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": ["ExtensionUnavailableError"]
+        },
+        "extensionName": {
+          "$ref": "#/$defs/ExtensionName"
+        },
+        "reason": {
+          "$ref": "#/$defs/ExtensionUnavailableReason"
+        },
+        "toolName": {
+          "$ref": "#/$defs/ExtensionToolName"
+        }
+      },
+      "required": ["_tag", "extensionName", "reason"],
+      "additionalProperties": false
+    },
+    "ExtensionUnavailableReason": {
+      "type": "string",
+      "enum": ["not-connected", "stopped", "restarting", "timeout"]
+    },
+    "ExtensionUnknownToolError": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": ["ExtensionUnknownToolError"]
+        },
+        "toolName": {
+          "$ref": "#/$defs/ExtensionToolName"
+        },
+        "extensionName": {
+          "$ref": "#/$defs/ExtensionName"
+        }
+      },
+      "required": ["_tag", "toolName"],
+      "additionalProperties": false
+    },
+    "ExtensionWebEntry": {
+      "type": "object",
+      "properties": {
+        "entry": {
+          "$ref": "#/$defs/ExtensionRelativePath"
+        },
+        "css": {
+          "$ref": "#/$defs/ExtensionRelativePath"
+        },
+        "label": {
+          "type": "string",
+          "allOf": [
+            {
+              "minLength": 1
+            },
+            {
+              "maxLength": 64
+            }
+          ]
+        },
+        "icon": {
+          "$ref": "#/$defs/ExtensionRelativePath"
+        }
+      },
+      "required": ["entry", "label"],
+      "additionalProperties": false
+    }
+  }
+}

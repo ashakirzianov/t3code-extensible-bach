@@ -64,6 +64,69 @@ with a same-origin `import()` — the only thing that executes under the desktop
 ([spike](spikes/electron-runtime.md)) — and mounts it in a container the host owns. The host
 draws the nav entry itself from the label, icon, and badge.
 
+## Starting an extension
+
+The host spawns the extension from its folder on the host's own Node — under the
+desktop, the app's own binary with `ELECTRON_RUN_AS_NODE=1`, which is how the server
+itself already runs ([spike](spikes/electron-runtime.md)). Everything the extension
+needs arrives as environment variables; nothing is inferred from the process.
+
+| Variable                  | Meaning                                                                                         |
+| ------------------------- | ----------------------------------------------------------------------------------------------- |
+| `T3_EXT_NAME`             | The name the host registered this extension under; authoritative over the manifest's own `name` |
+| `T3_EXT_TOKEN`            | Bearer token carrying the `extension` scope plus whatever orchestration scopes it was granted   |
+| `T3_EXT_WS_URL`           | Absolute `ws://` or `wss://` URL, connected to verbatim                                         |
+| `T3_EXT_DATA_DIR`         | Absolute path to the per-environment directory the extension owns                               |
+| `T3_EXT_PROTOCOL_VERSION` | Protocol version the host intends to speak; absent means 1                                      |
+
+`T3_EXT_NAME` is what `extensions.connect` must send. The same built folder can be
+installed more than once, so the host decides which registration a given process is;
+an extension that assumed its manifest's `name` would connect as the wrong one.
+
+The token travels as `Authorization: Bearer <token>` on the WebSocket handshake.
+Browsers cannot set handshake headers and use the host's ticket query parameter
+instead, but a spawned extension is not a browser and takes the header.
+
+A fully-formed URL rather than a base keeps host, port, and scheme entirely the
+host's business, so remote, relay, and tunnel modes need no change in any extension.
+
+**Do not depend on `cwd`.** A bundled extension can ship inside the packaged app's
+`app.asar`, and a path inside an asar cannot be a process `cwd` — the packaged server
+sets its cwd to the home directory for exactly this reason. An extension resolves its
+own files from `import.meta.url`.
+
+**The extension folder is read-only.** Everything the extension writes goes under
+`T3_EXT_DATA_DIR`.
+
+### The wire
+
+The host serves Effect RPC with `RpcSerialization.layerJson`, which means one JSON
+value per WebSocket frame; a frame may be a single message or an array of them. An
+extension needs these five shapes and no Effect dependency —
+`extensions/reference/src/server/rpc.ts` is a complete implementation in about two
+hundred lines.
+
+Extension to host:
+
+```jsonc
+{"_tag":"Request","id":1,"tag":"extensions.hello","payload":{ },"headers":[]}
+{"_tag":"Ack","requestId":1}        // release the next chunk of a stream
+{"_tag":"Interrupt","requestId":1}  // cancel a request or stream
+```
+
+Host to extension:
+
+```jsonc
+{"_tag":"Exit","requestId":1,"exit":{"_tag":"Success","value":{ }}}
+{"_tag":"Exit","requestId":1,"exit":{"_tag":"Failure","cause":[{"_tag":"Fail","error":{ }}]}}
+{"_tag":"Chunk","requestId":1,"values":[{ }]}   // one batch of stream events
+{"_tag":"Ping"}                                  // answer with {"_tag":"Pong"}
+```
+
+Streams are pull-based: after each `Chunk` the host waits for an `Ack` before
+sending the next. An extension that never acknowledges sees exactly one event and
+then silence, which is the first thing to check when a stream looks dead.
+
 ## The reference
 
 Field-by-field definitions are generated, not written:

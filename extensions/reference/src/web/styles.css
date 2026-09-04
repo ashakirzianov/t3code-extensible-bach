@@ -1,0 +1,74 @@
+/* Every rule is scoped to a `t3ref-` class. No element or `:root` selectors:
+   this stylesheet is injected into the host's document, so an unscoped rule
+   would restyle the whole app. Colors read the host's theme variables, with
+   fallbacks so the bundle still looks right if a variable is renamed. */
+.t3ref-root {
+  padding: 24px;
+  color: var(--color-foreground, #262626);
+  font-family: inherit;
+}
+.t3ref-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.t3ref-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+.t3ref-button {
+  padding: 6px 12px;
+  border: 1px solid var(--color-border, #d4d4d4);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.t3ref-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.t3ref-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 20px;
+  margin: 0;
+}
+.t3ref-key {
+  color: var(--color-muted-foreground, #737373);
+  font-size: 13px;
+}
+.t3ref-value {
+  margin: 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.t3ref-muted {
+  color: var(--color-muted-foreground, #737373);
+}
+.t3ref-echo {
+  font-weight: 600;
+}
+.t3ref-error {
+  color: var(--color-destructive, #dc2626);
+}
+.t3ref-code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--color-muted, rgb(0 0 0 / 6%));
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+}
+.t3ref-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--color-accent, #4f46e5);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}

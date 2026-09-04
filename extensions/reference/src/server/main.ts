@@ -1,0 +1,204 @@
+/**
+ * The reference extension's server entry.
+ *
+ * It exercises every seam in the protocol exactly once, in the order the host
+ * expects: hello, then the declarative registrations, then `connect` last —
+ * because opening the stream is the readiness signal, and the host may start
+ * invoking tools the moment it exists.
+ *
+ * Read this file top to bottom to see the whole lifecycle of an extension.
+ */
+import type {
+  ExtensionHelloAck,
+  ExtensionHttpRequest,
+  ExtensionManifest,
+  ExtensionRegisterHttpPrefixResult,
+  ExtensionRegisterToolsResult,
+  ExtensionStreamEvent,
+  ExtensionToolInvocation,
+} from "../../protocol/protocol.js";
+import { readHostEnvironment, MissingHostEnvironmentError } from "./env.js";
+import { RpcClient, RpcConnectionClosedError } from "./rpc.js";
+import { EchoStore } from "./store.js";
+import { MANIFEST, HTTP_PREFIX, TOOLS, WEB_ENTRY } from "./manifest.js";
+import { handleHttpRequest } from "./http.js";
+import { runEchoTool } from "./tools.js";
+
+/** Reconnect backoff. The host supervises the process; this only covers a socket blip. */
+const RECONNECT_DELAY_MS = 1_000;
+
+async function main(): Promise<void> {
+  const env = readHostEnvironment();
+  const store = new EchoStore(env.dataDirectory);
+  const startedAt = new Date().toISOString();
+
+  // The host holds registrations across a reconnect only for the connection
+  // that made them, so a reconnect re-sends all of this verbatim. That is why
+  // registration is idempotent and declarative rather than a diff.
+  const session = async (): Promise<void> => {
+    let reconnect = false;
+    const client = await RpcClient.connect({
+      url: env.wsUrl,
+      token: env.token,
+      onClose: (error: RpcConnectionClosedError) => {
+        console.error(`[reference] host connection lost: ${error.message}`);
+        reconnect = true;
+      },
+    });
+
+    // 1. Handshake. The host answers with the negotiated version and our paths.
+    const ack = await client.call<ExtensionHelloAck>("extensions.hello", {
+      protocolVersion: MANIFEST.protocolVersion,
+      manifest: MANIFEST satisfies ExtensionManifest,
+    });
+    console.log(
+      `[reference] connected to host ${ack.hostVersion} (protocol v${String(ack.protocolVersion)}), ` +
+        `environment ${ack.environmentId}, data at ${ack.dataDirectory}`,
+    );
+
+    // 2. Declarative registrations. Each is answered; a rejection is not fatal.
+    const registered = await client.call<ExtensionRegisterToolsResult>("extensions.registerTools", {
+      tools: TOOLS,
+    });
+    for (const entry of registered.tools) {
+      if (entry.status === "rejected") {
+        // Losing a tool name is survivable: the rest of the extension still runs,
+        // and Settings shows the reason. Do not exit.
+        console.error(
+          `[reference] tool "${entry.name}" rejected (${entry.reason}): ${entry.message}`,
+        );
+      }
+    }
+
+    const http = await client.call<ExtensionRegisterHttpPrefixResult>(
+      "extensions.registerHttpPrefix",
+      { prefix: HTTP_PREFIX },
+    );
+    console.log(`[reference] HTTP prefix "${http.prefix}" served at ${http.basePath}`);
+
+    await client.call("extensions.registerWebEntry", { web: WEB_ENTRY });
+
+    // The badge is host-held state: set it now so a reconnect restores the
+    // count the user was already looking at.
+    await client.call("extensions.setBadge", { badge: badgeFor(store.count()) });
+
+    // 3. Open the stream last. This is the readiness signal.
+    await new Promise<void>((resolve) => {
+      let connectionId: string | undefined;
+
+      client.stream(
+        "extensions.connect",
+        // The host-assigned name, not the manifest's: the same folder can be
+        // installed twice, and this process is only one of those registrations.
+        { name: env.name },
+        (raw) => {
+          const event = raw as ExtensionStreamEvent;
+          switch (event.type) {
+            case "attached":
+              // A fresh id per connection: it is how the host drops an answer
+              // that arrives from a process it has already given up on.
+              connectionId = event.connectionId;
+              console.log(`[reference] ready (connection ${event.connectionId})`);
+              return;
+            case "invokeTool":
+              void respondToTool(client, store, connectionId, event.invocation);
+              return;
+            case "proxyHttp":
+              void respondToHttp(client, store, connectionId, startedAt, event.request);
+              return;
+          }
+        },
+        (error) => {
+          if (error) console.error(`[reference] stream ended: ${String(error)}`);
+          resolve();
+        },
+      );
+    });
+
+    client.close();
+    // The store deliberately outlives the socket: it is opened once for the
+    // process and reused across reconnects. Closing it here and then recursing
+    // would hand the next session a closed database.
+    if (reconnect) {
+      await new Promise((resolve) => setTimeout(resolve, RECONNECT_DELAY_MS));
+      await session();
+    }
+  };
+
+  try {
+    await session();
+  } finally {
+    store.close();
+  }
+}
+
+const badgeFor = (count: number) =>
+  count === 0 ? ({ kind: "none" } as const) : ({ kind: "count", count } as const);
+
+/**
+ * Answers one `invokeTool`. Every failure is reported as a tool result with
+ * `isError`, never as a thrown exception: the agent that called the tool should
+ * read what went wrong, and the extension should stay up.
+ */
+async function respondToTool(
+  client: RpcClient,
+  store: EchoStore,
+  connectionId: string | undefined,
+  invocation: ExtensionToolInvocation,
+): Promise<void> {
+  if (!connectionId) return; // Nothing can be correlated before `attached`.
+  try {
+    const result = runEchoTool(store, invocation);
+    await client.call("extensions.respondTool", { connectionId, ...result });
+    // The badge tracks work this extension has actually done.
+    await client.call("extensions.setBadge", { badge: badgeFor(store.count()) });
+  } catch (error) {
+    // Reporting the failure can itself fail if the socket just died. Swallow
+    // that: the host already treats a missing answer as the extension being
+    // unavailable, and an unhandled rejection here would take the process down.
+    await client
+      .call("extensions.respondTool", {
+        connectionId,
+        invocationId: invocation.invocationId,
+        content: [{ type: "text", text: `Reference extension failed: ${String(error)}` }],
+        isError: true,
+      })
+      .catch(() => undefined);
+  }
+}
+
+/** Answers one `proxyHttp`. Same rule: an error is a 500 response, not a crash. */
+async function respondToHttp(
+  client: RpcClient,
+  store: EchoStore,
+  connectionId: string | undefined,
+  startedAt: string,
+  request: ExtensionHttpRequest,
+): Promise<void> {
+  if (!connectionId) return;
+  try {
+    const response = handleHttpRequest(store, startedAt, request);
+    await client.call("extensions.respondHttp", { connectionId, ...response });
+  } catch (error) {
+    await client
+      .call("extensions.respondHttp", {
+        connectionId,
+        requestId: request.requestId,
+        status: 500,
+        headers: { "content-type": "text/plain; charset=utf-8" },
+        body: { encoding: "utf8", data: `Reference extension failed: ${String(error)}` },
+      })
+      .catch(() => undefined);
+  }
+}
+
+main().catch((error: unknown) => {
+  // A missing spawn contract is a human running the entry by hand: explain it
+  // without a stack trace. Anything else is a real fault worth the full trace.
+  if (error instanceof MissingHostEnvironmentError) {
+    console.error(error.message);
+    process.exit(2);
+  }
+  console.error(error);
+  process.exit(1);
+});

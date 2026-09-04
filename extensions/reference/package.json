@@ -1,0 +1,25 @@
+{
+  "name": "t3code-reference-extension",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Reference T3 Code extension. Standalone: ordinary dependencies, no workspace links.",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node build.mjs && node --test \"test/**/*.test.mjs\""
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.7.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@types/ws": "^8.18.1",
+    "ajv": "^8.17.1",
+    "esbuild": "^0.25.10",
+    "typescript": "^5.9.3"
+  }
+}
