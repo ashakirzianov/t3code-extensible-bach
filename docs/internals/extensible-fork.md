@@ -60,6 +60,11 @@ investigation.
 | `apps/server/src/cloud/bootService.ts`            | `BOOT_SERVICE_NAME` and `BOOT_SERVICE_LAUNCHD_LABEL` derived from `forkIdentity`                                                                    | Boot-service naming is two constants inside upstream's installer.                                                                             |
 | `apps/server/src/cloud/bootService.test.ts`       | Unit name and launchd label expectations use the fork's values                                                                                      | Mirrors the file above.                                                                                                                       |
 | `packages/shared/package.json`                    | Adds the `./forkIdentity` subpath export                                                                                                            | Subpath exports are declared in the package manifest.                                                                                         |
+| `packages/contracts/src/auth.ts`                  | One scope constant, `AuthExtensionScope`, plus its entry in the `AuthEnvironmentScope` union                                                        | The union is the closed set of scopes; a scope outside it cannot be minted or checked                                                         |
+| `packages/contracts/src/index.ts`                 | One `export * from "./extensions.ts"` line                                                                                                          | The barrel is the package's only entry point                                                                                                  |
+| `packages/contracts/package.json`                 | One `generate:extensions` script                                                                                                                    | Scripts live in the package manifest                                                                                                          |
+| `packages/contracts/tsconfig.json`                | Adds `scripts` and `generated` to `include`, and `types: ["node"]`                                                                                  | The generator and the artifact it emits have to be typechecked with the package                                                               |
+| `.prettierignore` (new file at root)              | Excludes `packages/contracts/generated/`                                                                                                            | The generated artifacts are byte-compared by a test, so the formatter must not rewrite them                                                   |
 
 The migration guard is a candidate to send upstream (see the spike note), which
 would retire its two rows from this table.
@@ -69,6 +74,11 @@ each touch point above is an import plus a reference rather than a literal to re
 The **tests deliberately hardcode the expected values** rather than importing those
 constants: a test that reads the same constant as the code it checks cannot catch a wrong
 value, and these are user-visible identity strings where the value is the thing worth pinning.
+Not yet touched, but reserved by the protocol piece for the server work: `packages/contracts/src/rpc.ts`
+(the `Rpc.make` definitions and the `WsRpcGroup` entries for the `extensions.*` methods) and
+`apps/server/src/auth/RpcAuthorization.ts` (the required scope for each of them, which the group's
+type demands). Both follow the `orchestration.ts` split — schemas and method names live in the
+fork's own file, registration lives in the host's.
 
 ## Never touch
 

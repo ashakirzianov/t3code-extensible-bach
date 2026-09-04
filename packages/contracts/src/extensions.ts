@@ -1,0 +1,615 @@
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
+
+import { EnvironmentId, NonNegativeInt, ThreadId } from "./baseSchemas.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
+
+/**
+ * The extension wire protocol.
+ *
+ * An extension is a separate process that connects to the host over **one
+ * WebSocket, as an ordinary client**, using a token that carries the
+ * `extension` scope alongside whatever orchestration scopes it needs. The
+ * existing client API (`orchestration.dispatchCommand`, `subscribeShell`,
+ * `subscribeThread`, `searchThreads`, ...) is unchanged and simply available
+ * to it. Everything in this file is the *additional* surface an extension
+ * gets, and nothing here replaces or wraps what already exists.
+ *
+ * ## Why host to extension calls ride on a stream
+ *
+ * The client protocol is Effect RPC over a WebSocket: a client issues
+ * requests, and the only server-initiated traffic is the output of a
+ * `stream: true` RPC the client subscribed to. There is no server to client
+ * *request*. So a host to extension call cannot be modelled as a request; it
+ * is an event on a stream the extension opened, answered by a correlated
+ * request back to the host. `previewAutomation.connect` / `.respond` is the
+ * same shape for the same reason, and the names here mirror it deliberately.
+ *
+ * That gives the connection this order:
+ *
+ * 1. `extensions.hello` — manifest and protocol version in, host facts out.
+ * 2. `extensions.registerTools` / `.registerHttpPrefix` / `.registerWebEntry`
+ *    — declarative, idempotent, and re-sent in full after a reconnect.
+ * 3. `extensions.connect` — opens the stream. **Opening it is the readiness
+ *    signal**: the host may invoke tools only once the stream exists, so an
+ *    extension that opens it last has finished registering. This matters
+ *    because MCP clients cache the tool catalogue at connect
+ *    (`docs/internals/extensions/spikes/mcp-client-behaviour.md`), so the host
+ *    holds MCP session issuance until enabled extensions are ready.
+ * 4. `extensions.respondTool` / `.respondHttp` — answers, correlated by the
+ *    invocation or request id plus the `connectionId` the stream handed out,
+ *    so an answer from a stale connection is rejected rather than applied.
+ *
+ * ## Availability is expressed in results, not in the catalogue
+ *
+ * A tool whose extension is down does not vanish; it answers with
+ * `ExtensionUnavailableError` rendered as an MCP error result. Removing it
+ * would be invisible to a live agent, and Effect's MCP server has no remove.
+ *
+ * ## Definition, not registration
+ *
+ * This file defines the message *schemas* and the method names. The RPC
+ * definitions themselves live in `rpc.ts` with every other method, and the
+ * scope each one requires lives in the server's `RpcAuthorization.ts`, which
+ * is typed to demand a scope for every RPC in the group. `orchestration.ts`
+ * splits the same way.
+ *
+ * ## Why not `TrimmedNonEmptyString`
+ *
+ * The repo's trimmed-string idiom is a decode transformation, so its checks
+ * describe the decoded value and vanish from the encoded JSON Schema. The
+ * generated document under `generated/extensions/` is the contract an
+ * extension in another language reads, so the bounds have to survive into it;
+ * protocol strings are therefore plain `Schema.String` with explicit checks.
+ * The branded host ids (`EnvironmentId`, `ThreadId`, `ProviderInstanceId`) are
+ * the exception, and are opaque to extensions anyway.
+ */
+
+/** The protocol version this build of the host and its contracts implement. */
+export const EXTENSION_PROTOCOL_VERSION = 1;
+
+/**
+ * Every protocol version this host still speaks. A host may support more than
+ * one so an extension built against an older version keeps running across a
+ * host update; the list is what `hello` reports back on a mismatch.
+ */
+export const EXTENSION_SUPPORTED_PROTOCOL_VERSIONS: ReadonlyArray<number> = [
+  EXTENSION_PROTOCOL_VERSION,
+];
+
+/** A non-empty string with an explicit bound, visible in the generated schema. */
+const BoundedString = (maxLength: number) =>
+  Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(maxLength));
+
+export const ExtensionProtocolVersion = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).annotate(
+  { identifier: "ExtensionProtocolVersion" },
+);
+export type ExtensionProtocolVersion = typeof ExtensionProtocolVersion.Type;
+
+export const EXTENSION_WS_METHODS = {
+  hello: "extensions.hello",
+  registerTools: "extensions.registerTools",
+  registerHttpPrefix: "extensions.registerHttpPrefix",
+  registerWebEntry: "extensions.registerWebEntry",
+  setBadge: "extensions.setBadge",
+  connect: "extensions.connect",
+  respondTool: "extensions.respondTool",
+  respondHttp: "extensions.respondHttp",
+} as const;
+
+// ---------------------------------------------------------------------------
+// Names and paths
+// ---------------------------------------------------------------------------
+
+/**
+ * One identifier per extension, unique within an environment. Kebab case so it
+ * is safe in a URL path, a directory name, and a settings key without escaping.
+ */
+export const EXTENSION_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+export const ExtensionName = BoundedString(64)
+  .check(Schema.isPattern(EXTENSION_NAME_PATTERN))
+  .annotate({ identifier: "ExtensionName" });
+export type ExtensionName = typeof ExtensionName.Type;
+
+/**
+ * Tool names are unprefixed in v1 and must be unique across the whole
+ * environment, so this is the MCP tool-name charset rather than the stricter
+ * extension-name one — `spawn_agent` has to remain spellable.
+ */
+export const EXTENSION_TOOL_NAME_PATTERN = /^[A-Za-z0-9_-]+$/;
+export const ExtensionToolName = BoundedString(64)
+  .check(Schema.isPattern(EXTENSION_TOOL_NAME_PATTERN))
+  .annotate({ identifier: "ExtensionToolName" });
+export type ExtensionToolName = typeof ExtensionToolName.Type;
+
+/**
+ * A path *inside* the extension's folder. The pattern rejects absolute paths,
+ * backslashes, and any `..` segment, because the host resolves these against a
+ * directory it then serves and spawns from.
+ */
+export const EXTENSION_RELATIVE_PATH_PATTERN =
+  /^(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/;
+export const ExtensionRelativePath = BoundedString(512)
+  .check(Schema.isPattern(EXTENSION_RELATIVE_PATH_PATTERN))
+  .annotate({ identifier: "ExtensionRelativePath" });
+export type ExtensionRelativePath = typeof ExtensionRelativePath.Type;
+
+/** An absolute path on the host, reported to the extension by `hello`. */
+export const ExtensionHostPath = BoundedString(1024).annotate({ identifier: "ExtensionHostPath" });
+export type ExtensionHostPath = typeof ExtensionHostPath.Type;
+
+/** One kebab segment the host mounts the extension's HTTP routes under. */
+export const ExtensionHttpPrefix = BoundedString(64)
+  .check(Schema.isPattern(EXTENSION_NAME_PATTERN))
+  .annotate({ identifier: "ExtensionHttpPrefix" });
+export type ExtensionHttpPrefix = typeof ExtensionHttpPrefix.Type;
+
+export const ExtensionConnectionId = BoundedString(64).annotate({
+  identifier: "ExtensionConnectionId",
+});
+export type ExtensionConnectionId = typeof ExtensionConnectionId.Type;
+
+export const ExtensionInvocationId = BoundedString(128).annotate({
+  identifier: "ExtensionInvocationId",
+});
+export type ExtensionInvocationId = typeof ExtensionInvocationId.Type;
+
+export const ExtensionHttpRequestId = BoundedString(128).annotate({
+  identifier: "ExtensionHttpRequestId",
+});
+export type ExtensionHttpRequestId = typeof ExtensionHttpRequestId.Type;
+
+// ---------------------------------------------------------------------------
+// Manifest
+// ---------------------------------------------------------------------------
+
+/**
+ * The nav entry the host renders for this extension. The host draws it
+ * itself — the extension contributes text, not markup — so `icon` is a path to
+ * an SVG in the folder rather than a component.
+ */
+export const ExtensionWebEntry = Schema.Struct({
+  /** ES module the client loads with a same-origin `import()` and mounts. */
+  entry: ExtensionRelativePath,
+  css: Schema.optionalKey(ExtensionRelativePath),
+  label: BoundedString(64),
+  icon: Schema.optionalKey(ExtensionRelativePath),
+}).annotate({ identifier: "ExtensionWebEntry" });
+export type ExtensionWebEntry = typeof ExtensionWebEntry.Type;
+
+export const ExtensionServerEntry = Schema.Struct({
+  /** Self-contained JS the host runs on its own Node. No `node_modules`. */
+  entry: ExtensionRelativePath,
+}).annotate({ identifier: "ExtensionServerEntry" });
+export type ExtensionServerEntry = typeof ExtensionServerEntry.Type;
+
+/**
+ * `extension.json` at the root of a built extension folder. Version strings
+ * are compared by the host, not parsed here, so they are only length-checked.
+ */
+export const ExtensionManifest = Schema.Struct({
+  name: ExtensionName,
+  version: BoundedString(64),
+  protocolVersion: ExtensionProtocolVersion,
+  minHostVersion: Schema.optionalKey(BoundedString(64)),
+  server: ExtensionServerEntry,
+  web: Schema.optionalKey(ExtensionWebEntry),
+}).annotate({ identifier: "ExtensionManifest" });
+export type ExtensionManifest = typeof ExtensionManifest.Type;
+
+// ---------------------------------------------------------------------------
+// hello
+// ---------------------------------------------------------------------------
+
+export const ExtensionHelloInput = Schema.Struct({
+  protocolVersion: ExtensionProtocolVersion,
+  manifest: ExtensionManifest,
+}).annotate({ identifier: "ExtensionHelloInput" });
+export type ExtensionHelloInput = typeof ExtensionHelloInput.Type;
+
+export const ExtensionHelloAck = Schema.Struct({
+  /** The negotiated version. Both sides speak this for the connection's life. */
+  protocolVersion: ExtensionProtocolVersion,
+  hostProtocolVersions: Schema.Array(ExtensionProtocolVersion),
+  /** The host app version, for the manifest's `minHostVersion` check. */
+  hostVersion: BoundedString(64),
+  environmentId: EnvironmentId,
+  /** The folder the host started this extension from. */
+  extensionPath: ExtensionHostPath,
+  /** Writable directory the extension owns, under the environment's userdata. */
+  dataDirectory: ExtensionHostPath,
+}).annotate({ identifier: "ExtensionHelloAck" });
+export type ExtensionHelloAck = typeof ExtensionHelloAck.Type;
+
+// ---------------------------------------------------------------------------
+// registerTools
+// ---------------------------------------------------------------------------
+
+/** Cap on one extension's tool surface, so a bad build cannot flood MCP. */
+export const EXTENSION_TOOLS_MAX = 64;
+
+export const ExtensionToolDefinition = Schema.Struct({
+  name: ExtensionToolName,
+  /** What the agent sees. This is the only guidance a tool gets. */
+  description: BoundedString(4096),
+  /** A JSON Schema object describing the tool's arguments. */
+  inputSchema: Schema.Record(Schema.String, Schema.Unknown),
+}).annotate({ identifier: "ExtensionToolDefinition" });
+export type ExtensionToolDefinition = typeof ExtensionToolDefinition.Type;
+
+export const ExtensionRegisterToolsInput = Schema.Struct({
+  /** The complete tool surface. Re-sending replaces the previous set. */
+  tools: Schema.Array(ExtensionToolDefinition).check(Schema.isMaxLength(EXTENSION_TOOLS_MAX)),
+}).annotate({ identifier: "ExtensionRegisterToolsInput" });
+export type ExtensionRegisterToolsInput = typeof ExtensionRegisterToolsInput.Type;
+
+export const ExtensionToolRejectionReason = Schema.Literals([
+  "name-collision",
+  "invalid-input-schema",
+  "unsupported",
+]).annotate({ identifier: "ExtensionToolRejectionReason" });
+export type ExtensionToolRejectionReason = typeof ExtensionToolRejectionReason.Type;
+
+/**
+ * Per tool, not per call: one bad name does not fail the batch, and the
+ * extension keeps running with the tools that were accepted (design §5.2).
+ */
+export const ExtensionToolRegistration = Schema.Union([
+  Schema.Struct({
+    status: Schema.Literal("accepted"),
+    name: ExtensionToolName,
+  }),
+  Schema.Struct({
+    status: Schema.Literal("rejected"),
+    name: ExtensionToolName,
+    reason: ExtensionToolRejectionReason,
+    /** Shown verbatim in Settings, so it names the other owner on collision. */
+    message: BoundedString(512),
+  }),
+]).annotate({ identifier: "ExtensionToolRegistration" });
+export type ExtensionToolRegistration = typeof ExtensionToolRegistration.Type;
+
+export const ExtensionRegisterToolsResult = Schema.Struct({
+  tools: Schema.Array(ExtensionToolRegistration),
+}).annotate({ identifier: "ExtensionRegisterToolsResult" });
+export type ExtensionRegisterToolsResult = typeof ExtensionRegisterToolsResult.Type;
+
+// ---------------------------------------------------------------------------
+// registerHttpPrefix, registerWebEntry, setBadge
+// ---------------------------------------------------------------------------
+
+export const ExtensionRegisterHttpPrefixInput = Schema.Struct({
+  prefix: ExtensionHttpPrefix,
+}).annotate({ identifier: "ExtensionRegisterHttpPrefixInput" });
+export type ExtensionRegisterHttpPrefixInput = typeof ExtensionRegisterHttpPrefixInput.Type;
+
+export const ExtensionRegisterHttpPrefixResult = Schema.Struct({
+  prefix: ExtensionHttpPrefix,
+  /**
+   * Where the prefix landed, relative to the host origin. The host owns the
+   * routing shape, so the extension is told rather than asked.
+   */
+  basePath: BoundedString(512),
+}).annotate({ identifier: "ExtensionRegisterHttpPrefixResult" });
+export type ExtensionRegisterHttpPrefixResult = typeof ExtensionRegisterHttpPrefixResult.Type;
+
+export const ExtensionRegisterWebEntryInput = Schema.Struct({
+  web: ExtensionWebEntry,
+}).annotate({ identifier: "ExtensionRegisterWebEntryInput" });
+export type ExtensionRegisterWebEntryInput = typeof ExtensionRegisterWebEntryInput.Type;
+
+/**
+ * The nav badge. `none` clears it. The host holds the last value across a
+ * reconnect and clears it when the extension stops, so an extension does not
+ * have to re-send one on every restart.
+ */
+export const ExtensionBadge = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("none") }),
+  Schema.Struct({ kind: Schema.Literal("dot") }),
+  Schema.Struct({
+    kind: Schema.Literal("count"),
+    count: NonNegativeInt.check(Schema.isLessThanOrEqualTo(9999)),
+  }),
+]).annotate({ identifier: "ExtensionBadge" });
+export type ExtensionBadge = typeof ExtensionBadge.Type;
+
+export const ExtensionSetBadgeInput = Schema.Struct({
+  badge: ExtensionBadge,
+}).annotate({ identifier: "ExtensionSetBadgeInput" });
+export type ExtensionSetBadgeInput = typeof ExtensionSetBadgeInput.Type;
+
+// ---------------------------------------------------------------------------
+// Host to extension: tool invocation
+// ---------------------------------------------------------------------------
+
+/**
+ * Who is calling, resolved by the host from the MCP credential and attached to
+ * the invocation. The extension trusts this and never takes an identity from
+ * the tool arguments — that is the whole point of brokering the call. Mirrors
+ * `McpInvocationScope` in the server.
+ */
+export const ExtensionToolCaller = Schema.Struct({
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  providerSessionId: BoundedString(256),
+  providerInstanceId: ProviderInstanceId,
+}).annotate({ identifier: "ExtensionToolCaller" });
+export type ExtensionToolCaller = typeof ExtensionToolCaller.Type;
+
+export const ExtensionToolInvocation = Schema.Struct({
+  invocationId: ExtensionInvocationId,
+  name: ExtensionToolName,
+  /** Arguments as the agent supplied them, validated against `inputSchema`. */
+  arguments: Schema.Record(Schema.String, Schema.Unknown),
+  caller: ExtensionToolCaller,
+}).annotate({ identifier: "ExtensionToolInvocation" });
+export type ExtensionToolInvocation = typeof ExtensionToolInvocation.Type;
+
+// ---------------------------------------------------------------------------
+// Host to extension: proxied HTTP
+// ---------------------------------------------------------------------------
+
+export const ExtensionHttpMethod = Schema.Literals([
+  "GET",
+  "HEAD",
+  "POST",
+  "PUT",
+  "PATCH",
+  "DELETE",
+  "OPTIONS",
+]).annotate({ identifier: "ExtensionHttpMethod" });
+export type ExtensionHttpMethod = typeof ExtensionHttpMethod.Type;
+
+/** Bodies cross the same socket as the UI's traffic, so they are capped. */
+export const EXTENSION_HTTP_BODY_MAX_CHARS = 8 * 1024 * 1024;
+
+/**
+ * `base64` exists so binary responses survive a JSON transport; `utf8` keeps
+ * the common JSON case readable in logs and in other languages.
+ */
+export const ExtensionHttpBody = Schema.Struct({
+  encoding: Schema.Literals(["utf8", "base64"]),
+  data: Schema.String.check(Schema.isMaxLength(EXTENSION_HTTP_BODY_MAX_CHARS)),
+}).annotate({ identifier: "ExtensionHttpBody" });
+export type ExtensionHttpBody = typeof ExtensionHttpBody.Type;
+
+export const ExtensionHttpHeaders = Schema.Record(Schema.String, Schema.String).annotate({
+  identifier: "ExtensionHttpHeaders",
+});
+export type ExtensionHttpHeaders = typeof ExtensionHttpHeaders.Type;
+
+export const ExtensionHttpRequest = Schema.Struct({
+  requestId: ExtensionHttpRequestId,
+  method: ExtensionHttpMethod,
+  /** Path *below* the registered prefix, always leading-slashed. */
+  path: Schema.String.check(Schema.isMaxLength(2048), Schema.isPattern(/^\//)),
+  /** Raw query string without the `?`. */
+  query: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(4096))),
+  /** Lowercased by the host. Hop-by-hop and auth headers are stripped. */
+  headers: ExtensionHttpHeaders,
+  body: Schema.optionalKey(ExtensionHttpBody),
+  /** The client the host authenticated, so the extension can scope its reads. */
+  environmentId: EnvironmentId,
+}).annotate({ identifier: "ExtensionHttpRequest" });
+export type ExtensionHttpRequest = typeof ExtensionHttpRequest.Type;
+
+// ---------------------------------------------------------------------------
+// The stream
+// ---------------------------------------------------------------------------
+
+export const ExtensionConnectInput = Schema.Struct({
+  name: ExtensionName,
+}).annotate({ identifier: "ExtensionConnectInput" });
+export type ExtensionConnectInput = typeof ExtensionConnectInput.Type;
+
+/**
+ * Everything the host pushes to the extension. `attached` arrives first and
+ * carries the `connectionId` every answer must quote; a reconnect mints a new
+ * one, which is how the host drops answers from the previous process.
+ */
+export const ExtensionStreamEvent = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("attached"),
+    connectionId: ExtensionConnectionId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("invokeTool"),
+    connectionId: ExtensionConnectionId,
+    invocation: ExtensionToolInvocation,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("proxyHttp"),
+    connectionId: ExtensionConnectionId,
+    request: ExtensionHttpRequest,
+  }),
+]).annotate({ identifier: "ExtensionStreamEvent" });
+export type ExtensionStreamEvent = typeof ExtensionStreamEvent.Type;
+
+// ---------------------------------------------------------------------------
+// Extension to host: answers
+// ---------------------------------------------------------------------------
+
+export const EXTENSION_TOOL_TEXT_MAX_CHARS = 1024 * 1024;
+
+/**
+ * MCP-shaped content, narrowed to what a tool result actually needs. Image
+ * data is base64 rather than bytes because this is a JSON wire an extension in
+ * any language has to be able to write.
+ */
+export const ExtensionToolContent = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("text"),
+    text: Schema.String.check(Schema.isMaxLength(EXTENSION_TOOL_TEXT_MAX_CHARS)),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("image"),
+    data: Schema.String.check(Schema.isMaxLength(EXTENSION_HTTP_BODY_MAX_CHARS)),
+    mimeType: BoundedString(100),
+  }),
+]).annotate({ identifier: "ExtensionToolContent" });
+export type ExtensionToolContent = typeof ExtensionToolContent.Type;
+
+export const ExtensionToolResult = Schema.Struct({
+  connectionId: ExtensionConnectionId,
+  invocationId: ExtensionInvocationId,
+  content: Schema.Array(ExtensionToolContent),
+  /** Absent means success. An error result is still a *result*, not a failure. */
+  isError: Schema.optionalKey(Schema.Boolean),
+  structuredContent: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
+}).annotate({ identifier: "ExtensionToolResult" });
+export type ExtensionToolResult = typeof ExtensionToolResult.Type;
+
+export const ExtensionHttpResponse = Schema.Struct({
+  connectionId: ExtensionConnectionId,
+  requestId: ExtensionHttpRequestId,
+  status: Schema.Int.check(Schema.isBetween({ minimum: 100, maximum: 599 })),
+  headers: ExtensionHttpHeaders,
+  body: Schema.optionalKey(ExtensionHttpBody),
+}).annotate({ identifier: "ExtensionHttpResponse" });
+export type ExtensionHttpResponse = typeof ExtensionHttpResponse.Type;
+
+// ---------------------------------------------------------------------------
+// Errors
+// ---------------------------------------------------------------------------
+
+export class ExtensionProtocolMismatchError extends Schema.TaggedErrorClass<ExtensionProtocolMismatchError>()(
+  "ExtensionProtocolMismatchError",
+  {
+    extensionName: Schema.optionalKey(ExtensionName),
+    requestedVersion: ExtensionProtocolVersion,
+    supportedVersions: Schema.Array(ExtensionProtocolVersion),
+  },
+) {
+  override get message(): string {
+    return `Extension protocol version ${this.requestedVersion} is not supported by this host (supported: ${this.supportedVersions.join(", ")}).`;
+  }
+}
+
+export class ExtensionHandshakeRequiredError extends Schema.TaggedErrorClass<ExtensionHandshakeRequiredError>()(
+  "ExtensionHandshakeRequiredError",
+  {
+    method: BoundedString(128),
+  },
+) {
+  override get message(): string {
+    return `${this.method} requires a completed ${EXTENSION_WS_METHODS.hello} handshake.`;
+  }
+}
+
+export class ExtensionToolNameCollisionError extends Schema.TaggedErrorClass<ExtensionToolNameCollisionError>()(
+  "ExtensionToolNameCollisionError",
+  {
+    toolName: ExtensionToolName,
+    /** Who already owns the name. Absent when the host itself owns it. */
+    owner: Schema.optionalKey(ExtensionName),
+  },
+) {
+  override get message(): string {
+    return this.owner === undefined
+      ? `Tool ${this.toolName} is already provided by T3 Code.`
+      : `Tool ${this.toolName} is already provided by extension ${this.owner}.`;
+  }
+}
+
+export class ExtensionUnknownToolError extends Schema.TaggedErrorClass<ExtensionUnknownToolError>()(
+  "ExtensionUnknownToolError",
+  {
+    toolName: ExtensionToolName,
+    extensionName: Schema.optionalKey(ExtensionName),
+  },
+) {
+  override get message(): string {
+    return `No registered extension tool named ${this.toolName}.`;
+  }
+}
+
+export const ExtensionUnavailableReason = Schema.Literals([
+  "not-connected",
+  "stopped",
+  "restarting",
+  "timeout",
+]).annotate({ identifier: "ExtensionUnavailableReason" });
+export type ExtensionUnavailableReason = typeof ExtensionUnavailableReason.Type;
+
+/**
+ * The answer a brokered call gets when the extension behind it is not there.
+ * Its `message` reaches the agent verbatim as an MCP error result, so it says
+ * what happened rather than what failed internally.
+ */
+export class ExtensionUnavailableError extends Schema.TaggedErrorClass<ExtensionUnavailableError>()(
+  "ExtensionUnavailableError",
+  {
+    extensionName: ExtensionName,
+    reason: ExtensionUnavailableReason,
+    toolName: Schema.optionalKey(ExtensionToolName),
+  },
+) {
+  override get message(): string {
+    const subject =
+      this.toolName === undefined
+        ? `Extension ${this.extensionName}`
+        : `The extension backing ${this.toolName} (${this.extensionName})`;
+    switch (this.reason) {
+      case "stopped":
+        return `${subject} is stopped.`;
+      case "restarting":
+        return `${subject} is restarting; try again shortly.`;
+      case "timeout":
+        return `${subject} did not answer in time.`;
+      case "not-connected":
+        return `${subject} is not running.`;
+    }
+  }
+}
+
+export class ExtensionHttpPrefixCollisionError extends Schema.TaggedErrorClass<ExtensionHttpPrefixCollisionError>()(
+  "ExtensionHttpPrefixCollisionError",
+  {
+    prefix: ExtensionHttpPrefix,
+    owner: Schema.optionalKey(ExtensionName),
+  },
+) {
+  override get message(): string {
+    return this.owner === undefined
+      ? `HTTP prefix ${this.prefix} is reserved by T3 Code.`
+      : `HTTP prefix ${this.prefix} is already registered by extension ${this.owner}.`;
+  }
+}
+
+export const ExtensionError = Schema.Union([
+  ExtensionProtocolMismatchError,
+  ExtensionHandshakeRequiredError,
+  ExtensionToolNameCollisionError,
+  ExtensionUnknownToolError,
+  ExtensionUnavailableError,
+  ExtensionHttpPrefixCollisionError,
+]).annotate({ identifier: "ExtensionError" });
+export type ExtensionError = typeof ExtensionError.Type;
+
+// ---------------------------------------------------------------------------
+// Negotiation
+// ---------------------------------------------------------------------------
+
+/**
+ * The extension states one version and the host either speaks it or does not —
+ * there is no "highest common", because the extension only shipped one wire.
+ * Used by the host to answer `hello`, and by a vendored client to check the
+ * ack it got back.
+ */
+export const negotiateExtensionProtocolVersion = (options: {
+  readonly requestedVersion: number;
+  readonly supportedVersions?: ReadonlyArray<number> | undefined;
+  readonly extensionName?: ExtensionName | undefined;
+}): Result.Result<number, ExtensionProtocolMismatchError> => {
+  const supportedVersions = options.supportedVersions ?? EXTENSION_SUPPORTED_PROTOCOL_VERSIONS;
+  if (supportedVersions.includes(options.requestedVersion)) {
+    return Result.succeed(options.requestedVersion);
+  }
+  return Result.fail(
+    new ExtensionProtocolMismatchError({
+      ...(options.extensionName === undefined ? {} : { extensionName: options.extensionName }),
+      requestedVersion: options.requestedVersion,
+      supportedVersions,
+    }),
+  );
+};

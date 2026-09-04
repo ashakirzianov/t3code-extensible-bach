@@ -22,7 +22,8 @@
   },
   "scripts": {
     "typecheck": "tsgo --noEmit",
-    "test": "vp test run"
+    "test": "vp test run",
+    "generate:extensions": "node scripts/generate-extension-protocol.ts"
   },
   "dependencies": {
     "effect": "catalog:"

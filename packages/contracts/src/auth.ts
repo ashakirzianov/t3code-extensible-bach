@@ -86,6 +86,12 @@ export const AuthAccessReadScope = "access:read" as const;
 export const AuthAccessWriteScope = "access:write" as const;
 export const AuthRelayReadScope = "relay:read" as const;
 export const AuthRelayWriteScope = "relay:write" as const;
+/**
+ * Held only by tokens minted for an extension process. It gates the
+ * `extensions.*` methods; the orchestration scopes an extension also needs are
+ * granted alongside it, unchanged.
+ */
+export const AuthExtensionScope = "extension" as const;
 export const AuthEnvironmentScope = Schema.Literals([
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
@@ -95,6 +101,7 @@ export const AuthEnvironmentScope = Schema.Literals([
   AuthAccessWriteScope,
   AuthRelayReadScope,
   AuthRelayWriteScope,
+  AuthExtensionScope,
 ]);
 export type AuthEnvironmentScope = typeof AuthEnvironmentScope.Type;
 export const AuthEnvironmentScopes = Schema.Array(AuthEnvironmentScope);
