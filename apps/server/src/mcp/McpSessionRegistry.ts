@@ -69,8 +69,12 @@ export interface McpSessionRegistryOptions {
  * The bound matters because `/mcp` is mounted outside the environment auth
  * stack and is reachable on whatever host the server binds to, so this token is
  * the only thing guarding the preview toolkit on a remote-reachable server.
+ *
+ * The fork widens upstream's 24h to 30d: extension-driven agents sit idle for
+ * days between turns, and expiring their credential mid-life turns a resumable
+ * session into a dead one.
  */
-const DEFAULT_LIVENESS_WINDOW_MS = 24 * 60 * 60 * 1_000;
+const DEFAULT_LIVENESS_WINDOW_MS = 30 * 24 * 60 * 60 * 1_000;
 
 const bytesToHex = (bytes: Uint8Array): string =>
   Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");

@@ -4,6 +4,7 @@ import type {
   DesktopRuntimeArch,
   DesktopRuntimeInfo,
 } from "@t3tools/contracts";
+import * as ForkIdentity from "@t3tools/shared/forkIdentity";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -178,8 +179,12 @@ const make = Effect.fn("desktop.environment.make")(function* (
     joinPath: path.join,
     t3Home: config.t3Home,
   });
-  const userDataDirName = isDevelopment ? "t3code-dev" : "t3code";
-  const legacyUserDataDirName = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
+  const userDataDirName = isDevelopment
+    ? ForkIdentity.FORK_DEV_USER_DATA_DIR_NAME
+    : ForkIdentity.FORK_USER_DATA_DIR_NAME;
+  const legacyUserDataDirName = isDevelopment
+    ? ForkIdentity.FORK_DEV_LEGACY_USER_DATA_DIR_NAME
+    : ForkIdentity.FORK_LEGACY_USER_DATA_DIR_NAME;
   const linuxApplicationsDir = path.join(
     Option.getOrElse(config.xdgDataHome, () => path.join(homeDirectory, ".local", "share")),
     "applications",
@@ -224,10 +229,14 @@ const make = Effect.fn("desktop.environment.make")(function* (
     branding,
     displayName,
     appUserModelId: Option.getOrElse(config.appUserModelIdOverride, () =>
-      isDevelopment ? "com.t3tools.t3code.dev" : "com.t3tools.t3code",
+      isDevelopment ? ForkIdentity.FORK_DEV_APP_ID : ForkIdentity.FORK_APP_ID,
     ),
-    linuxDesktopEntryName: isDevelopment ? "t3code-dev.desktop" : "t3code.desktop",
-    linuxWmClass: isDevelopment ? "t3code-dev" : "t3code",
+    linuxDesktopEntryName: isDevelopment
+      ? ForkIdentity.FORK_DEV_LINUX_DESKTOP_ENTRY_NAME
+      : ForkIdentity.FORK_LINUX_DESKTOP_ENTRY_NAME,
+    linuxWmClass: isDevelopment
+      ? ForkIdentity.FORK_DEV_LINUX_WM_CLASS
+      : ForkIdentity.FORK_LINUX_WM_CLASS,
     linuxApplicationsDir,
     appImagePath: config.appImagePath,
     userDataDirName,

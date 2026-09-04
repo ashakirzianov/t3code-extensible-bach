@@ -19,11 +19,17 @@ const fakeEnvironment = ServerEnvironment.ServerEnvironment.of({
   getDescriptor: Effect.die("unused"),
 });
 
-const makeRegistry = (now: () => number, httpServer = fakeHttpServer) =>
+const makeRegistry = (
+  now: () => number,
+  httpServer = fakeHttpServer,
+  // `null` means "use the registry's own default window" — `undefined` would
+  // just re-select this parameter default.
+  livenessWindowMs: number | null = 100,
+) =>
   McpSessionRegistry.__testing
     .make({
       now,
-      livenessWindowMs: 100,
+      ...(livenessWindowMs === null ? {} : { livenessWindowMs }),
     })
     .pipe(
       Effect.provideService(HttpServer.HttpServer, httpServer),
@@ -85,6 +91,42 @@ it.effect("expires credentials once their session stops showing signs of life", 
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
     timestamp += 101;
     expect(yield* registry.resolve(token)).toBeUndefined();
+  }),
+);
+
+const DAY_MS = 24 * 60 * 60 * 1_000;
+
+// The default window, not an injected one: extension-driven agents idle for
+// days between turns, and this is the fork's reason for widening it from 24h.
+// Two credentials share one clock because `resolve` is itself a sign of life:
+// reading one back would refresh it and destroy the expiry half of the test.
+it.effect("keeps an idle credential alive for weeks on the default liveness window", () =>
+  Effect.gen(function* () {
+    let timestamp = 1_000;
+    const registry = yield* makeRegistry(() => timestamp, fakeHttpServer, null);
+    const readToken = (issued: { config: { authorizationHeader: string } }) =>
+      issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+    const withinWindow = readToken(
+      yield* registry.issue({
+        threadId: ThreadId.make("thread-idle-29d"),
+        providerInstanceId: ProviderInstanceId.make("claude"),
+      }),
+    );
+    const pastWindow = readToken(
+      yield* registry.issue({
+        threadId: ThreadId.make("thread-idle-31d"),
+        providerInstanceId: ProviderInstanceId.make("claude"),
+      }),
+    );
+
+    // 24h would already have dropped both; 30d keeps a week-idle agent usable.
+    timestamp += 29 * DAY_MS;
+    expect((yield* registry.resolve(withinWindow))?.threadId).toBe(
+      ThreadId.make("thread-idle-29d"),
+    );
+
+    timestamp += 2 * DAY_MS;
+    expect(yield* registry.resolve(pastWindow)).toBeUndefined();
   }),
 );
 
