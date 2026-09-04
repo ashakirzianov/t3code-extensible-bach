@@ -5,6 +5,7 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 import { ForwardCompatibleNullable, TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 import { EnvironmentMachineKind, ThreadEnvMode } from "./environment.ts";
+import { ExtensionSettingsEntry } from "./extensions.ts";
 import {
   DEFAULT_TEXT_GENERATION_MODEL,
   DEFAULT_TEXT_GENERATION_REASONING_EFFORT,
@@ -929,6 +930,14 @@ export const ServerSettings = Schema.Struct({
   // this build cannot decode round-trip untouched, as provider instances do.
   usageLimitSources: Schema.Record(UsageLimitSourceId, UsageLimitSourceConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+  /**
+   * Extensions this environment runs, in start order. An entry wins over a
+   * `--extension` launch flag of the same name, which is how a shipped
+   * extension is overridden with a local build or turned off.
+   */
+  extensions: Schema.Array(ExtensionSettingsEntry).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
   ),
 });
 export type ServerSettings = typeof ServerSettings.Type;

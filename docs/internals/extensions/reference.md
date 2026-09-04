@@ -69,6 +69,34 @@ with a same-origin `import()` — the only thing that executes under the desktop
 ([spike](docs/internals/extensions/spikes/electron-runtime.md)) — and mounts it in a container the host owns. The host
 draws the nav entry itself from the label, icon, and badge.
 
+## Where extensions come from
+
+Two sources, and no third: entries in the environment's settings
+(`extensions: [{ name, path, enabled }]`) and repeatable `--extension name=path` launch
+flags. The desktop shell passes a flag for whatever sits in its resources directory, so a
+shipped extension is indistinguishable from one a developer pointed at by hand — the word
+"bundled" appears nowhere in the server.
+
+**A settings entry wins by name.** Writing an entry for `bach` pointing at your checkout's
+build overrides the shipped copy; writing one with `enabled: false` turns it off. That one
+rule is what makes the launch flag safe to hardcode.
+
+The name in the settings entry, not the manifest's, is the one the host installs under and
+the one it hands the process as `T3_EXT_NAME`. Start order is the order entries are written,
+then flags nothing named, and it is stable across restarts because a tool-name collision is
+settled by whoever started first.
+
+## Deploy
+
+The host records a content hash of the folder when it starts a process. When the folder's
+hash moves — an agent rebuilt it, an update landed — the extension is marked **changed** and
+Settings offers Deploy. **Deploy is stop, rehash, start**, which is the same action whether
+the new bytes came from a local build, a download, or an app update.
+
+Deploy is a host action and human-only. Nothing an extension or an agent can call reaches
+it. A crash-looping extension is the exception that needs no click: every restart re-reads
+the folder, so a fix that lands while it is down is picked up on the next attempt.
+
 ## Starting an extension
 
 The host spawns the extension from its folder on the host's own Node — under the

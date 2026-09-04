@@ -12,6 +12,8 @@
 import {
   AuthStandardClientScopes,
   ExecutionEnvironmentDescriptor,
+  EXTENSION_PROTOCOL_VERSION,
+  ExtensionName,
   PortSchema,
 } from "@t3tools/contracts";
 import { resolveWorktreeT3Home } from "@t3tools/shared/devHome";
@@ -54,6 +56,11 @@ import {
   renderTerminalQrCode,
   resolveHeadlessConnectionString,
 } from "../startupAccess.ts";
+import {
+  EXTENSION_ENV,
+  EXTENSION_SUBJECT_PREFIX,
+  EXTENSION_TOKEN_SCOPES,
+} from "../extensions/ExtensionIdentity.ts";
 import { baseDirFlag, DurationFromString } from "./config.ts";
 
 const WELL_KNOWN_ENVIRONMENT_PATH = "/.well-known/t3/environment";
@@ -422,6 +429,34 @@ const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairingBase"
   },
 );
 
+/**
+ * Dev mode (design §6.4): the extension process is run by hand from a
+ * checkout, so what it needs is the bearer token and socket URL the supervisor
+ * would have handed it — not a browser pairing link.
+ */
+const mintExtensionSession = Effect.fn("pair.mintExtensionSession")(function* (input: {
+  readonly config: ServerConfig.ServerConfig["Service"];
+  readonly name: ExtensionName;
+  readonly ttl: Option.Option<Duration.Duration>;
+}) {
+  return yield* Effect.gen(function* () {
+    const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
+    return yield* environmentAuth.issueSession({
+      scopes: EXTENSION_TOKEN_SCOPES,
+      subject: `${EXTENSION_SUBJECT_PREFIX}${input.name}`,
+      label: `Extension ${input.name} (dev)`,
+      ...(Option.isSome(input.ttl) ? { ttl: input.ttl.value } : {}),
+    });
+  }).pipe(
+    Effect.provide(
+      EnvironmentAuth.runtimeLayer.pipe(
+        Layer.provide(ServerConfig.layer(input.config)),
+        Layer.provide(Layer.succeed(References.MinimumLogLevel, input.config.logLevel)),
+      ),
+    ),
+  );
+});
+
 const mintPairingLink = Effect.fn("pair.mintPairingLink")(function* (input: {
   readonly config: ServerConfig.ServerConfig["Service"];
   readonly ttl: Option.Option<Duration.Duration>;
@@ -471,8 +506,17 @@ const tailscaleServePortFlag = Flag.integer("tailscale-serve-port").pipe(
   Flag.withDefault(DEFAULT_TAILSCALE_SERVE_PORT),
 );
 
+const extensionNameFlag = Flag.string("extension").pipe(
+  Flag.withSchema(ExtensionName),
+  Flag.withDescription(
+    "Mint an extension credential for this extension name instead of a browser pairing link.",
+  ),
+  Flag.optional,
+);
+
 export const pairCommand = Command.make("pair", {
   baseDir: baseDirFlag,
+  extension: extensionNameFlag,
   ttl: ttlFlag,
   label: labelFlag,
   tailscale: tailscaleFlag,
@@ -489,6 +533,32 @@ export const pairCommand = Command.make("pair", {
       const logLevel = Option.getOrElse(cliLogLevel, () => "Warn" as const);
 
       const target = yield* discoverPairTarget(Option.getOrUndefined(flags.baseDir));
+
+      if (Option.isSome(flags.extension)) {
+        const name = flags.extension.value;
+        const config = yield* makePairServerConfig({ target, logLevel });
+        const session = yield* mintExtensionSession({ config, name, ttl: flags.ttl });
+        const origin = new URL(target.state.origin);
+        origin.protocol = origin.protocol === "https:" ? "wss:" : "ws:";
+        origin.pathname = "/ws";
+        yield* Console.log(
+          [
+            `Extension credential for ${name} on ${target.descriptor.label}.`,
+            "Run your extension with:",
+            "",
+            `  ${EXTENSION_ENV.name}=${name} \\`,
+            `  ${EXTENSION_ENV.token}=${session.token} \\`,
+            `  ${EXTENSION_ENV.url}=${origin.toString()} \\`,
+            `  ${EXTENSION_ENV.protocol}=${EXTENSION_PROTOCOL_VERSION} \\`,
+            `  ${EXTENSION_ENV.dataDir}=<a directory your extension may write to> \\`,
+            "  node dist/server.js",
+            "",
+            "The host must already know this extension by name, from a settings entry",
+            "or an --extension launch flag, or its hello will be refused.",
+          ].join("\n"),
+        );
+        return;
+      }
 
       const notes: Array<string> = [];
       let pairingBaseUrl: string;

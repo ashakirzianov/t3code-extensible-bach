@@ -1,5 +1,8 @@
 import {
   AuthAccessReadScope,
+  AuthExtensionScope,
+  EXTENSION_ADMIN_WS_METHODS,
+  EXTENSION_WS_METHODS,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthRelayReadScope,
@@ -134,6 +137,21 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.previewClose]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewList]: AuthOrchestrationReadScope,
   [WS_METHODS.previewReportStatus]: AuthOrchestrationOperateScope,
+  // The extension protocol is gated by its own scope, which only a token
+  // minted for an extension process carries.
+  [EXTENSION_WS_METHODS.hello]: AuthExtensionScope,
+  [EXTENSION_WS_METHODS.registerTools]: AuthExtensionScope,
+  [EXTENSION_WS_METHODS.registerHttpPrefix]: AuthExtensionScope,
+  [EXTENSION_WS_METHODS.registerWebEntry]: AuthExtensionScope,
+  [EXTENSION_WS_METHODS.setBadge]: AuthExtensionScope,
+  [EXTENSION_WS_METHODS.connect]: AuthExtensionScope,
+  [EXTENSION_WS_METHODS.respondTool]: AuthExtensionScope,
+  [EXTENSION_WS_METHODS.respondHttp]: AuthExtensionScope,
+  // Management is Settings talking, so it takes the ordinary client scopes.
+  [EXTENSION_ADMIN_WS_METHODS.list]: AuthOrchestrationReadScope,
+  [EXTENSION_ADMIN_WS_METHODS.logs]: AuthOrchestrationReadScope,
+  [EXTENSION_ADMIN_WS_METHODS.deploy]: AuthOrchestrationOperateScope,
+  [EXTENSION_ADMIN_WS_METHODS.setEnabled]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewAutomationConnect]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewAutomationRespond]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewAutomationFocusHost]: AuthOrchestrationOperateScope,

@@ -613,3 +613,167 @@ export const negotiateExtensionProtocolVersion = (options: {
     }),
   );
 };
+
+// ---------------------------------------------------------------------------
+// Registry and admin surface
+// ---------------------------------------------------------------------------
+
+/**
+ * One settings entry, per environment. `path` is the built folder; a relative
+ * path resolves against the server's cwd. Settings entries win by name over
+ * `--extension` launch flags, so overriding a shipped extension with a local
+ * build is a settings edit.
+ */
+export const ExtensionSettingsEntry = Schema.Struct({
+  name: ExtensionName,
+  path: BoundedString(1024),
+  enabled: Schema.Boolean,
+}).annotate({ identifier: "ExtensionSettingsEntry" });
+export type ExtensionSettingsEntry = typeof ExtensionSettingsEntry.Type;
+
+/** Where the host learned about this extension. There is no "bundled" source. */
+export const ExtensionSource = Schema.Literals(["settings", "launch-flag"]).annotate({
+  identifier: "ExtensionSource",
+});
+export type ExtensionSource = typeof ExtensionSource.Type;
+
+/**
+ * `changed` is its own flag rather than a state because a changed extension is
+ * still running the old build: it is a Deploy affordance, not a health problem.
+ */
+export const ExtensionRuntimeState = Schema.Literals([
+  "disabled",
+  "stopped",
+  "starting",
+  "running",
+  "crashed",
+]).annotate({ identifier: "ExtensionRuntimeState" });
+export type ExtensionRuntimeState = typeof ExtensionRuntimeState.Type;
+
+export const ExtensionStatus = Schema.Struct({
+  name: ExtensionName,
+  path: BoundedString(1024),
+  source: ExtensionSource,
+  enabled: Schema.Boolean,
+  state: ExtensionRuntimeState,
+  /** From the manifest. Absent when the folder has no readable manifest. */
+  version: Schema.optionalKey(BoundedString(64)),
+  protocolVersion: Schema.optionalKey(ExtensionProtocolVersion),
+  /** Hash of the folder as it is on disk right now. */
+  folderHash: Schema.optionalKey(BoundedString(64)),
+  /** Hash of the folder the running process was started from. */
+  runningHash: Schema.optionalKey(BoundedString(64)),
+  /** The two hashes differ: a build landed and Deploy will pick it up. */
+  changed: Schema.Boolean,
+  tools: Schema.Array(ExtensionToolName),
+  httpPrefix: Schema.optionalKey(ExtensionHttpPrefix),
+  web: Schema.optionalKey(ExtensionWebEntry),
+  badge: Schema.optionalKey(ExtensionBadge),
+  /** Why it is stopped or crashed, in the words Settings shows. */
+  lastError: Schema.optionalKey(BoundedString(1024)),
+  restartCount: NonNegativeInt,
+}).annotate({ identifier: "ExtensionStatus" });
+export type ExtensionStatus = typeof ExtensionStatus.Type;
+
+export const ExtensionListResult = Schema.Struct({
+  extensions: Schema.Array(ExtensionStatus),
+}).annotate({ identifier: "ExtensionListResult" });
+export type ExtensionListResult = typeof ExtensionListResult.Type;
+
+export const ExtensionDeployInput = Schema.Struct({ name: ExtensionName }).annotate({
+  identifier: "ExtensionDeployInput",
+});
+export type ExtensionDeployInput = typeof ExtensionDeployInput.Type;
+
+export const ExtensionSetEnabledInput = Schema.Struct({
+  name: ExtensionName,
+  enabled: Schema.Boolean,
+}).annotate({ identifier: "ExtensionSetEnabledInput" });
+export type ExtensionSetEnabledInput = typeof ExtensionSetEnabledInput.Type;
+
+/** Bounded so one noisy extension cannot grow the host's memory without limit. */
+export const EXTENSION_LOG_BUFFER_LINES = 500;
+
+export const ExtensionLogEntry = Schema.Struct({
+  at: Schema.Int,
+  stream: Schema.Literals(["stdout", "stderr"]),
+  line: BoundedString(4096),
+}).annotate({ identifier: "ExtensionLogEntry" });
+export type ExtensionLogEntry = typeof ExtensionLogEntry.Type;
+
+export const ExtensionLogsInput = Schema.Struct({
+  name: ExtensionName,
+  limit: Schema.optionalKey(
+    Schema.Int.check(
+      Schema.isGreaterThanOrEqualTo(1),
+      Schema.isLessThanOrEqualTo(EXTENSION_LOG_BUFFER_LINES),
+    ),
+  ),
+}).annotate({ identifier: "ExtensionLogsInput" });
+export type ExtensionLogsInput = typeof ExtensionLogsInput.Type;
+
+export const ExtensionLogsResult = Schema.Struct({
+  name: ExtensionName,
+  entries: Schema.Array(ExtensionLogEntry),
+}).annotate({ identifier: "ExtensionLogsResult" });
+export type ExtensionLogsResult = typeof ExtensionLogsResult.Type;
+
+/**
+ * Client-facing management, gated by the ordinary orchestration scopes rather
+ * than the `extension` scope: this is Settings talking, not an extension.
+ */
+export const EXTENSION_ADMIN_WS_METHODS = {
+  list: "extensions.admin.list",
+  deploy: "extensions.admin.deploy",
+  setEnabled: "extensions.admin.setEnabled",
+  logs: "extensions.admin.logs",
+} as const;
+
+export class ExtensionNotFoundError extends Schema.TaggedErrorClass<ExtensionNotFoundError>()(
+  "ExtensionNotFoundError",
+  {
+    extensionName: ExtensionName,
+  },
+) {
+  override get message(): string {
+    return `No extension named ${this.extensionName} is installed in this environment.`;
+  }
+}
+
+/**
+ * The folder is gone, unreadable, or has no valid `extension.json`. Carries the
+ * path because the fix is almost always to point the settings entry elsewhere.
+ *
+ * The manifest's own `name` is deliberately not checked against the name the
+ * host installed the folder under: the host's name is authoritative, and the
+ * same built folder may be installed more than once.
+ */
+export class ExtensionFolderError extends Schema.TaggedErrorClass<ExtensionFolderError>()(
+  "ExtensionFolderError",
+  {
+    extensionName: Schema.optionalKey(ExtensionName),
+    path: BoundedString(1024),
+    reason: Schema.Literals(["missing", "unreadable", "invalid-manifest"]),
+    detail: Schema.optionalKey(BoundedString(1024)),
+  },
+) {
+  override get message(): string {
+    // `detail` is the part that tells the user what to fix, so it belongs in
+    // the sentence Settings shows rather than only in the structured error.
+    const suffix = this.detail === undefined ? "" : ` (${this.detail})`;
+    switch (this.reason) {
+      case "missing":
+        return `No extension folder at ${this.path}.`;
+      case "unreadable":
+        return `Could not read the extension folder at ${this.path}${suffix}.`;
+      case "invalid-manifest":
+        return `${this.path} has no valid extension.json${suffix}.`;
+    }
+  }
+}
+
+export const ExtensionAdminError = Schema.Union([
+  ExtensionNotFoundError,
+  ExtensionFolderError,
+]).annotate({ identifier: "ExtensionAdminError" });
+export type ExtensionAdminError = typeof ExtensionAdminError.Type;

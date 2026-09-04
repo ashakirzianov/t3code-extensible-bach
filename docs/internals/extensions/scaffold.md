@@ -49,8 +49,8 @@ this scaffold honest.
   "name": "t3code-reference-extension",
   "version": "1.0.0",
   "private": true,
-  "type": "module",
   "description": "Reference T3 Code extension. Standalone: ordinary dependencies, no workspace links.",
+  "type": "module",
   "scripts": {
     "build": "node build.mjs",
     "test": "node build.mjs && node --test \"test/**/*.test.mjs\""
@@ -312,7 +312,9 @@ export function readHostEnvironment(source: NodeJS.ProcessEnv = process.env): Ho
   // what we then negotiate with, and the host rejects it if it cannot speak it.
   const protocolVersion = rawProtocolVersion ? Number.parseInt(rawProtocolVersion, 10) : 1;
   if (!Number.isInteger(protocolVersion) || protocolVersion < 1) {
-    throw new Error(`${ENV_PROTOCOL_VERSION} must be a positive integer, got "${rawProtocolVersion}".`);
+    throw new Error(
+      `${ENV_PROTOCOL_VERSION} must be a positive integer, got "${rawProtocolVersion}".`,
+    );
   }
 
   return { name, token, wsUrl, dataDirectory, protocolVersion };
@@ -436,15 +438,16 @@ async function main(): Promise<void> {
     );
 
     // 2. Declarative registrations. Each is answered; a rejection is not fatal.
-    const registered = await client.call<ExtensionRegisterToolsResult>(
-      "extensions.registerTools",
-      { tools: TOOLS },
-    );
+    const registered = await client.call<ExtensionRegisterToolsResult>("extensions.registerTools", {
+      tools: TOOLS,
+    });
     for (const entry of registered.tools) {
       if (entry.status === "rejected") {
         // Losing a tool name is survivable: the rest of the extension still runs,
         // and Settings shows the reason. Do not exit.
-        console.error(`[reference] tool "${entry.name}" rejected (${entry.reason}): ${entry.message}`);
+        console.error(
+          `[reference] tool "${entry.name}" rejected (${entry.reason}): ${entry.message}`,
+        );
       }
     }
 
@@ -711,7 +714,10 @@ export class RpcClient {
   #streams = new Map<RpcRequestId, StreamSubscription>();
   #closed = false;
 
-  private constructor(socket: WebSocket, private readonly onClose: RpcClientOptions["onClose"]) {
+  private constructor(
+    socket: WebSocket,
+    private readonly onClose: RpcClientOptions["onClose"],
+  ) {
     this.#socket = socket;
     socket.on("message", (raw: Buffer | string) => this.#receive(raw.toString()));
     socket.on("close", (code: number) => this.#fail(new RpcConnectionClosedError(code)));
@@ -808,7 +814,9 @@ export class RpcClient {
         const stream = this.#streams.get(id);
         if (stream) {
           this.#streams.delete(id);
-          stream.onEnd(exit._tag === "Success" ? undefined : new RpcCallError("stream", exit.cause));
+          stream.onEnd(
+            exit._tag === "Success" ? undefined : new RpcCallError("stream", exit.cause),
+          );
         }
         return;
       }
@@ -931,7 +939,8 @@ import type { EchoStore } from "./store.js";
 export type EchoToolResult = Omit<ExtensionToolResult, "connectionId">;
 
 export function runEchoTool(store: EchoStore, invocation: ExtensionToolInvocation): EchoToolResult {
-  const message = typeof invocation.arguments.message === "string" ? invocation.arguments.message : "";
+  const message =
+    typeof invocation.arguments.message === "string" ? invocation.arguments.message : "";
   if (message.length === 0) {
     // A bad argument is a tool error the agent can read and correct, not an
     // exception: the extension stays up and the agent gets a usable message.

@@ -14,6 +14,7 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 import { Argument, Flag } from "effect/unstable/cli";
 
 import { readBootstrapEnvelope } from "../bootstrap.ts";
+import { extensionLaunchFlagsFromRecord } from "../extensions/ExtensionSources.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
 
@@ -69,6 +70,17 @@ const tailscaleServeFlag = Flag.boolean("tailscale-serve").pipe(
   ),
   Flag.optional,
 );
+/**
+ * `--extension name=path`, repeatable. The desktop shell passes one for each
+ * folder in its resources directory; on its own it is how a developer runs a
+ * checkout's build without editing settings. A settings entry of the same name
+ * wins, which is what makes both safe.
+ */
+export const extensionFlag = Flag.keyValuePair("extension").pipe(
+  Flag.withDescription("Run an extension from a built folder, as `name=path`. Repeatable."),
+  Flag.withDefault({}),
+);
+
 export const tailscaleServePortFlag = Flag.integer("tailscale-serve-port").pipe(
   Flag.withSchema(PortSchema),
   Flag.withDescription("HTTPS port for Tailscale Serve when --tailscale-serve is enabled."),
@@ -154,6 +166,7 @@ export interface CliServerFlags {
   readonly logWebSocketEvents: Option.Option<boolean>;
   readonly tailscaleServeEnabled: Option.Option<boolean>;
   readonly tailscaleServePort: Option.Option<number>;
+  readonly extension?: Readonly<Record<string, string>>;
 }
 
 export interface CliAuthLocationFlags {
@@ -188,6 +201,7 @@ export const sharedServerCommandFlags = {
   logWebSocketEvents: logWebSocketEventsFlag,
   tailscaleServeEnabled: tailscaleServeFlag,
   tailscaleServePort: tailscaleServePortFlag,
+  extension: extensionFlag,
 } as const;
 
 const resolveOptionPrecedence = <Value>(
@@ -231,6 +245,7 @@ export const resolveServerConfig = (
       logWebSocketEvents: flags.logWebSocketEvents ?? Option.none(),
       tailscaleServeEnabled: flags.tailscaleServeEnabled ?? Option.none(),
       tailscaleServePort: flags.tailscaleServePort ?? Option.none(),
+      extension: flags.extension ?? {},
     } satisfies CliServerFlags;
     const bootstrapFd = Option.getOrUndefined(normalizedFlags.bootstrapFd) ?? env.bootstrapFd;
     const bootstrapEnvelope =
@@ -384,6 +399,9 @@ export const resolveServerConfig = (
       logWebSocketEvents,
       tailscaleServeEnabled,
       tailscaleServePort,
+      // A malformed flag is reported and skipped rather than failing startup:
+      // the server the user is trying to reach must still come up.
+      extensionLaunchFlags: extensionLaunchFlagsFromRecord(normalizedFlags.extension ?? {}),
     };
 
     return config;

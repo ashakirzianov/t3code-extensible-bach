@@ -16,6 +16,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import { sweepStalePendingAttachments } from "./attachmentStore.ts";
+import type { ExtensionLaunchFlag } from "./extensions/ExtensionSources.ts";
 
 export const DEFAULT_PORT = 3773;
 
@@ -88,6 +89,11 @@ export class ServerConfig extends Context.Service<
     readonly logWebSocketEvents: boolean;
     readonly tailscaleServeEnabled: boolean;
     readonly tailscaleServePort: number;
+    /**
+     * `--extension name=path`, already parsed. Absent means none were passed;
+     * settings entries are read separately and win by name.
+     */
+    readonly extensionLaunchFlags?: ReadonlyArray<ExtensionLaunchFlag> | undefined;
   }
 >()("t3/config/ServerConfig") {
   /** @deprecated Import and use `layerTest` from this module. */

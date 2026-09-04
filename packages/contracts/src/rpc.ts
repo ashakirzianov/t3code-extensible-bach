@@ -85,6 +85,32 @@ import {
   OrchestrationGetWorkflowScriptError,
 } from "./orchestration.ts";
 import {
+  EXTENSION_ADMIN_WS_METHODS,
+  EXTENSION_WS_METHODS,
+  ExtensionConnectInput,
+  ExtensionDeployInput,
+  ExtensionAdminError,
+  ExtensionHandshakeRequiredError,
+  ExtensionHelloAck,
+  ExtensionHelloInput,
+  ExtensionHttpPrefixCollisionError,
+  ExtensionHttpResponse,
+  ExtensionListResult,
+  ExtensionLogsInput,
+  ExtensionLogsResult,
+  ExtensionNotFoundError,
+  ExtensionProtocolMismatchError,
+  ExtensionRegisterHttpPrefixInput,
+  ExtensionRegisterHttpPrefixResult,
+  ExtensionRegisterToolsInput,
+  ExtensionRegisterToolsResult,
+  ExtensionRegisterWebEntryInput,
+  ExtensionSetBadgeInput,
+  ExtensionSetEnabledInput,
+  ExtensionStreamEvent,
+  ExtensionToolResult,
+} from "./extensions.ts";
+import {
   ProviderUploadFeedbackError,
   ProviderUploadFeedbackInput,
   ProviderUploadFeedbackResult,
@@ -1174,6 +1200,84 @@ export const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeReso
   stream: true,
 });
 
+// Extension protocol. Method names and schemas live in `extensions.ts`; the
+// wiring lives here with every other method, as orchestration's does.
+export const WsExtensionsHelloRpc = Rpc.make(EXTENSION_WS_METHODS.hello, {
+  payload: ExtensionHelloInput,
+  success: ExtensionHelloAck,
+  error: Schema.Union([
+    ExtensionProtocolMismatchError,
+    ExtensionNotFoundError,
+    EnvironmentAuthorizationError,
+  ]),
+});
+
+export const WsExtensionsRegisterToolsRpc = Rpc.make(EXTENSION_WS_METHODS.registerTools, {
+  payload: ExtensionRegisterToolsInput,
+  success: ExtensionRegisterToolsResult,
+  error: Schema.Union([ExtensionHandshakeRequiredError, EnvironmentAuthorizationError]),
+});
+
+export const WsExtensionsRegisterHttpPrefixRpc = Rpc.make(EXTENSION_WS_METHODS.registerHttpPrefix, {
+  payload: ExtensionRegisterHttpPrefixInput,
+  success: ExtensionRegisterHttpPrefixResult,
+  error: Schema.Union([
+    ExtensionHandshakeRequiredError,
+    ExtensionHttpPrefixCollisionError,
+    EnvironmentAuthorizationError,
+  ]),
+});
+
+export const WsExtensionsRegisterWebEntryRpc = Rpc.make(EXTENSION_WS_METHODS.registerWebEntry, {
+  payload: ExtensionRegisterWebEntryInput,
+  error: Schema.Union([ExtensionHandshakeRequiredError, EnvironmentAuthorizationError]),
+});
+
+export const WsExtensionsSetBadgeRpc = Rpc.make(EXTENSION_WS_METHODS.setBadge, {
+  payload: ExtensionSetBadgeInput,
+  error: Schema.Union([ExtensionHandshakeRequiredError, EnvironmentAuthorizationError]),
+});
+
+export const WsExtensionsConnectRpc = Rpc.make(EXTENSION_WS_METHODS.connect, {
+  payload: ExtensionConnectInput,
+  success: ExtensionStreamEvent,
+  error: Schema.Union([ExtensionHandshakeRequiredError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+export const WsExtensionsRespondToolRpc = Rpc.make(EXTENSION_WS_METHODS.respondTool, {
+  payload: ExtensionToolResult,
+  error: EnvironmentAuthorizationError,
+});
+
+export const WsExtensionsRespondHttpRpc = Rpc.make(EXTENSION_WS_METHODS.respondHttp, {
+  payload: ExtensionHttpResponse,
+  error: EnvironmentAuthorizationError,
+});
+
+// Extension management, for the Settings screen rather than for extensions.
+export const WsExtensionsAdminListRpc = Rpc.make(EXTENSION_ADMIN_WS_METHODS.list, {
+  payload: Schema.Struct({}),
+  success: ExtensionListResult,
+  error: EnvironmentAuthorizationError,
+});
+
+export const WsExtensionsAdminDeployRpc = Rpc.make(EXTENSION_ADMIN_WS_METHODS.deploy, {
+  payload: ExtensionDeployInput,
+  error: Schema.Union([ExtensionAdminError, EnvironmentAuthorizationError]),
+});
+
+export const WsExtensionsAdminSetEnabledRpc = Rpc.make(EXTENSION_ADMIN_WS_METHODS.setEnabled, {
+  payload: ExtensionSetEnabledInput,
+  error: Schema.Union([ExtensionAdminError, EnvironmentAuthorizationError]),
+});
+
+export const WsExtensionsAdminLogsRpc = Rpc.make(EXTENSION_ADMIN_WS_METHODS.logs, {
+  payload: ExtensionLogsInput,
+  success: ExtensionLogsResult,
+  error: Schema.Union([ExtensionAdminError, EnvironmentAuthorizationError]),
+});
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
@@ -1293,4 +1397,16 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationGetArchivedShellSnapshotRpc,
   WsOrchestrationSubscribeShellRpc,
   WsOrchestrationSubscribeThreadRpc,
+  WsExtensionsHelloRpc,
+  WsExtensionsRegisterToolsRpc,
+  WsExtensionsRegisterHttpPrefixRpc,
+  WsExtensionsRegisterWebEntryRpc,
+  WsExtensionsSetBadgeRpc,
+  WsExtensionsConnectRpc,
+  WsExtensionsRespondToolRpc,
+  WsExtensionsRespondHttpRpc,
+  WsExtensionsAdminListRpc,
+  WsExtensionsAdminDeployRpc,
+  WsExtensionsAdminSetEnabledRpc,
+  WsExtensionsAdminLogsRpc,
 );

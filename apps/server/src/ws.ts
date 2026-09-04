@@ -37,6 +37,10 @@ import {
   OrchestrationGetSnapshotError,
   OrchestrationSearchThreadsError,
   OrchestrationGetTurnDiffError,
+  EXTENSION_ADMIN_WS_METHODS,
+  EXTENSION_WS_METHODS,
+  ExtensionHandshakeRequiredError,
+  type ExtensionName,
   ORCHESTRATION_WS_METHODS,
   type ProjectId,
   type ProjectEntriesFailure,
@@ -105,6 +109,9 @@ import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
+import { EXTENSION_SUBJECT_PREFIX } from "./extensions/ExtensionIdentity.ts";
+import * as ExtensionRegistryService from "./extensions/ExtensionRegistry.ts";
+import * as ExtensionSupervisorService from "./extensions/ExtensionSupervisor.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
@@ -461,11 +468,33 @@ const makeWsRpcLayer = (
   clientOrigin: OrchestrationClientOrigin,
   clientAnalyticsProps: Readonly<Record<string, unknown>>,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
+  extensions: ExtensionRegistryService.ExtensionRegistryShape,
+  extensionSupervisor: ExtensionSupervisorService.ExtensionSupervisorShape,
 ) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
       const crypto = yield* Crypto.Crypto;
+      /**
+       * Which extension this socket speaks for, established by `hello` and
+       * good for the life of the connection. One socket is one extension, so
+       * later messages do not have to name themselves — and cannot name
+       * someone else.
+       */
+      const connectionExtension = yield* Ref.make<ExtensionName | undefined>(undefined);
+      const extensionNameFromSubject = (subject: string): ExtensionName | undefined =>
+        subject.startsWith(EXTENSION_SUBJECT_PREFIX)
+          ? (subject.slice(EXTENSION_SUBJECT_PREFIX.length) as ExtensionName)
+          : undefined;
+      const withExtensionName = <A, E, R>(
+        method: string,
+        use: (name: ExtensionName) => Effect.Effect<A, E, R>,
+      ): Effect.Effect<A, E | ExtensionHandshakeRequiredError, R> =>
+        Effect.gen(function* () {
+          const name = yield* Ref.get(connectionExtension);
+          if (name === undefined) return yield* new ExtensionHandshakeRequiredError({ method });
+          return yield* use(name);
+        });
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
       const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
       const threadDeletionReactor = yield* ThreadDeletionReactor;
@@ -2589,6 +2618,96 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.previewReportStatus, previewManager.reportStatus(input), {
             "rpc.aggregate": "preview",
           }),
+        // An extension speaks for itself only: every handler is handed the
+        // authenticated subject so a token minted for one extension cannot
+        // register tools or answer invocations for another.
+        [EXTENSION_WS_METHODS.hello]: (input) =>
+          observeRpcEffect(
+            EXTENSION_WS_METHODS.hello,
+            // The token names the installation; the manifest only describes
+            // the build. A dev token paired by hand carries the same subject,
+            // so there is no second path.
+            ((name) =>
+              extensions
+                .hello({ ...input, name, subject: currentSession.subject })
+                .pipe(Effect.tap(() => Ref.set(connectionExtension, name))))(
+              extensionNameFromSubject(currentSession.subject) ?? input.manifest.name,
+            ),
+            { "rpc.aggregate": "extensions" },
+          ),
+        [EXTENSION_WS_METHODS.registerTools]: (input) =>
+          observeRpcEffect(
+            EXTENSION_WS_METHODS.registerTools,
+            withExtensionName(EXTENSION_WS_METHODS.registerTools, (name) =>
+              extensions.registerTools({ ...input, name }),
+            ),
+            { "rpc.aggregate": "extensions" },
+          ),
+        [EXTENSION_WS_METHODS.registerHttpPrefix]: (input) =>
+          observeRpcEffect(
+            EXTENSION_WS_METHODS.registerHttpPrefix,
+            withExtensionName(EXTENSION_WS_METHODS.registerHttpPrefix, (name) =>
+              extensions.registerHttpPrefix({ ...input, name }),
+            ),
+            { "rpc.aggregate": "extensions" },
+          ),
+        [EXTENSION_WS_METHODS.registerWebEntry]: (input) =>
+          observeRpcEffect(
+            EXTENSION_WS_METHODS.registerWebEntry,
+            withExtensionName(EXTENSION_WS_METHODS.registerWebEntry, (name) =>
+              extensions.registerWebEntry({ ...input, name }),
+            ),
+            { "rpc.aggregate": "extensions" },
+          ),
+        [EXTENSION_WS_METHODS.setBadge]: (input) =>
+          observeRpcEffect(
+            EXTENSION_WS_METHODS.setBadge,
+            withExtensionName(EXTENSION_WS_METHODS.setBadge, (name) =>
+              extensions.setBadge({ ...input, name }),
+            ),
+            { "rpc.aggregate": "extensions" },
+          ),
+        [EXTENSION_WS_METHODS.connect]: (input) =>
+          observeRpcStreamEffect(
+            EXTENSION_WS_METHODS.connect,
+            withExtensionName(EXTENSION_WS_METHODS.connect, (name) =>
+              // `connect` is the one message that names its extension. It is
+              // checked rather than trusted: the handshake already settled who
+              // this socket is, so a mismatch is a client bug worth reporting.
+              input.name === name
+                ? extensions.connect({ name })
+                : new ExtensionHandshakeRequiredError({ method: EXTENSION_WS_METHODS.connect }),
+            ),
+            { "rpc.aggregate": "extensions" },
+          ),
+        [EXTENSION_WS_METHODS.respondTool]: (input) =>
+          observeRpcEffect(EXTENSION_WS_METHODS.respondTool, extensions.respondTool(input), {
+            "rpc.aggregate": "extensions",
+          }),
+        [EXTENSION_WS_METHODS.respondHttp]: (input) =>
+          observeRpcEffect(EXTENSION_WS_METHODS.respondHttp, extensions.respondHttp(input), {
+            "rpc.aggregate": "extensions",
+          }),
+        [EXTENSION_ADMIN_WS_METHODS.list]: (_input) =>
+          observeRpcEffect(EXTENSION_ADMIN_WS_METHODS.list, extensions.list, {
+            "rpc.aggregate": "extensions",
+          }),
+        [EXTENSION_ADMIN_WS_METHODS.logs]: (input) =>
+          observeRpcEffect(EXTENSION_ADMIN_WS_METHODS.logs, extensions.logs(input), {
+            "rpc.aggregate": "extensions",
+          }),
+        [EXTENSION_ADMIN_WS_METHODS.deploy]: (input) =>
+          observeRpcEffect(
+            EXTENSION_ADMIN_WS_METHODS.deploy,
+            Effect.scoped(extensionSupervisor.deploy(input.name)),
+            { "rpc.aggregate": "extensions" },
+          ),
+        [EXTENSION_ADMIN_WS_METHODS.setEnabled]: (input) =>
+          observeRpcEffect(
+            EXTENSION_ADMIN_WS_METHODS.setEnabled,
+            Effect.scoped(extensionSupervisor.setEnabled(input)),
+            { "rpc.aggregate": "extensions" },
+          ),
         [WS_METHODS.previewAutomationConnect]: (input) =>
           observeRpcStreamEffect(
             WS_METHODS.previewAutomationConnect,
@@ -2800,6 +2919,8 @@ const makeWsRpcLayer = (
 export const websocketRpcRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+    const extensions = yield* ExtensionRegistryService.ExtensionRegistry;
+    const extensionSupervisor = yield* ExtensionSupervisorService.ExtensionSupervisor;
     const baseServerSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const config = yield* ServerConfig.ServerConfig;
     const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
@@ -2859,6 +2980,8 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               clientOrigin,
               clientAnalyticsProps,
               previewAutomationBroker,
+              extensions,
+              extensionSupervisor,
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(ProviderMaintenanceRunner.layer),

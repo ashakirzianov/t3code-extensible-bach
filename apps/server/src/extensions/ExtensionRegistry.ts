@@ -1,0 +1,818 @@
+/**
+ * The extension registry: what the host knows about every extension in this
+ * environment, and the broker that carries calls to the running ones.
+ *
+ * One service rather than two because there is one piece of state. A tool
+ * invocation has to find the connection, the connection has to find its
+ * record, and Settings has to read both — splitting them would mean two
+ * services sharing a ref, which is the same state with a seam through it.
+ *
+ * Three rules shape the design, all from the MCP spike
+ * (`docs/internals/extensions/spikes/mcp-client-behaviour.md`):
+ *
+ * - **Registrations outlive the process.** A tool registered by an extension
+ *   that later stops stays in the catalogue and answers with
+ *   `ExtensionUnavailableError`. Removing it would be invisible to a live
+ *   agent, whose provider cached the catalogue at connect; an error is legible.
+ * - **A redeploy rebinds the same names.** Registering again replaces the
+ *   previous set, and the tools the new build kept keep working mid-session.
+ * - **The badge survives a reconnect**, so a restart does not blank the nav
+ *   entry the user was reading. It is cleared when the extension stops.
+ */
+import {
+  EXTENSION_LOG_BUFFER_LINES,
+  ExtensionToolNameCollisionError,
+  EXTENSION_SUPPORTED_PROTOCOL_VERSIONS,
+  EXTENSION_WS_METHODS,
+  ExtensionHandshakeRequiredError,
+  ExtensionHttpPrefixCollisionError,
+  ExtensionNotFoundError,
+  ExtensionProtocolMismatchError,
+  ExtensionUnavailableError,
+  ExtensionUnknownToolError,
+  negotiateExtensionProtocolVersion,
+  type EnvironmentId,
+  type ExtensionBadge,
+  type ExtensionHelloAck,
+  type ExtensionHelloInput,
+  type ExtensionHttpPrefix,
+  type ExtensionHttpRequest,
+  type ExtensionHttpResponse,
+  type ExtensionListResult,
+  type ExtensionLogEntry,
+  type ExtensionLogsInput,
+  type ExtensionLogsResult,
+  type ExtensionManifest,
+  type ExtensionName,
+  type ExtensionRegisterHttpPrefixInput,
+  type ExtensionRegisterHttpPrefixResult,
+  type ExtensionRegisterToolsInput,
+  type ExtensionRegisterToolsResult,
+  type ExtensionRegisterWebEntryInput,
+  type ExtensionRuntimeState,
+  type ExtensionSetBadgeInput,
+  type ExtensionSource,
+  type ExtensionStatus,
+  type ExtensionStreamEvent,
+  type ExtensionToolCaller,
+  type ExtensionToolContent,
+  type ExtensionToolDefinition,
+  type ExtensionToolName,
+  type ExtensionToolRegistration,
+  type ExtensionToolResult,
+  type ExtensionWebEntry,
+} from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
+import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
+import * as SynchronizedRef from "effect/SynchronizedRef";
+
+import { EXTENSION_SUBJECT_PREFIX } from "./ExtensionIdentity.ts";
+import type { ResolvedExtensionSource } from "./ExtensionSources.ts";
+
+/** How long a brokered call waits before the caller is told the extension is silent. */
+export const EXTENSION_CALL_TIMEOUT_MS = 30_000;
+
+/** Names the host keeps for itself, so an extension cannot shadow a core route. */
+const RESERVED_HTTP_PREFIXES = new Set(["api", "ws", "mcp", "oauth", "assets", "ext", "pair"]);
+
+export interface ExtensionToolOwner {
+  readonly extensionName: ExtensionName;
+  readonly definition: ExtensionToolDefinition;
+}
+
+export interface ExtensionConnectionInput {
+  readonly name: ExtensionName;
+  /** The authenticated session's subject, so a token cannot answer for another extension. */
+  readonly subject?: string;
+}
+
+interface ExtensionConnection {
+  readonly connectionId: string;
+  readonly queue: Queue.Queue<ExtensionStreamEvent>;
+}
+
+/**
+ * One in-flight host-to-extension call. Discriminated rather than generic so a
+ * response can only settle a call of its own kind, with no cast anywhere.
+ */
+type PendingCall =
+  | {
+      readonly kind: "tool";
+      readonly connectionId: string;
+      readonly deferred: Deferred.Deferred<ExtensionToolResult, ExtensionUnavailableError>;
+    }
+  | {
+      readonly kind: "http";
+      readonly connectionId: string;
+      readonly deferred: Deferred.Deferred<ExtensionHttpResponse, ExtensionUnavailableError>;
+    };
+
+interface ExtensionRecord {
+  readonly name: ExtensionName;
+  readonly path: string;
+  readonly source: ExtensionSource;
+  readonly enabled: boolean;
+  readonly state: ExtensionRuntimeState;
+  readonly manifest?: ExtensionManifest;
+  readonly folderHash?: string;
+  readonly runningHash?: string;
+  readonly lastError?: string;
+  readonly restartCount: number;
+  readonly logs: ReadonlyArray<ExtensionLogEntry>;
+  readonly tools: ReadonlyArray<ExtensionToolDefinition>;
+  readonly httpPrefix?: ExtensionHttpPrefix;
+  readonly web?: ExtensionWebEntry;
+  readonly badge?: ExtensionBadge;
+  readonly connection?: ExtensionConnection;
+  readonly helloAcked: boolean;
+}
+
+interface RegistryState {
+  /** Insertion-ordered: start order settles tool-name collisions (design §5.2). */
+  readonly records: ReadonlyMap<ExtensionName, ExtensionRecord>;
+  readonly pending: ReadonlyMap<string, PendingCall>;
+  readonly callSequence: number;
+}
+
+export interface ExtensionRegistryShape {
+  // --- protocol, extension to host -----------------------------------------
+  readonly hello: (
+    input: ExtensionHelloInput & ExtensionConnectionInput,
+  ) => Effect.Effect<ExtensionHelloAck, ExtensionProtocolMismatchError | ExtensionNotFoundError>;
+  readonly registerTools: (
+    input: ExtensionRegisterToolsInput & ExtensionConnectionInput,
+  ) => Effect.Effect<ExtensionRegisterToolsResult, ExtensionHandshakeRequiredError>;
+  readonly registerHttpPrefix: (
+    input: ExtensionRegisterHttpPrefixInput & ExtensionConnectionInput,
+  ) => Effect.Effect<
+    ExtensionRegisterHttpPrefixResult,
+    ExtensionHandshakeRequiredError | ExtensionHttpPrefixCollisionError
+  >;
+  readonly registerWebEntry: (
+    input: ExtensionRegisterWebEntryInput & ExtensionConnectionInput,
+  ) => Effect.Effect<void, ExtensionHandshakeRequiredError>;
+  readonly setBadge: (
+    input: ExtensionSetBadgeInput & ExtensionConnectionInput,
+  ) => Effect.Effect<void, ExtensionHandshakeRequiredError>;
+  readonly connect: (
+    input: ExtensionConnectionInput,
+  ) => Effect.Effect<Stream.Stream<ExtensionStreamEvent>, ExtensionHandshakeRequiredError>;
+  readonly respondTool: (response: ExtensionToolResult) => Effect.Effect<void>;
+  readonly respondHttp: (response: ExtensionHttpResponse) => Effect.Effect<void>;
+
+  // --- broker, host to extension -------------------------------------------
+  readonly invokeTool: (input: {
+    readonly name: ExtensionToolName;
+    readonly arguments: Readonly<Record<string, unknown>>;
+    readonly caller: ExtensionToolCaller;
+  }) => Effect.Effect<ExtensionToolResult, ExtensionUnavailableError | ExtensionUnknownToolError>;
+  readonly proxyHttp: (input: {
+    readonly prefix: ExtensionHttpPrefix;
+    readonly request: Omit<ExtensionHttpRequest, "requestId">;
+  }) => Effect.Effect<ExtensionHttpResponse, ExtensionUnavailableError | ExtensionNotFoundError>;
+  /** Every tool the host should register with MCP, in start order. */
+  readonly listTools: Effect.Effect<ReadonlyArray<ExtensionToolOwner>>;
+
+  // --- lifecycle, called by the supervisor ---------------------------------
+  readonly upsertSource: (
+    source: ResolvedExtensionSource & {
+      readonly manifest?: ExtensionManifest;
+      readonly folderHash?: string;
+      readonly loadError?: string;
+    },
+  ) => Effect.Effect<void>;
+  readonly setState: (input: {
+    readonly name: ExtensionName;
+    readonly state: ExtensionRuntimeState;
+    readonly runningHash?: string;
+    readonly lastError?: string;
+    readonly countRestart?: boolean;
+  }) => Effect.Effect<void>;
+  readonly setFolderHash: (input: {
+    readonly name: ExtensionName;
+    readonly folderHash: string;
+    readonly manifest?: ExtensionManifest;
+  }) => Effect.Effect<void>;
+  readonly appendLog: (input: {
+    readonly name: ExtensionName;
+    readonly stream: ExtensionLogEntry["stream"];
+    readonly line: string;
+  }) => Effect.Effect<void>;
+  readonly setEnabled: (input: {
+    readonly name: ExtensionName;
+    readonly enabled: boolean;
+  }) => Effect.Effect<void, ExtensionNotFoundError>;
+
+  // --- admin ----------------------------------------------------------------
+  readonly list: Effect.Effect<ExtensionListResult>;
+  readonly logs: (input: ExtensionLogsInput) => Effect.Effect<ExtensionLogsResult>;
+  readonly get: (name: ExtensionName) => Effect.Effect<ExtensionStatus, ExtensionNotFoundError>;
+}
+
+export class ExtensionRegistry extends Context.Service<ExtensionRegistry, ExtensionRegistryShape>()(
+  "t3/extensions/ExtensionRegistry",
+) {}
+
+export interface ExtensionRegistryOptions {
+  readonly environmentId: EnvironmentId;
+  readonly hostVersion: string;
+  /** `<stateDir>/extensions`; each extension gets a directory named after it. */
+  readonly dataRoot: string;
+  readonly callTimeoutMs?: number;
+}
+
+const emptyRecord = (source: ResolvedExtensionSource): ExtensionRecord => ({
+  name: source.name,
+  path: source.path,
+  source: source.source,
+  enabled: source.enabled,
+  state: source.enabled ? "stopped" : "disabled",
+  restartCount: 0,
+  logs: [],
+  tools: [],
+  helloAcked: false,
+});
+
+const withRecord = (
+  state: RegistryState,
+  name: ExtensionName,
+  update: (record: ExtensionRecord) => ExtensionRecord,
+): RegistryState => {
+  const record = state.records.get(name);
+  if (!record) return state;
+  const records = new Map(state.records);
+  records.set(name, update(record));
+  return { ...state, records };
+};
+
+/**
+ * Who already owns `toolName`, or `undefined` if it is free. Names are
+ * unprefixed and unique per environment (design §5.2), so the first extension
+ * to register a name keeps it and later ones are told which one took it.
+ */
+const ownerOfTool = (
+  state: RegistryState,
+  toolName: ExtensionToolName,
+  claimant: ExtensionName,
+): ExtensionName | undefined => {
+  for (const record of state.records.values()) {
+    if (record.name === claimant) continue;
+    if (record.tools.some((tool) => tool.name === toolName)) return record.name;
+  }
+  return undefined;
+};
+
+const toStatus = (record: ExtensionRecord): ExtensionStatus => ({
+  name: record.name,
+  path: record.path,
+  source: record.source,
+  enabled: record.enabled,
+  state: record.state,
+  ...(record.manifest === undefined
+    ? {}
+    : { version: record.manifest.version, protocolVersion: record.manifest.protocolVersion }),
+  ...(record.folderHash === undefined ? {} : { folderHash: record.folderHash }),
+  ...(record.runningHash === undefined ? {} : { runningHash: record.runningHash }),
+  changed:
+    record.runningHash !== undefined &&
+    record.folderHash !== undefined &&
+    record.runningHash !== record.folderHash,
+  tools: record.tools.map((tool) => tool.name),
+  ...(record.httpPrefix === undefined ? {} : { httpPrefix: record.httpPrefix }),
+  ...(record.web === undefined ? {} : { web: record.web }),
+  ...(record.badge === undefined ? {} : { badge: record.badge }),
+  ...(record.lastError === undefined ? {} : { lastError: record.lastError }),
+  restartCount: record.restartCount,
+});
+
+const subjectMismatch = (input: ExtensionConnectionInput): boolean =>
+  input.subject !== undefined &&
+  input.subject.startsWith(EXTENSION_SUBJECT_PREFIX) &&
+  input.subject.slice(EXTENSION_SUBJECT_PREFIX.length) !== input.name;
+
+export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptions) {
+  const crypto = yield* Crypto.Crypto;
+  const callTimeoutMs = options.callTimeoutMs ?? EXTENSION_CALL_TIMEOUT_MS;
+  const state = yield* SynchronizedRef.make<RegistryState>({
+    records: new Map(),
+    pending: new Map(),
+    callSequence: 0,
+  });
+
+  const readRecord = (name: ExtensionName) =>
+    SynchronizedRef.get(state).pipe(Effect.map((current) => current.records.get(name)));
+
+  /** Every handshake-gated method answers the same way when there was no hello. */
+  const requireHandshake = Effect.fn("ExtensionRegistry.requireHandshake")(function* (
+    method: string,
+    input: ExtensionConnectionInput,
+  ) {
+    const record = yield* readRecord(input.name);
+    if (!record || !record.helloAcked || subjectMismatch(input)) {
+      return yield* new ExtensionHandshakeRequiredError({ method });
+    }
+    return record;
+  });
+
+  // `Deferred` is invariant in its value type, so the two branches cannot be
+  // collapsed even though their bodies are identical: narrowing on `kind` is
+  // what gives each call a concrete deferred to fail.
+  const abortPending = (entry: PendingCall, error: ExtensionUnavailableError) =>
+    entry.kind === "tool"
+      ? Deferred.fail(entry.deferred, error)
+      : Deferred.fail(entry.deferred, error);
+
+  const failPending = Effect.fn("ExtensionRegistry.failPending")(function* (
+    entries: ReadonlyArray<PendingCall>,
+    error: ExtensionUnavailableError,
+  ) {
+    yield* Effect.forEach(entries, (entry) => abortPending(entry, error), { discard: true });
+  });
+
+  /**
+   * Drop a connection and fail everything that was waiting on it. Callers hold
+   * the connection they are dropping so a reconnect that raced this cannot
+   * have its own queue torn down.
+   */
+  const dropConnection = Effect.fn("ExtensionRegistry.dropConnection")(function* (
+    name: ExtensionName,
+    connection: ExtensionConnection,
+    reason: ExtensionUnavailableError["reason"],
+  ) {
+    const abandoned = yield* SynchronizedRef.modify(state, (current) => {
+      const record = current.records.get(name);
+      const pending = new Map(current.pending);
+      const failed: Array<PendingCall> = [];
+      for (const [callId, entry] of pending) {
+        if (entry.connectionId !== connection.connectionId) continue;
+        pending.delete(callId);
+        failed.push(entry);
+      }
+      const records = new Map(current.records);
+      if (record && record.connection?.connectionId === connection.connectionId) {
+        const { connection: _connection, ...withoutConnection } = record;
+        records.set(name, { ...withoutConnection, helloAcked: false });
+      }
+      return [failed, { ...current, records, pending }] as const;
+    });
+    yield* failPending(abandoned, new ExtensionUnavailableError({ extensionName: name, reason }));
+    yield* Queue.shutdown(connection.queue);
+  });
+
+  const hello: ExtensionRegistryShape["hello"] = Effect.fn("ExtensionRegistry.hello")(
+    function* (input) {
+      if (subjectMismatch(input)) {
+        return yield* new ExtensionNotFoundError({ extensionName: input.name });
+      }
+      const record = yield* readRecord(input.manifest.name);
+      if (!record) {
+        return yield* new ExtensionNotFoundError({ extensionName: input.manifest.name });
+      }
+      const negotiated = negotiateExtensionProtocolVersion({
+        requestedVersion: input.protocolVersion,
+        supportedVersions: EXTENSION_SUPPORTED_PROTOCOL_VERSIONS,
+        extensionName: input.manifest.name,
+      });
+      if (negotiated._tag === "Failure") return yield* negotiated.failure;
+      yield* SynchronizedRef.update(state, (current) =>
+        withRecord(current, record.name, (existing) => ({
+          ...existing,
+          manifest: input.manifest,
+          helloAcked: true,
+        })),
+      );
+      return {
+        protocolVersion: negotiated.success,
+        hostProtocolVersions: EXTENSION_SUPPORTED_PROTOCOL_VERSIONS,
+        hostVersion: options.hostVersion,
+        environmentId: options.environmentId,
+        extensionPath: record.path,
+        dataDirectory: `${options.dataRoot}/${record.name}`,
+      } satisfies ExtensionHelloAck;
+    },
+  );
+
+  const registerTools: ExtensionRegistryShape["registerTools"] = Effect.fn(
+    "ExtensionRegistry.registerTools",
+  )(function* (input) {
+    yield* requireHandshake(EXTENSION_WS_METHODS.registerTools, input);
+    return yield* SynchronizedRef.modify(state, (current) => {
+      const accepted: ExtensionToolDefinition[] = [];
+      const results: ExtensionToolRegistration[] = [];
+      for (const tool of input.tools) {
+        const owner = ownerOfTool(current, tool.name, input.name);
+        if (owner !== undefined) {
+          results.push({
+            status: "rejected",
+            name: tool.name,
+            reason: "name-collision",
+            message: new ExtensionToolNameCollisionError({ toolName: tool.name, owner }).message,
+          });
+          continue;
+        }
+        accepted.push(tool);
+        results.push({ status: "accepted", name: tool.name });
+      }
+      return [
+        { tools: results } satisfies ExtensionRegisterToolsResult,
+        withRecord(current, input.name, (record) => ({ ...record, tools: accepted })),
+      ] as const;
+    });
+  });
+
+  const registerHttpPrefix: ExtensionRegistryShape["registerHttpPrefix"] = Effect.fn(
+    "ExtensionRegistry.registerHttpPrefix",
+  )(function* (input) {
+    yield* requireHandshake(EXTENSION_WS_METHODS.registerHttpPrefix, input);
+    if (RESERVED_HTTP_PREFIXES.has(input.prefix)) {
+      return yield* new ExtensionHttpPrefixCollisionError({ prefix: input.prefix });
+    }
+    const current = yield* SynchronizedRef.get(state);
+    for (const record of current.records.values()) {
+      if (record.name !== input.name && record.httpPrefix === input.prefix) {
+        return yield* new ExtensionHttpPrefixCollisionError({
+          prefix: input.prefix,
+          owner: record.name,
+        });
+      }
+    }
+    yield* SynchronizedRef.update(state, (next) =>
+      withRecord(next, input.name, (record) => ({ ...record, httpPrefix: input.prefix })),
+    );
+    return {
+      prefix: input.prefix,
+      basePath: `/ext-api/${options.environmentId}/${input.prefix}`,
+    } satisfies ExtensionRegisterHttpPrefixResult;
+  });
+
+  const registerWebEntry: ExtensionRegistryShape["registerWebEntry"] = Effect.fn(
+    "ExtensionRegistry.registerWebEntry",
+  )(function* (input) {
+    yield* requireHandshake(EXTENSION_WS_METHODS.registerWebEntry, input);
+    yield* SynchronizedRef.update(state, (current) =>
+      withRecord(current, input.name, (record) => ({ ...record, web: input.web })),
+    );
+  });
+
+  const setBadge: ExtensionRegistryShape["setBadge"] = Effect.fn("ExtensionRegistry.setBadge")(
+    function* (input) {
+      yield* requireHandshake(EXTENSION_WS_METHODS.setBadge, input);
+      yield* SynchronizedRef.update(state, (current) =>
+        withRecord(current, input.name, (record) =>
+          input.badge.kind === "none"
+            ? (({ badge: _badge, ...rest }) => rest)(record)
+            : { ...record, badge: input.badge },
+        ),
+      );
+    },
+  );
+
+  const connect: ExtensionRegistryShape["connect"] = Effect.fn("ExtensionRegistry.connect")(
+    function* (input) {
+      yield* requireHandshake(EXTENSION_WS_METHODS.connect, input);
+      const acquire = Effect.gen(function* () {
+        const queue = yield* Queue.unbounded<ExtensionStreamEvent>();
+        const connectionId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+        const connection: ExtensionConnection = { connectionId, queue };
+        yield* Queue.offer(queue, { type: "attached", connectionId });
+        const previous = yield* SynchronizedRef.modify(state, (current) => {
+          const record = current.records.get(input.name);
+          if (!record) return [undefined, current] as const;
+          const records = new Map(current.records);
+          records.set(input.name, { ...record, connection });
+          return [record.connection, { ...current, records }] as const;
+        });
+        if (previous) yield* dropConnection(input.name, previous, "restarting");
+        return connection;
+      });
+      return Stream.unwrap(
+        Effect.acquireRelease(acquire, (connection) =>
+          dropConnection(input.name, connection, "not-connected"),
+        ).pipe(Effect.map((connection) => Stream.fromQueue(connection.queue))),
+      );
+    },
+  );
+
+  /** Take one pending call, but only if the response names its kind and connection. */
+  const takePending = (callId: string, connectionId: string, kind: PendingCall["kind"]) =>
+    SynchronizedRef.modify(state, (current) => {
+      const found = current.pending.get(callId);
+      if (!found || found.kind !== kind || found.connectionId !== connectionId) {
+        return [undefined, current] as const;
+      }
+      const pending = new Map(current.pending);
+      pending.delete(callId);
+      return [found, { ...current, pending }] as const;
+    });
+
+  const respondTool: ExtensionRegistryShape["respondTool"] = Effect.fn(
+    "ExtensionRegistry.respondTool",
+  )(function* (response) {
+    const entry = yield* takePending(response.invocationId, response.connectionId, "tool");
+    if (entry?.kind !== "tool") return;
+    yield* Deferred.succeed(entry.deferred, response);
+  });
+
+  const respondHttp: ExtensionRegistryShape["respondHttp"] = Effect.fn(
+    "ExtensionRegistry.respondHttp",
+  )(function* (response) {
+    const entry = yield* takePending(response.requestId, response.connectionId, "http");
+    if (entry?.kind !== "http") return;
+    yield* Deferred.succeed(entry.deferred, response);
+  });
+
+  /**
+   * Push one event and wait for its answer. The pending entry is removed on
+   * every exit — answered, timed out, or interrupted — so a caller that goes
+   * away cannot leak an entry that a late response would then resolve.
+   */
+  const call = <A>(input: {
+    readonly callId: string;
+    readonly connection: ExtensionConnection;
+    readonly event: ExtensionStreamEvent;
+    readonly toPending: (deferred: Deferred.Deferred<A, ExtensionUnavailableError>) => PendingCall;
+    readonly unavailable: (
+      reason: ExtensionUnavailableError["reason"],
+    ) => ExtensionUnavailableError;
+  }): Effect.Effect<A, ExtensionUnavailableError> =>
+    Effect.gen(function* () {
+      const deferred = yield* Deferred.make<A, ExtensionUnavailableError>();
+      yield* SynchronizedRef.update(state, (current) => {
+        const pending = new Map(current.pending);
+        pending.set(input.callId, input.toPending(deferred));
+        return { ...current, pending };
+      });
+      const removePending = SynchronizedRef.update(state, (current) => {
+        if (!current.pending.has(input.callId)) return current;
+        const pending = new Map(current.pending);
+        pending.delete(input.callId);
+        return { ...current, pending };
+      });
+      const awaitAnswer = Effect.gen(function* () {
+        const offered = yield* Queue.offer(input.connection.queue, input.event);
+        if (!offered) return yield* input.unavailable("not-connected");
+        const answered = yield* Deferred.await(deferred).pipe(Effect.timeoutOption(callTimeoutMs));
+        return yield* Option.match(answered, {
+          onNone: () => Effect.fail(input.unavailable("timeout")),
+          onSome: (value) => Effect.succeed(value),
+        });
+      });
+      return yield* awaitAnswer.pipe(Effect.ensuring(removePending));
+    });
+
+  const nextCallId = (prefix: string) =>
+    SynchronizedRef.modify(state, (current) => [
+      `${prefix}-${current.callSequence}`,
+      { ...current, callSequence: current.callSequence + 1 },
+    ]);
+
+  const invokeTool: ExtensionRegistryShape["invokeTool"] = Effect.fn(
+    "ExtensionRegistry.invokeTool",
+  )(function* (input) {
+    const current = yield* SynchronizedRef.get(state);
+    const owner = [...current.records.values()].find((record) =>
+      record.tools.some((tool) => tool.name === input.name),
+    );
+    if (!owner) return yield* new ExtensionUnknownToolError({ toolName: input.name });
+    if (!owner.connection) {
+      return yield* new ExtensionUnavailableError({
+        extensionName: owner.name,
+        toolName: input.name,
+        reason: owner.enabled
+          ? owner.state === "starting"
+            ? "restarting"
+            : "not-connected"
+          : "stopped",
+      });
+    }
+    const connection = owner.connection;
+    const invocationId = yield* nextCallId("tool");
+    return yield* call<ExtensionToolResult>({
+      callId: invocationId,
+      connection,
+      toPending: (deferred) => ({
+        kind: "tool",
+        connectionId: connection.connectionId,
+        deferred,
+      }),
+      event: {
+        type: "invokeTool",
+        connectionId: connection.connectionId,
+        invocation: {
+          invocationId,
+          name: input.name,
+          arguments: input.arguments,
+          caller: input.caller,
+        },
+      },
+      unavailable: (reason) =>
+        new ExtensionUnavailableError({
+          extensionName: owner.name,
+          toolName: input.name,
+          reason,
+        }),
+    });
+  });
+
+  const proxyHttp: ExtensionRegistryShape["proxyHttp"] = Effect.fn("ExtensionRegistry.proxyHttp")(
+    function* (input) {
+      const current = yield* SynchronizedRef.get(state);
+      const owner = [...current.records.values()].find(
+        (record) => record.httpPrefix === input.prefix,
+      );
+      if (!owner) {
+        return yield* new ExtensionNotFoundError({ extensionName: input.prefix as ExtensionName });
+      }
+      if (!owner.connection) {
+        return yield* new ExtensionUnavailableError({
+          extensionName: owner.name,
+          reason: owner.enabled ? "not-connected" : "stopped",
+        });
+      }
+      const connection = owner.connection;
+      const requestId = yield* nextCallId("http");
+      return yield* call<ExtensionHttpResponse>({
+        callId: requestId,
+        connection,
+        toPending: (deferred) => ({
+          kind: "http",
+          connectionId: connection.connectionId,
+          deferred,
+        }),
+        event: {
+          type: "proxyHttp",
+          connectionId: connection.connectionId,
+          request: { ...input.request, requestId },
+        },
+        unavailable: (reason) =>
+          new ExtensionUnavailableError({ extensionName: owner.name, reason }),
+      });
+    },
+  );
+
+  const listTools: ExtensionRegistryShape["listTools"] = SynchronizedRef.get(state).pipe(
+    Effect.map((current) =>
+      [...current.records.values()].flatMap((record) =>
+        record.tools.map((definition) => ({ extensionName: record.name, definition })),
+      ),
+    ),
+  );
+
+  const upsertSource: ExtensionRegistryShape["upsertSource"] = Effect.fn(
+    "ExtensionRegistry.upsertSource",
+  )(function* (source) {
+    yield* SynchronizedRef.update(state, (current) => {
+      const records = new Map(current.records);
+      const existing = records.get(source.name);
+      const base = existing ?? emptyRecord(source);
+      records.set(source.name, {
+        ...base,
+        path: source.path,
+        source: source.source,
+        enabled: source.enabled,
+        state: source.enabled ? (base.state === "disabled" ? "stopped" : base.state) : "disabled",
+        ...(source.manifest === undefined ? {} : { manifest: source.manifest }),
+        ...(source.folderHash === undefined ? {} : { folderHash: source.folderHash }),
+        ...(source.loadError === undefined ? {} : { lastError: source.loadError }),
+      });
+      return { ...current, records };
+    });
+  });
+
+  const setState: ExtensionRegistryShape["setState"] = Effect.fn("ExtensionRegistry.setState")(
+    function* (input) {
+      yield* SynchronizedRef.update(state, (current) =>
+        withRecord(current, input.name, (record) => {
+          // A stopped or crashed extension keeps its tools but loses its badge:
+          // the nav entry must not keep claiming unread work nothing is
+          // producing.
+          const stopped = input.state === "stopped" || input.state === "crashed";
+          const { lastError: _lastError, badge: _badge, ...cleaned } = record;
+          return {
+            ...cleaned,
+            ...(stopped || record.badge === undefined ? {} : { badge: record.badge }),
+            state: input.state,
+            restartCount:
+              input.countRestart === true ? record.restartCount + 1 : record.restartCount,
+            ...(input.runningHash === undefined ? {} : { runningHash: input.runningHash }),
+            ...(input.lastError === undefined ? {} : { lastError: input.lastError }),
+          } as ExtensionRecord;
+        }),
+      );
+    },
+  );
+
+  const setFolderHash: ExtensionRegistryShape["setFolderHash"] = Effect.fn(
+    "ExtensionRegistry.setFolderHash",
+  )(function* (input) {
+    yield* SynchronizedRef.update(state, (current) =>
+      withRecord(current, input.name, (record) => ({
+        ...record,
+        folderHash: input.folderHash,
+        ...(input.manifest === undefined ? {} : { manifest: input.manifest }),
+      })),
+    );
+  });
+
+  const appendLog: ExtensionRegistryShape["appendLog"] = Effect.fn("ExtensionRegistry.appendLog")(
+    function* (input) {
+      const at = yield* Clock.currentTimeMillis;
+      yield* SynchronizedRef.update(state, (current) =>
+        withRecord(current, input.name, (record) => {
+          const entry: ExtensionLogEntry = {
+            at,
+            stream: input.stream,
+            line: input.line.slice(0, 4096),
+          };
+          const logs = [...record.logs, entry];
+          return {
+            ...record,
+            logs:
+              logs.length > EXTENSION_LOG_BUFFER_LINES
+                ? logs.slice(logs.length - EXTENSION_LOG_BUFFER_LINES)
+                : logs,
+          };
+        }),
+      );
+    },
+  );
+
+  const setEnabled: ExtensionRegistryShape["setEnabled"] = Effect.fn(
+    "ExtensionRegistry.setEnabled",
+  )(function* (input) {
+    const record = yield* readRecord(input.name);
+    if (!record) return yield* new ExtensionNotFoundError({ extensionName: input.name });
+    yield* SynchronizedRef.update(state, (current) =>
+      withRecord(current, input.name, (existing) => ({
+        ...existing,
+        enabled: input.enabled,
+        state: input.enabled
+          ? existing.state === "disabled"
+            ? "stopped"
+            : existing.state
+          : "disabled",
+      })),
+    );
+  });
+
+  const list: ExtensionRegistryShape["list"] = SynchronizedRef.get(state).pipe(
+    Effect.map((current) => ({
+      extensions: [...current.records.values()].map(toStatus),
+    })),
+  );
+
+  const logs: ExtensionRegistryShape["logs"] = Effect.fn("ExtensionRegistry.logs")(
+    function* (input) {
+      const record = yield* readRecord(input.name);
+      const entries = record?.logs ?? [];
+      const limit = input.limit ?? EXTENSION_LOG_BUFFER_LINES;
+      return {
+        name: input.name,
+        entries: entries.slice(Math.max(0, entries.length - limit)),
+      } satisfies ExtensionLogsResult;
+    },
+  );
+
+  const get: ExtensionRegistryShape["get"] = Effect.fn("ExtensionRegistry.get")(function* (name) {
+    const record = yield* readRecord(name);
+    if (!record) return yield* new ExtensionNotFoundError({ extensionName: name });
+    return toStatus(record);
+  });
+
+  return ExtensionRegistry.of({
+    hello,
+    registerTools,
+    registerHttpPrefix,
+    registerWebEntry,
+    setBadge,
+    connect,
+    respondTool,
+    respondHttp,
+    invokeTool,
+    proxyHttp,
+    listTools,
+    upsertSource,
+    setState,
+    setFolderHash,
+    appendLog,
+    setEnabled,
+    list,
+    logs,
+    get,
+  });
+});
+
+export const layer = (options: ExtensionRegistryOptions) =>
+  Layer.effect(ExtensionRegistry, make(options));
+
+/** Result content the host synthesises when a brokered tool cannot be reached. */
+export const unavailableToolContent = (
+  error: ExtensionUnavailableError,
+): ReadonlyArray<ExtensionToolContent> => [{ type: "text", text: error.message }];
