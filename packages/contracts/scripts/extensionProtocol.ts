@@ -23,6 +23,8 @@ import {
   ExtensionToolInvocation,
   ExtensionToolResult,
 } from "../src/extensions.ts";
+import * as RpcSchema from "effect/unstable/rpc/RpcSchema";
+import { WsRpcGroup } from "../src/rpc.ts";
 
 /**
  * The vendorable protocol artifacts.
@@ -45,6 +47,8 @@ interface MethodEntry {
   readonly summary: string;
   readonly payload?: string;
   readonly success?: string;
+  /** Filled from rpc.ts; see `methodErrorNames`. */
+  readonly errors?: ReadonlyArray<string>;
 }
 
 const METHODS: Readonly<Record<string, MethodEntry>> = {
@@ -143,9 +147,60 @@ const renameRefs = (node: unknown): unknown => {
   );
 };
 
+/**
+ * The error schemas a method can fail with, read from its `Rpc.make` in
+ * `rpc.ts` rather than restated here. Restating them would be a second list to
+ * keep in step with the first, and the whole point of the vendored contract is
+ * that an author does not have to guess what a call can return.
+ */
+const methodErrorSchema = (method: string): Schema.Top => {
+  const rpc = WsRpcGroup.requests.get(method);
+  if (rpc === undefined) {
+    throw new Error(`No RPC named "${method}" in WsRpcGroup; extensions.ts and rpc.ts disagree.`);
+  }
+  // `Rpc.make({ stream: true })` folds the declared errors into the stream
+  // schema and leaves `errorSchema` as Never, so a streaming method read the
+  // plain way reports no errors at all.
+  const success = rpc.successSchema;
+  return RpcSchema.isStreamSchema(success) ? success.error : rpc.errorSchema;
+};
+
+const methodErrorNames = (method: string): ReadonlyArray<string> => {
+  const root = Schema.toJsonSchemaDocument(methodErrorSchema(method)).schema as {
+    readonly anyOf?: ReadonlyArray<JsonSchema>;
+    readonly $ref?: string;
+  };
+  // A union arrives as `anyOf`, a lone error as a bare `$ref`. Anything else
+  // means the error channel changed shape; say so rather than quietly
+  // publishing a method that cannot fail.
+  const members = root.anyOf ?? (root.$ref === undefined ? undefined : [root as JsonSchema]);
+  if (members === undefined || members.length === 0) {
+    throw new Error(`Could not read the error schemas for "${method}" from rpc.ts.`);
+  }
+  return members.map((member) => {
+    const ref = member["$ref"];
+    if (typeof ref !== "string") {
+      throw new Error(`Error schema for "${method}" is not a reference to a named error.`);
+    }
+    return stripEncodedSuffix(refName(ref));
+  });
+};
+
+/** `METHODS` with each entry's errors resolved from rpc.ts. */
+const buildMethods = (): Record<string, MethodEntry> =>
+  Object.fromEntries(
+    Object.entries(METHODS).map(([method, entry]) => [
+      method,
+      { ...entry, errors: methodErrorNames(method) },
+    ]),
+  );
+
 const buildDefinitions = (): Record<string, JsonSchema> => {
   const definitions: Record<string, JsonSchema> = {};
-  for (const root of ROOTS) {
+  // Error schemas are roots too: a method that names an error an author cannot
+  // decode is only half a contract.
+  const roots = [...ROOTS, ...Object.keys(METHODS).map(methodErrorSchema)];
+  for (const root of roots) {
     const document = Schema.toJsonSchemaDocument(root);
     for (const [name, schema] of Object.entries(document.definitions)) {
       definitions[stripEncodedSuffix(name)] = renameRefs(schema) as JsonSchema;
@@ -163,7 +218,7 @@ const buildJsonSchema = (definitions: Record<string, JsonSchema>): string => {
       "Generated from packages/contracts/src/extensions.ts. Do not edit. See docs/internals/extensions/protocol.md.",
     "x-protocolVersion": EXTENSION_PROTOCOL_VERSION,
     "x-supportedProtocolVersions": EXTENSION_SUPPORTED_PROTOCOL_VERSIONS,
-    "x-methods": METHODS,
+    "x-methods": buildMethods(),
     $defs: definitions,
   };
   return `${JSON.stringify(document, null, 2)}\n`;
@@ -260,12 +315,25 @@ const buildDeclarations = (definitions: Record<string, JsonSchema>): string => {
     const separator = rendered.startsWith("\n") ? "=" : "= ";
     return `${comment}export type ${name} ${separator}${rendered};`;
   });
+  // A TypeScript extension has to handle what a call can fail with, and the
+  // union differs per method. This is the same map as the schema's
+  // `x-methods[].errors`, in the form a `.ts` file can use directly.
+  const methodErrors = Object.entries(buildMethods()).map(([method, entry]) => {
+    const prefix = `  ${literal(method)}: `;
+    const rendered = renderUnion([...(entry.errors ?? [])], "  ", prefix.length);
+    // A wrapped union starts on the next line, so the space after the colon
+    // would be trailing whitespace.
+    return `${rendered.startsWith("\n") ? prefix.trimEnd() : prefix}${rendered};`;
+  });
+
   return [
     "// Generated from packages/contracts/src/extensions.ts. Do not edit.",
     "// Copy this file into your extension; it has no dependencies.",
     `// Protocol version ${EXTENSION_PROTOCOL_VERSION}. Reference: docs/internals/extensions/protocol.md`,
     "",
     `export type ExtensionWsMethod =\n  | ${methodNames};`,
+    "",
+    `export interface ExtensionMethodErrors {\n${methodErrors.join("\n")}\n}`,
     "",
     ...types.map((type) => `${type}\n`),
   ]

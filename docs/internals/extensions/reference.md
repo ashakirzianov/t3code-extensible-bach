@@ -217,6 +217,7 @@ Handshake. Sends the manifest and the protocol version; receives the host's fact
 - Direction: extension-to-host
 - Input: [`ExtensionHelloInput`](#extensionhelloinput)
 - Success: [`ExtensionHelloAck`](#extensionhelloack)
+- Errors: [`ExtensionProtocolMismatchError`](#extensionprotocolmismatcherror), [`ExtensionNotFoundError`](#extensionnotfounderror), [`EnvironmentAuthorizationError`](#environmentauthorizationerror)
 
 ### `extensions.registerTools`
 
@@ -225,6 +226,7 @@ Declares the complete MCP tool surface. Answered per tool.
 - Direction: extension-to-host
 - Input: [`ExtensionRegisterToolsInput`](#extensionregistertoolsinput)
 - Success: [`ExtensionRegisterToolsResult`](#extensionregistertoolsresult)
+- Errors: [`ExtensionHandshakeRequiredError`](#extensionhandshakerequirederror), [`EnvironmentAuthorizationError`](#environmentauthorizationerror)
 
 ### `extensions.registerHttpPrefix`
 
@@ -233,6 +235,7 @@ Claims one path prefix under the host's own origin and auth.
 - Direction: extension-to-host
 - Input: [`ExtensionRegisterHttpPrefixInput`](#extensionregisterhttpprefixinput)
 - Success: [`ExtensionRegisterHttpPrefixResult`](#extensionregisterhttpprefixresult)
+- Errors: [`ExtensionHandshakeRequiredError`](#extensionhandshakerequirederror), [`ExtensionHttpPrefixCollisionError`](#extensionhttpprefixcollisionerror), [`EnvironmentAuthorizationError`](#environmentauthorizationerror)
 
 ### `extensions.registerWebEntry`
 
@@ -241,6 +244,7 @@ Declares the web bundle and nav entry the host mounts.
 - Direction: extension-to-host
 - Input: [`ExtensionRegisterWebEntryInput`](#extensionregisterwebentryinput)
 - Success: acknowledgement only
+- Errors: [`ExtensionHandshakeRequiredError`](#extensionhandshakerequirederror), [`EnvironmentAuthorizationError`](#environmentauthorizationerror)
 
 ### `extensions.setBadge`
 
@@ -249,6 +253,7 @@ Sets the nav badge. Held by the host across reconnects.
 - Direction: extension-to-host
 - Input: [`ExtensionSetBadgeInput`](#extensionsetbadgeinput)
 - Success: acknowledgement only
+- Errors: [`ExtensionHandshakeRequiredError`](#extensionhandshakerequirederror), [`EnvironmentAuthorizationError`](#environmentauthorizationerror)
 
 ### `extensions.connect`
 
@@ -257,6 +262,7 @@ Opens the stream the host pushes calls on. Opening it declares the extension rea
 - Direction: host-to-extension
 - Input: [`ExtensionConnectInput`](#extensionconnectinput)
 - Success: [`ExtensionStreamEvent`](#extensionstreamevent)
+- Errors: [`ExtensionHandshakeRequiredError`](#extensionhandshakerequirederror), [`EnvironmentAuthorizationError`](#environmentauthorizationerror)
 
 ### `extensions.respondTool`
 
@@ -265,6 +271,7 @@ Answers one invokeTool event.
 - Direction: extension-to-host
 - Input: [`ExtensionToolResult`](#extensiontoolresult)
 - Success: acknowledgement only
+- Errors: [`EnvironmentAuthorizationError`](#environmentauthorizationerror)
 
 ### `extensions.respondHttp`
 
@@ -273,11 +280,17 @@ Answers one proxyHttp event.
 - Direction: extension-to-host
 - Input: [`ExtensionHttpResponse`](#extensionhttpresponse)
 - Success: acknowledgement only
-
-The schema carries no per-method error mapping; any method can fail with one of the
-errors below (`ExtensionError`, `ExtensionHandshakeRequiredError`, `ExtensionHttpPrefixCollisionError`, `ExtensionProtocolMismatchError`, `ExtensionToolNameCollisionError`, `ExtensionUnavailableError`, `ExtensionUnknownToolError`).
+- Errors: [`EnvironmentAuthorizationError`](#environmentauthorizationerror)
 
 ## Definitions
+
+### EnvironmentAuthorizationError
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `_tag` | `"EnvironmentAuthorizationError"` | yes |
+| `message` | string | yes |
+| `requiredScope` | `"orchestration:read"` \| `"orchestration:operate"` \| `"terminal:operate"` \| `"review:write"` \| `"access:read"` \| `"access:write"` \| `"relay:read"` \| `"relay:write"` \| `"extension"` | yes |
 
 ### ExtensionBadge
 
@@ -429,6 +442,13 @@ No fields.
 ### ExtensionName
 
 `string`. Constraints: min length 1, max length 64, pattern `^[a-z0-9]+(?:-[a-z0-9]+)*$`.
+
+### ExtensionNotFoundError
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `_tag` | `"ExtensionNotFoundError"` | yes |
+| `extensionName` | [`ExtensionName`](#extensionname) | yes |
 
 ### ExtensionProtocolMismatchError
 

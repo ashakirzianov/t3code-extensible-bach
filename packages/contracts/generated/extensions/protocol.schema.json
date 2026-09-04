@@ -12,48 +12,114 @@
       "direction": "extension-to-host",
       "summary": "Handshake. Sends the manifest and the protocol version; receives the host's facts.",
       "payload": "ExtensionHelloInput",
-      "success": "ExtensionHelloAck"
+      "success": "ExtensionHelloAck",
+      "errors": [
+        "ExtensionProtocolMismatchError",
+        "ExtensionNotFoundError",
+        "EnvironmentAuthorizationError"
+      ]
     },
     "extensions.registerTools": {
       "direction": "extension-to-host",
       "summary": "Declares the complete MCP tool surface. Answered per tool.",
       "payload": "ExtensionRegisterToolsInput",
-      "success": "ExtensionRegisterToolsResult"
+      "success": "ExtensionRegisterToolsResult",
+      "errors": [
+        "ExtensionHandshakeRequiredError",
+        "EnvironmentAuthorizationError"
+      ]
     },
     "extensions.registerHttpPrefix": {
       "direction": "extension-to-host",
       "summary": "Claims one path prefix under the host's own origin and auth.",
       "payload": "ExtensionRegisterHttpPrefixInput",
-      "success": "ExtensionRegisterHttpPrefixResult"
+      "success": "ExtensionRegisterHttpPrefixResult",
+      "errors": [
+        "ExtensionHandshakeRequiredError",
+        "ExtensionHttpPrefixCollisionError",
+        "EnvironmentAuthorizationError"
+      ]
     },
     "extensions.registerWebEntry": {
       "direction": "extension-to-host",
       "summary": "Declares the web bundle and nav entry the host mounts.",
-      "payload": "ExtensionRegisterWebEntryInput"
+      "payload": "ExtensionRegisterWebEntryInput",
+      "errors": [
+        "ExtensionHandshakeRequiredError",
+        "EnvironmentAuthorizationError"
+      ]
     },
     "extensions.setBadge": {
       "direction": "extension-to-host",
       "summary": "Sets the nav badge. Held by the host across reconnects.",
-      "payload": "ExtensionSetBadgeInput"
+      "payload": "ExtensionSetBadgeInput",
+      "errors": [
+        "ExtensionHandshakeRequiredError",
+        "EnvironmentAuthorizationError"
+      ]
     },
     "extensions.connect": {
       "direction": "host-to-extension",
       "summary": "Opens the stream the host pushes calls on. Opening it declares the extension ready.",
       "payload": "ExtensionConnectInput",
-      "success": "ExtensionStreamEvent"
+      "success": "ExtensionStreamEvent",
+      "errors": [
+        "ExtensionHandshakeRequiredError",
+        "EnvironmentAuthorizationError"
+      ]
     },
     "extensions.respondTool": {
       "direction": "extension-to-host",
       "summary": "Answers one invokeTool event.",
-      "payload": "ExtensionToolResult"
+      "payload": "ExtensionToolResult",
+      "errors": [
+        "EnvironmentAuthorizationError"
+      ]
     },
     "extensions.respondHttp": {
       "direction": "extension-to-host",
       "summary": "Answers one proxyHttp event.",
-      "payload": "ExtensionHttpResponse"
+      "payload": "ExtensionHttpResponse",
+      "errors": [
+        "EnvironmentAuthorizationError"
+      ]
     }
   },
   "$defs": {
+    "EnvironmentAuthorizationError": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": [
+            "EnvironmentAuthorizationError"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "requiredScope": {
+          "type": "string",
+          "enum": [
+            "orchestration:read",
+            "orchestration:operate",
+            "terminal:operate",
+            "review:write",
+            "access:read",
+            "access:write",
+            "relay:read",
+            "relay:write",
+            "extension"
+          ]
+        }
+      },
+      "required": [
+        "_tag",
+        "message",
+        "requiredScope"
+      ],
+      "additionalProperties": false
+    },
     "ExtensionBadge": {
       "anyOf": [
         {
@@ -497,6 +563,25 @@
           "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
         }
       ]
+    },
+    "ExtensionNotFoundError": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": [
+            "ExtensionNotFoundError"
+          ]
+        },
+        "extensionName": {
+          "$ref": "#/$defs/ExtensionName"
+        }
+      },
+      "required": [
+        "_tag",
+        "extensionName"
+      ],
+      "additionalProperties": false
     },
     "ExtensionProtocolMismatchError": {
       "type": "object",

@@ -70,6 +70,7 @@ interface ProtocolMethod {
   readonly summary: string;
   readonly payload?: string;
   readonly success?: string;
+  readonly errors?: ReadonlyArray<string>;
 }
 
 /** Markdown table cells cannot contain a raw pipe or a line break. */
@@ -198,6 +199,10 @@ const renderMethod = (name: string, method: ProtocolMethod): ReadonlyArray<strin
   lines.push(
     `- Success: ${method.success === undefined ? "acknowledgement only" : `[\`${method.success}\`](#${anchor(method.success)})`}`,
   );
+  const errors = method.errors ?? [];
+  lines.push(
+    `- Errors: ${errors.length === 0 ? "none" : errors.map((name) => `[\`${name}\`](#${anchor(name)})`).join(", ")}`,
+  );
   lines.push("");
   return lines;
 };
@@ -218,8 +223,6 @@ const buildReference = (): string => {
   const prose = absolutizeLinks(read(PROTOCOL_PROSE_PATH)).replace(/^# .*\n+/u, "");
   const { ExtensionManifest, ...rest } = schema.$defs;
 
-  const errorNames = Object.keys(rest).filter((name) => name.endsWith("Error"));
-
   return [
     banner("Extension protocol reference", `${PROTOCOL_PROSE_PATH} + ${PROTOCOL_SCHEMA_PATH}`),
     `Protocol version ${schema["x-protocolVersion"]}. This host speaks ${schema["x-supportedProtocolVersions"].join(", ")}.`,
@@ -234,9 +237,6 @@ const buildReference = (): string => {
     "## Methods",
     "",
     ...Object.entries(schema["x-methods"]).flatMap(([name, method]) => renderMethod(name, method)),
-    "The schema carries no per-method error mapping; any method can fail with one of the",
-    `errors below (${errorNames.map((name) => `\`${name}\``).join(", ")}).`,
-    "",
     "## Definitions",
     "",
     ...Object.entries(rest).flatMap(([name, definition]) => renderDefinition(name, definition)),
