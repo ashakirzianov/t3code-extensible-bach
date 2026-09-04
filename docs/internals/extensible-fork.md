@@ -80,6 +80,12 @@ a fix belongs without implementing it.
   at connect, so a new tool reaches an agent only when its provider process restarts; handler
   behaviour is live. Server `instructions` need a 5-line hunk in the existing `effect` patch,
   now carried in `patches/`.
+- [Electron runtime](extensions/spikes/electron-runtime.md) — all three green: a same-origin
+  `import()` of a server-served ES module runs under the desktop CSP (`blob:`, `data:`, cross-origin
+  and `eval` do not, so auth rides in the URL and bundles must be non-`eval` output); the app's own
+  binary with `ELECTRON_RUN_AS_NODE=1` spawns a child with `node:sqlite` (Electron 43.4.1 / Node
+  24.18.1, no flag); a folder under `Contents/Resources/extensions/` in a packaged build spawns
+  and writes to userdata (`extraResources`; an asar path cannot be `cwd`).
 
 ## Fork identity
 
