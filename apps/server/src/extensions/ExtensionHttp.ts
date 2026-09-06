@@ -202,7 +202,7 @@ export function assetExpiryFrom(nowMs: number): number {
  * refusing those would mean the web entry only works when it is a single file.
  * Directory containment is enforced separately by `resolveWebAssetPath`.
  */
-export function webAssetDirectory(web: ExtensionWebEntry): string {
+export function webAssetDirectory(web: Pick<ExtensionWebEntry, "entry">): string {
   const entry = web.entry.replace(/\\/g, "/");
   const lastSlash = entry.lastIndexOf("/");
   return lastSlash === -1 ? "" : entry.slice(0, lastSlash);

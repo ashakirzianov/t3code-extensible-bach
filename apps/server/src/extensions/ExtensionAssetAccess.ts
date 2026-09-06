@@ -30,6 +30,7 @@ import {
   decodeAssetClaims,
   encodeAssetClaims,
   EXT_ASSETS_ROUTE_PREFIX,
+  webAssetDirectory,
   type ExtensionAssetClaims,
 } from "./ExtensionHttp.ts";
 
@@ -132,7 +133,22 @@ export const mintExtensionAssetUrls = Effect.fn("extensions.assets.urls")(functi
   // A secret-store failure is an internal fault, not something the caller can
   // act on, and the RPC's error union is the admin errors only.
   const { token, expiresAt } = yield* mintExtensionAssetToken(name).pipe(Effect.orDie);
-  const pathFor = (relativePath: string) => extensionAssetPath({ token, name, relativePath });
+  // Paths in the URL are relative to the **web entry's own directory**, which
+  // is what the route resolves them against. That is not a detail: the browser
+  // resolves a code-split `import('./chunk.js')` against the entry's URL, so
+  // only this rooting makes a chunk beside the entry land beside it on disk.
+  // The manifest states them relative to the extension folder, so the entry's
+  // directory is stripped here — the one place both conventions meet.
+  const directory = webAssetDirectory(status.web);
+  const prefix = directory === "" ? "" : `${directory}/`;
+  const pathFor = (relativePath: string) =>
+    extensionAssetPath({
+      token,
+      name,
+      relativePath: relativePath.startsWith(prefix)
+        ? relativePath.slice(prefix.length)
+        : relativePath,
+    });
 
   return {
     name,

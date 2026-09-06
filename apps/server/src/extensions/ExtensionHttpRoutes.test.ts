@@ -22,7 +22,11 @@ import {
   serveExtensionAsset,
   type ExtensionHttpRegistry,
 } from "./ExtensionHttpRoutes.ts";
-import { extensionAssetPath, mintExtensionAssetToken } from "./ExtensionAssetAccess.ts";
+import {
+  extensionAssetPath,
+  mintExtensionAssetToken,
+  mintExtensionAssetUrls,
+} from "./ExtensionAssetAccess.ts";
 
 const environmentId = EnvironmentId.make("env-1");
 const decode = (bytes: Uint8Array | undefined) =>
@@ -278,6 +282,61 @@ describe("serveExtensionAsset", () => {
         // The browser refuses to execute a module served as anything else.
         assert.match(outcome.headers["content-type"]!, /^text\/javascript/);
         assert.equal(decode(outcome.body), "export const a = 1;");
+      }),
+    ).pipe(Effect.provide(testLayer)),
+  );
+
+  // The bug this closes: the manifest states paths relative to the extension
+  // folder, the route resolves them relative to the web entry's directory, and
+  // nothing joined the two — so every minted URL 404'd while both halves passed
+  // their own tests. Anything that mints a URL has to be checked by serving it.
+  it.effect("serves the URLs `assetUrls` actually mints, not a hand-built path", () =>
+    withExtensionFolder((root) =>
+      Effect.gen(function* () {
+        const registry = registryFor(root);
+        const urls = yield* mintExtensionAssetUrls(registry, "reference");
+        const entry = yield* serveExtensionAsset({
+          registry,
+          method: "GET",
+          pathname: urls.entry,
+        });
+        assert.equal(entry.status, 200);
+        assert.match(entry.headers["content-type"]!, /^text\/javascript/);
+        assert.equal(decode(entry.body), "export const a = 1;");
+
+        const css = yield* serveExtensionAsset({
+          registry,
+          method: "GET",
+          pathname: urls.css!,
+        });
+        assert.equal(css.status, 200);
+        assert.match(css.headers["content-type"]!, /^text\/css/);
+      }),
+    ).pipe(Effect.provide(testLayer)),
+  );
+
+  // A code-split chunk is imported by the browser relative to the entry's URL,
+  // so the entry has to sit at the root of the extension's asset space for a
+  // sibling to land beside it on disk.
+  it.effect("puts the entry where a sibling chunk resolves beside it", () =>
+    withExtensionFolder((root) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fileSystem.writeFileString(
+          path.join(root, "web", "chunk.js"),
+          "export const b = 2;",
+        );
+        const registry = registryFor(root);
+        const urls = yield* mintExtensionAssetUrls(registry, "reference");
+        const chunkPathname = new URL("./chunk.js", `http://host${urls.entry}`).pathname;
+        const chunk = yield* serveExtensionAsset({
+          registry,
+          method: "GET",
+          pathname: chunkPathname,
+        });
+        assert.equal(chunk.status, 200);
+        assert.equal(decode(chunk.body), "export const b = 2;");
       }),
     ).pipe(Effect.provide(testLayer)),
   );
