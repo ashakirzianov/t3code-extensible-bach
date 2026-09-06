@@ -3,10 +3,9 @@ import { PuzzleIcon, RefreshCwIcon } from "lucide-react";
 import { memo, useCallback } from "react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 
-import { requestConfirmDialog } from "../confirmDialog";
-import { useAtomCommand } from "../state/use-atom-command";
 import { cn } from "../lib/utils";
-import { extensionEnvironment, useExtensionNavEntries } from "../state/extensions";
+import { useExtensionNavEntries } from "../state/extensions";
+import { useNavigateToExtensionSettings } from "../components/settings/ExtensionsSettings";
 import { Button } from "../components/ui/button";
 import { SidebarMenuButton, SidebarMenuItem, useSidebar } from "../components/ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
@@ -36,7 +35,6 @@ const tooltipLabel = (entry: ExtensionNavEntry): string =>
 function ExtensionSidebarEntry({ entry }: { entry: ExtensionNavEntry }) {
   const navigate = useNavigate();
   const { isMobile, setOpenMobile } = useSidebar();
-  const deploy = useAtomCommand(extensionEnvironment.deploy);
   const isActive = useLocation({
     select: (location) => location.pathname.startsWith(`/ext/${entry.environmentId}/${entry.name}`),
   });
@@ -50,16 +48,14 @@ function ExtensionSidebarEntry({ entry }: { entry: ExtensionNavEntry }) {
     });
   }, [entry.environmentId, entry.name, isMobile, navigate, setOpenMobile]);
 
-  // Deploy is stop, rehash, start. It is a human click in host UI and nothing
-  // an extension or an agent can reach, so the confirmation is the host's and
-  // says what it will actually do.
-  const handleDeploy = useCallback(async () => {
-    const confirmed = await requestConfirmDialog(
-      `Deploy the new build of ${entry.label}?\nThe extension stops and starts again on the build that is on disk now.`,
-    );
-    if (confirmed !== true) return;
-    await deploy({ environmentId: entry.environmentId, input: { name: entry.name } });
-  }, [deploy, entry.environmentId, entry.label, entry.name]);
+  // Deploy stops and restarts a process, so the sidebar points at it rather
+  // than doing it: Settings is where the version, the state and the output that
+  // make it a decision are, and it is the one place Deploy is implemented.
+  const openInSettings = useNavigateToExtensionSettings();
+  const handleDeploy = useCallback(() => {
+    if (isMobile) setOpenMobile(false);
+    openInSettings({ environmentId: entry.environmentId, name: entry.name });
+  }, [entry.environmentId, entry.name, isMobile, openInSettings, setOpenMobile]);
 
   return (
     <SidebarMenuItem className="shrink-0">
@@ -97,9 +93,9 @@ function ExtensionSidebarEntry({ entry }: { entry: ExtensionNavEntry }) {
           <TooltipTrigger
             render={
               <Button
-                aria-label={`Deploy the new build of ${entry.label}`}
+                aria-label={`${entry.label} has a new build on disk — open it in Settings`}
                 className="absolute -right-1 -bottom-1 size-4 rounded-full"
-                onClick={() => void handleDeploy()}
+                onClick={handleDeploy}
                 size="icon-xs"
                 variant="ghost-muted"
               />
@@ -107,7 +103,7 @@ function ExtensionSidebarEntry({ entry }: { entry: ExtensionNavEntry }) {
           >
             <RefreshCwIcon className="size-2.5" />
           </TooltipTrigger>
-          <TooltipPopup side="top">A new build is on disk. Deploy it.</TooltipPopup>
+          <TooltipPopup side="top">A new build is on disk. Deploy it in Settings.</TooltipPopup>
         </Tooltip>
       ) : null}
     </SidebarMenuItem>

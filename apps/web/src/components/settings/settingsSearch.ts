@@ -8,6 +8,7 @@ export type SettingsPath =
   | "/settings/keybindings"
   | "/settings/providers"
   | "/settings/integrations"
+  | "/settings/extensions"
   | "/settings/source-control"
   | "/settings/connections"
   | "/settings/archived";
@@ -54,6 +55,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/keybindings": "Keybindings",
   "/settings/providers": "Providers",
   "/settings/integrations": "Integrations",
+  "/settings/extensions": "Extensions",
   "/settings/source-control": "Source Control",
   "/settings/connections": "Connections",
   "/settings/archived": "Archive",
@@ -350,6 +352,26 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/providers",
     searchTerms: ["refresh availability versions auth state models background probes seconds off"],
     providerSettingsOnly: true,
+  },
+  {
+    // The screen is a list of whatever is installed, so its rows have no fixed
+    // ids to point at; the page itself is the stable destination for all three.
+    id: "extensions",
+    title: "Extensions",
+    to: "/settings/extensions",
+    searchTerms: ["plugins addons tools mcp bundled install"],
+  },
+  {
+    id: "extensions-deploy",
+    title: "Deploy an extension",
+    to: "/settings/extensions",
+    searchTerms: ["rebuild restart update new build reload"],
+  },
+  {
+    id: "extensions-logs",
+    title: "Extension output",
+    to: "/settings/extensions",
+    searchTerms: ["logs stdout stderr crash error"],
   },
   {
     id: "agent-browser-access",

@@ -493,3 +493,70 @@ describe("ExtensionRegistry.changes", () => {
     }).pipe(Effect.scoped),
   );
 });
+
+describe("ExtensionRegistry rejections", () => {
+  it.effect("keeps the refusals it answered with on the status, and replaces them", () =>
+    Effect.gen(function* () {
+      const registry = yield* makeRegistry();
+      yield* withHandshake(registry);
+      yield* registry.registerTools({ name: "bach", tools: [spawnTool] });
+      yield* registry.upsertSource({
+        name: "notes",
+        path: "/opt/notes",
+        enabled: true,
+        source: "settings",
+      });
+      yield* registry.hello({
+        protocolVersion: EXTENSION_PROTOCOL_VERSION,
+        manifest: { ...manifest, name: "notes" },
+        name: "notes",
+      });
+
+      yield* registry.registerTools({
+        name: "notes",
+        tools: [spawnTool, { ...spawnTool, name: "take_note" }],
+      });
+      const collided = yield* registry.get("notes");
+      expect(collided.tools).toStrictEqual(["take_note"]);
+      expect(collided.rejections).toHaveLength(1);
+      expect(collided.rejections[0]).toMatchObject({ kind: "tool", subject: "spawn_agent" });
+      // The message names the other owner, which is the only thing that makes
+      // the collision actionable.
+      expect(collided.rejections[0]?.message).toContain("bach");
+
+      // A second registration describes the current state, not a history.
+      yield* registry.registerTools({
+        name: "notes",
+        tools: [{ ...spawnTool, name: "take_note" }],
+      });
+      expect((yield* registry.get("notes")).rejections).toStrictEqual([]);
+    }),
+  );
+
+  it.effect("records a refused HTTP prefix and drops it once one is accepted", () =>
+    Effect.gen(function* () {
+      const registry = yield* makeRegistry();
+      yield* withHandshake(registry);
+      yield* registry.registerHttpPrefix({ name: "bach", prefix: "api" }).pipe(Effect.ignore);
+      const refused = yield* registry.get("bach");
+      expect(refused.rejections).toMatchObject([{ kind: "http-prefix", subject: "api" }]);
+      expect(refused.httpPrefix).toBeUndefined();
+
+      yield* registry.registerHttpPrefix({ name: "bach", prefix: "bach" });
+      const accepted = yield* registry.get("bach");
+      expect(accepted.rejections).toStrictEqual([]);
+      expect(accepted.httpPrefix).toBe("bach");
+    }),
+  );
+
+  it.effect("clears them when the extension starts again, since it re-registers", () =>
+    Effect.gen(function* () {
+      const registry = yield* makeRegistry();
+      yield* withHandshake(registry);
+      yield* registry.registerHttpPrefix({ name: "bach", prefix: "api" }).pipe(Effect.ignore);
+      expect((yield* registry.get("bach")).rejections).toHaveLength(1);
+      yield* registry.setState({ name: "bach", state: "starting" });
+      expect((yield* registry.get("bach")).rejections).toStrictEqual([]);
+    }),
+  );
+});

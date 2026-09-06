@@ -539,11 +539,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
 
       expect(
         plan.unitPath.endsWith(
-          path.join(
-            "Library",
-            "LaunchAgents",
-            "com.ashakirzianov.t3code-extensible.service.plist",
-          ),
+          path.join("Library", "LaunchAgents", "com.ashakirzianov.t3code-extensible.service.plist"),
         ),
       ).toBe(true);
       expect(yield* fs.readFileString(plan.unitPath)).toContain(

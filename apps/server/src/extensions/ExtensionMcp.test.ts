@@ -283,6 +283,7 @@ describe("resources", () => {
           state: "crashed",
           changed: false,
           tools: [],
+          rejections: [],
           restartCount: 2,
           lastError: "no valid extension.json",
         },

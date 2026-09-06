@@ -669,6 +669,27 @@ export const ExtensionRuntimeState = Schema.Literals([
 ]).annotate({ identifier: "ExtensionRuntimeState" });
 export type ExtensionRuntimeState = typeof ExtensionRuntimeState.Type;
 
+/**
+ * Something the extension asked for and did not get.
+ *
+ * A rejection is answered to the extension at registration time, but the
+ * extension is a background process and its answer reaches nobody. Keeping the
+ * refusals on the status is what lets Settings say *why* a tool an extension
+ * claims to provide is not there — the collision case in particular, where the
+ * fix is to rename one of the two and only the host knows both names.
+ *
+ * They describe the current registration, not history: re-registering replaces
+ * the rejections of that kind, and a restart clears them all.
+ */
+export const ExtensionRejection = Schema.Struct({
+  kind: Schema.Literals(["tool", "http-prefix"]),
+  /** The tool name or prefix that was refused. */
+  subject: BoundedString(64),
+  /** Shown verbatim; it names the other owner where there is one. */
+  message: BoundedString(512),
+}).annotate({ identifier: "ExtensionRejection" });
+export type ExtensionRejection = typeof ExtensionRejection.Type;
+
 export const ExtensionStatus = Schema.Struct({
   name: ExtensionName,
   path: BoundedString(1024),
@@ -685,6 +706,8 @@ export const ExtensionStatus = Schema.Struct({
   /** The two hashes differ: a build landed and Deploy will pick it up. */
   changed: Schema.Boolean,
   tools: Schema.Array(ExtensionToolName),
+  /** What it asked for and did not get, in the words Settings shows. */
+  rejections: Schema.Array(ExtensionRejection),
   httpPrefix: Schema.optionalKey(ExtensionHttpPrefix),
   web: Schema.optionalKey(ExtensionWebEntry),
   badge: Schema.optionalKey(ExtensionBadge),

@@ -49,6 +49,7 @@ import {
   type ExtensionRegisterHttpPrefixResult,
   type ExtensionRegisterToolsInput,
   type ExtensionRegisterToolsResult,
+  type ExtensionRejection,
   type ExtensionRegisterWebEntryInput,
   type ExtensionRuntimeState,
   type ExtensionSetBadgeInput,
@@ -129,6 +130,8 @@ interface ExtensionRecord {
   readonly restartCount: number;
   readonly logs: ReadonlyArray<ExtensionLogEntry>;
   readonly tools: ReadonlyArray<ExtensionToolDefinition>;
+  /** What this registration asked for and did not get. Cleared on restart. */
+  readonly rejections: ReadonlyArray<ExtensionRejection>;
   readonly httpPrefix?: ExtensionHttpPrefix;
   readonly web?: ExtensionWebEntry;
   readonly badge?: ExtensionBadge;
@@ -279,6 +282,7 @@ const emptyRecord = (source: ResolvedExtensionSource): ExtensionRecord => ({
   restartCount: 0,
   logs: [],
   tools: [],
+  rejections: [],
   helloAcked: false,
 });
 
@@ -327,6 +331,7 @@ const toStatus = (record: ExtensionRecord): ExtensionStatus => ({
     record.folderHash !== undefined &&
     record.runningHash !== record.folderHash,
   tools: record.tools.map((tool) => tool.name),
+  rejections: record.rejections,
   ...(record.httpPrefix === undefined ? {} : { httpPrefix: record.httpPrefix }),
   ...(record.web === undefined ? {} : { web: record.web }),
   ...(record.badge === undefined ? {} : { badge: record.badge }),
@@ -464,6 +469,18 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
     },
   );
 
+  /** Replace the rejection of this kind, so a re-register never accumulates. */
+  const recordRejection = (name: ExtensionName, rejection: ExtensionRejection) =>
+    updateState((current) =>
+      withRecord(current, name, (record) => ({
+        ...record,
+        rejections: [
+          ...record.rejections.filter((existing) => existing.kind !== rejection.kind),
+          rejection,
+        ],
+      })),
+    );
+
   const registerTools: ExtensionRegistryShape["registerTools"] = Effect.fn(
     "ExtensionRegistry.registerTools",
   )(function* (input) {
@@ -494,9 +511,24 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
         accepted.push(tool);
         results.push({ status: "accepted", name: tool.name });
       }
+      // The same refusals the extension is told, kept where a human can read
+      // them: registration is idempotent, so this replaces the previous set
+      // rather than accumulating one entry per reconnect.
+      const rejections = results.flatMap((result) =>
+        result.status === "rejected"
+          ? [{ kind: "tool" as const, subject: result.name, message: result.message }]
+          : [],
+      );
       return [
         { tools: results } satisfies ExtensionRegisterToolsResult,
-        withRecord(current, input.name, (record) => ({ ...record, tools: accepted })),
+        withRecord(current, input.name, (record) => ({
+          ...record,
+          tools: accepted,
+          rejections: [
+            ...record.rejections.filter((rejection) => rejection.kind !== "tool"),
+            ...rejections,
+          ],
+        })),
       ] as const;
     });
     return result;
@@ -506,20 +538,34 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
     "ExtensionRegistry.registerHttpPrefix",
   )(function* (input) {
     yield* requireHandshake(EXTENSION_WS_METHODS.registerHttpPrefix, input);
+    /** Answer the extension and leave the reason where Settings can show it. */
+    const refuse = Effect.fn("ExtensionRegistry.registerHttpPrefix.refuse")(function* (
+      error: ExtensionHttpPrefixCollisionError,
+    ) {
+      yield* recordRejection(input.name, {
+        kind: "http-prefix",
+        subject: input.prefix,
+        message: error.message,
+      });
+      return yield* error;
+    });
     if (RESERVED_HTTP_PREFIXES.has(input.prefix)) {
-      return yield* new ExtensionHttpPrefixCollisionError({ prefix: input.prefix });
+      return yield* refuse(new ExtensionHttpPrefixCollisionError({ prefix: input.prefix }));
     }
     const current = yield* SynchronizedRef.get(state);
     for (const record of current.records.values()) {
       if (record.name !== input.name && record.httpPrefix === input.prefix) {
-        return yield* new ExtensionHttpPrefixCollisionError({
-          prefix: input.prefix,
-          owner: record.name,
-        });
+        return yield* refuse(
+          new ExtensionHttpPrefixCollisionError({ prefix: input.prefix, owner: record.name }),
+        );
       }
     }
     yield* updateState((next) =>
-      withRecord(next, input.name, (record) => ({ ...record, httpPrefix: input.prefix })),
+      withRecord(next, input.name, (record) => ({
+        ...record,
+        httpPrefix: input.prefix,
+        rejections: record.rejections.filter((rejection) => rejection.kind !== "http-prefix"),
+      })),
     );
     return {
       prefix: input.prefix,
@@ -776,6 +822,9 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
             ...cleaned,
             ...(stopped || record.badge === undefined ? {} : { badge: record.badge }),
             state: input.state,
+            // A starting process re-registers everything from scratch, so last
+            // run's refusals describe nothing that is true any more.
+            rejections: input.state === "starting" ? [] : record.rejections,
             restartCount:
               input.countRestart === true ? record.restartCount + 1 : record.restartCount,
             ...(input.runningHash === undefined ? {} : { runningHash: input.runningHash }),

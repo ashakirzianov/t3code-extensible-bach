@@ -255,9 +255,18 @@ deliberately absent: the container sits inside the host's document, so the app's
 properties are already in scope, and an extension styled with them follows a theme change
 while it is mounted.
 
-Mobile is a non-goal for v1. The nav entry and the route are web-only, and the mobile app
-neither lists extensions nor mounts them; the derivation from the list to the nav rows lives
-in `client-runtime` so that stays a decision rather than a rewrite.
+**Settings → Extensions** is the other half of the same live list: one section per connected
+environment, and per extension its version, where the host learned about it, where its folder
+is, what state it is in, the tools it registered, whatever it asked for and did not get, and a
+tail of its output. Deploy and Enable/Disable live here, each behind the host's own
+confirmation and each showing its own reverse, and the sidebar's "new build on disk" marker
+links straight to the row rather than acting on its own — the version, the state and the
+output are what make Deploy a decision rather than a reflex.
+
+Mobile is a non-goal for v1. The nav entry, the extension route and the Settings screen are
+web-only, and the mobile app neither lists extensions nor mounts them; the derivations from
+the list to the nav rows and the settings rows live in `client-runtime` so that stays a
+decision rather than a rewrite.
 
 ## The reference
 
