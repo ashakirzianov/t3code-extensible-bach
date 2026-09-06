@@ -3,12 +3,8 @@ import {
   type EnvironmentId,
   type ExtensionHttpPrefix,
 } from "@t3tools/contracts";
-import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
-import type { HttpMethod } from "effect/unstable/http";
-
-import type { PreparedConnection } from "../connection/model.ts";
-import { buildEnvironmentAuthHeaders } from "../state/environmentHttpAuth.ts";
+import type { PreparedConnection, PreparedHttpAuthorization } from "../connection/model.ts";
+import type { EnvironmentHttpAuthHeaders } from "../state/environmentHttpAuth.ts";
 
 /**
  * The authenticated `fetch` a mounted extension is handed.
@@ -27,25 +23,28 @@ export class ExtensionFetchError extends Error {
 }
 
 /**
- * The header builder signs a DPoP proof over the method, so it has to be one of
- * the methods the client's HTTP layer knows. Anything else is the caller's bug
- * and is better rejected here than signed wrong.
+ * The credential a mounted extension inherits, as request headers.
+ *
+ * The client's own `executeAuthenticatedEnvironmentHttpRequest` is not usable
+ * here: it drives Effect's HTTP client and returns decoded results, while an
+ * extension is handed a browser `fetch` that must yield a real `Response`. So
+ * this maps the two credential shapes an extension can ever see, and refuses
+ * the third loudly.
+ *
+ * A DPoP credential means a relay connection, which is cross-origin, and a
+ * cross-origin environment cannot load an extension bundle at all under the
+ * desktop CSP — so no mount that could reach this exists. Signing a proof here
+ * would be dead code guessing at a case that cannot occur; failing is the
+ * outcome we want if that ever stops being true, over a silent 401.
  */
-const HTTP_METHODS: ReadonlyArray<HttpMethod.HttpMethod> = [
-  "GET",
-  "HEAD",
-  "POST",
-  "PUT",
-  "PATCH",
-  "DELETE",
-  "OPTIONS",
-];
-
-const normaliseMethod = (method: string | undefined): HttpMethod.HttpMethod => {
-  const candidate = (method ?? "GET").toUpperCase();
-  const known = HTTP_METHODS.find((value) => value === candidate);
-  if (known === undefined) throw new ExtensionFetchError(`Unsupported HTTP method ${candidate}.`);
-  return known;
+const extensionAuthHeaders = (
+  authorization: PreparedHttpAuthorization | null,
+): EnvironmentHttpAuthHeaders => {
+  if (authorization === null) return {};
+  if (authorization._tag === "Bearer") return { authorization: `Bearer ${authorization.token}` };
+  throw new ExtensionFetchError(
+    `Extensions cannot be reached over a ${authorization._tag} connection.`,
+  );
 };
 
 const joinPath = (basePath: string, path: string): string =>
@@ -77,15 +76,7 @@ export async function extensionFetch(input: {
     prefix: input.prefix,
     path: input.path,
   });
-  const method = normaliseMethod(input.init?.method);
-  // DPoP proofs are deliberately not signed here. A DPoP credential means a
-  // relay connection, which is cross-origin, and a cross-origin environment
-  // cannot load an extension bundle at all under the desktop CSP — so no mount
-  // that could call this exists yet. The header builder fails loudly if that
-  // ever stops being true, which is the outcome we want over a silent 401.
-  const headers = await Effect.runPromise(
-    buildEnvironmentAuthHeaders(input.prepared.httpAuthorization, method, url, Option.none()),
-  );
+  const headers = extensionAuthHeaders(input.prepared.httpAuthorization);
   const requestHeaders = new Headers(input.init?.headers);
   if (headers.authorization !== undefined) {
     requestHeaders.set("authorization", headers.authorization);

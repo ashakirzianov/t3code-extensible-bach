@@ -31,6 +31,33 @@ fork's operational half and does not restate it.
 - Fixes that are genuinely upstream's problem (the migration guard) go upstream as small
   standalone PRs, not as fork-only carry.
 
+## Uptake log
+
+What each merge actually cost, so the next one can be estimated rather than guessed at.
+
+### 2026-09-06 — `upstream/main` at `223ff4490` (306 commits)
+
+**Two textual conflicts, both predicted by the table.** `packages/contracts/src/settings.ts`
+(both sides appended a field to `ServerSettings`; kept both) and
+`apps/server/src/cloud/bootService.test.ts` (upstream rewrote a path assertion to use
+`path.join`; re-applied the fork's app id in upstream's new shape). Everything else in the
+25 files both sides had touched auto-merged.
+
+**The one thing the table did not predict** was a _silent_ break: nothing conflicted in
+`packages/client-runtime/src/extensions/http.ts`, but upstream made
+`buildEnvironmentAuthHeaders` private behind a new
+`executeAuthenticatedEnvironmentHttpRequest`, and the fork's extension `fetch` imported it.
+Only the typecheck caught it. The fork now maps the credential to headers in its own file
+rather than re-exporting a private helper: the extension host API hands out a browser
+`fetch` returning a real `Response`, which upstream's Effect-client entry point cannot
+produce, so consuming it was never going to work. **Lesson: a clean merge proves nothing —
+run every package's typecheck, not just the tests, and treat a fork file importing an
+upstream helper as a touch point even though it never conflicts.**
+
+**Also worth knowing:** a fresh worktree needs Electron's binary before the desktop tests can
+even load (`node apps/desktop/node_modules/electron/install.js`); `CI=true pnpm install`
+skips it, and the failure reads like a broken install rather than a missing download.
+
 ## Where fork code lives
 
 Host-side additions live in new directories so uptakes conflict as little as possible
