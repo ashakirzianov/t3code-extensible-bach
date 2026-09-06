@@ -105,6 +105,9 @@ export const EXTENSION_WS_METHODS = {
  * One identifier per extension, unique within an environment. Kebab case so it
  * is safe in a URL path, a directory name, and a settings key without escaping.
  */
+/** The manifest file at the root of a built extension folder. */
+export const EXTENSION_MANIFEST_FILE = "extension.json";
+
 export const EXTENSION_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 export const ExtensionName = BoundedString(64)
   .check(Schema.isPattern(EXTENSION_NAME_PATTERN))

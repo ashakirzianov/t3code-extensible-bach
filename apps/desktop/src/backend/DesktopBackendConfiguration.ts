@@ -16,6 +16,12 @@ import serverPackageJson from "../../../server/package.json" with { type: "json"
 
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import {
+  BUNDLED_EXTENSIONS_DIR,
+  bundledExtensionArgs,
+  readBundledExtensions,
+  type BundledExtension,
+} from "./DesktopBundledExtensions.ts";
 import * as DesktopServerExposure from "./DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
@@ -179,6 +185,26 @@ const resolveResourceMonitorPath = Effect.fn(
 
   return Option.none<string>();
 });
+
+/**
+ * Where the shipped extensions live. Packaged builds put them beside
+ * `resource-monitor` in the app's resources; everything else falls back to the
+ * same candidate list the other bundled resources use, so a developer can drop
+ * a built folder into `resources/extensions/` and get the same behaviour.
+ */
+const resolveBundledExtensions = Effect.fn("desktop.backendConfiguration.resolveBundledExtensions")(
+  function* () {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    const roots = environment.isPackaged
+      ? [environment.path.join(environment.resourcesPath, BUNDLED_EXTENSIONS_DIR)]
+      : environment.resolveResourcePathCandidates(BUNDLED_EXTENSIONS_DIR);
+    for (const root of roots) {
+      const found = yield* readBundledExtensions({ root, join: environment.path.join });
+      if (found.length > 0) return found;
+    }
+    return [];
+  },
+);
 
 const readPersistedBackendObservabilitySettings = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -471,6 +497,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
   function* (
     input: SharedBootstrapInput & {
       readonly resourceMonitorPath: Option.Option<string>;
+      readonly bundledExtensions: ReadonlyArray<BundledExtension>;
     },
   ): Effect.fn.Return<
     DesktopBackendManager.DesktopBackendStartConfig,
@@ -501,7 +528,12 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
 
     return {
       executablePath: process.execPath,
-      args: [environment.backendEntryPath, "--bootstrap-fd", "3"],
+      args: [
+        environment.backendEntryPath,
+        "--bootstrap-fd",
+        "3",
+        ...bundledExtensionArgs(input.bundledExtensions),
+      ],
       entryPath: environment.backendEntryPath,
       cwd: environment.backendCwd,
       env: {
@@ -809,7 +841,15 @@ export const make = Effect.gen(function* () {
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
     );
-    return yield* resolvePrimaryStartConfig({ ...shared, resourceMonitorPath }).pipe(
+    const bundledExtensions = yield* resolveBundledExtensions().pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
+    );
+    return yield* resolvePrimaryStartConfig({
+      ...shared,
+      resourceMonitorPath,
+      bundledExtensions,
+    }).pipe(
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
       Effect.provideService(DesktopServerExposure.DesktopServerExposure, serverExposure),
     );

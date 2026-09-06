@@ -78,6 +78,10 @@ investigation.
 | `packages/contracts/package.json`                                                                                                        | One `generate:extensions` script                                                                                                                    | Scripts live in the package manifest                                                                                                                                                                                       |
 | `packages/contracts/tsconfig.json`                                                                                                       | Adds `scripts` and `generated` to `include`, and `types: ["node"]`                                                                                  | The generator and the artifact it emits have to be typechecked with the package                                                                                                                                            |
 | `.prettierignore` (new file at root)                                                                                                     | Excludes `packages/contracts/generated/`                                                                                                            | The generated artifacts are byte-compared by a test, so the formatter must not rewrite them                                                                                                                                |
+| `apps/desktop/src/backend/DesktopBackendConfiguration.ts`                                                                                | Resolves the bundled extensions directory and appends `--extension name=path` to the primary backend args                                           | The backend argv is assembled in one place; a shipped extension is only a launch flag                                                                                                                                      |
+| `scripts/build-desktop-artifact.ts`                                                                                                      | Stages `extensions/` from `T3CODE_BUNDLED_EXTENSIONS`, one `extraResources` entry, and keeps the staging dir out of `app.asar`                      | electron-builder config and staging both live in this one script                                                                                                                                                           |
+| `scripts/build-desktop-artifact.test.ts`                                                                                                 | The extraResources and asar-exclusion expectations grew a row; adds the staging tests                                                               | Mirrors the file above                                                                                                                                                                                                     |
+| `scripts/package.json`, `pnpm-lock.yaml`                                                                                                 | The build script depends on `@t3tools/contracts` for the manifest filename and the extension-name rule                                              | Staging must agree with the folder contract rather than re-spelling it                                                                                                                                                     |
 | `apps/server/src/mcp/McpHttpServer.ts`                                                                                                   | Registers the extension resources and the tool sync; passes `instructions` to `layerHttp`                                                           | The MCP server is one per process and is built here; `instructions` is a transport option                                                                                                                                  |
 | `apps/server/src/mcp/McpSessionRegistry.ts`                                                                                              | A `beforeIssue` option, run before a credential is minted, and a layer that supplies it                                                             | Issuing a credential is the last moment anything can reach the provider process about to connect                                                                                                                           |
 | `scripts/extensionGuide.ts`, `generate-extension-guide.ts`, `extensionGuide.test.ts`                                                     | Artifacts carry a repo-relative `directory`, so the guide is also emitted as a compiled-in server module                                            | The generator and its drift test are one pipeline; a second one would drift from the first                                                                                                                                 |
@@ -160,6 +164,28 @@ a fix belongs without implementing it.
   24.18.1, no flag); a folder under `Contents/Resources/extensions/` in a packaged build spawns
   and writes to userdata (`extraResources`; an asar path cannot be `cwd`).
 
+## Bundling an extension in the desktop build
+
+The desktop ships extensions as ordinary launch flags, not as a concept the server knows
+about. Set `T3CODE_BUNDLED_EXTENSIONS` when building the desktop artifact, naming one or more
+**built** folders as `name=path` (comma or whitespace separated; paths relative to the
+repository root or absolute):
+
+```bash
+T3CODE_BUNDLED_EXTENSIONS=bach=../bach/dist node scripts/build-desktop-artifact.ts --platform mac
+```
+
+Each folder is copied to `Contents/Resources/extensions/<name>/`, and at launch the desktop
+passes `--extension <name>=<that path>` for every subfolder there that has an
+`extension.json`. The default is none, so an ordinary build ships nothing.
+
+The build fails if a named folder is missing or has no manifest — a build that silently
+shipped nothing would be discovered by a user, not by CI. The folder is deliberately **not**
+inside `app.asar`: the server spawns each extension with its folder as the working directory,
+and a path inside an asar cannot be a `cwd`
+([spike](extensions/spikes/electron-runtime.md) §3). It also means a bundled extension can
+only be replaced by an app update — which is exactly what the settings-entry override is for.
+
 ## Fork identity
 
 Four knobs, three of which change (design §8):
@@ -181,7 +207,29 @@ No home lock exists anywhere — upstream has none, and the fork is not adding o
 guidance for anyone switching is standing rather than interim: **uninstall upstream after
 moving over.** That removes both the scheme race and the two-servers-one-home hazard.
 
-### Fork identity — as built
+### Bundling an extension in the desktop build
+
+The desktop ships extensions as ordinary launch flags, not as a concept the server knows
+about. Set `T3CODE_BUNDLED_EXTENSIONS` when building the desktop artifact, naming one or more
+**built** folders as `name=path` (comma or whitespace separated; paths relative to the
+repository root or absolute):
+
+```bash
+T3CODE_BUNDLED_EXTENSIONS=bach=../bach/dist node scripts/build-desktop-artifact.ts --platform mac
+```
+
+Each folder is copied to `Contents/Resources/extensions/<name>/`, and at launch the desktop
+passes `--extension <name>=<that path>` for every subfolder there that has an
+`extension.json`. The default is none, so an ordinary build ships nothing.
+
+The build fails if a named folder is missing or has no manifest — a build that silently
+shipped nothing would be discovered by a user, not by CI. The folder is deliberately **not**
+inside `app.asar`: the server spawns each extension with its folder as the working directory,
+and a path inside an asar cannot be a `cwd`
+([spike](extensions/spikes/electron-runtime.md) §3). It also means a bundled extension can
+only be replaced by an app update — which is exactly what the settings-entry override is for.
+
+## Fork identity — as built
 
 All values live in `packages/shared/src/forkIdentity.ts`; nothing else hardcodes them.
 
@@ -262,6 +310,8 @@ INFO: Authentication required. Open T3 Code using the pairing URL.  pairingUrl: 
 
 Read the real ports from that `[dev-runner]` line rather than assuming — they derive from
 the checkout path and shift when occupied. Never set `VITE_HTTP_URL` or `VITE_WS_URL`.
+
+**Never use `git stash` here.** The stash stack is shared by every worktree of this repository, and several builders work in worktrees at once; a mistimed `stash pop` takes someone else's work. Compare with `git diff` or a scratch branch instead.
 
 Agents spawned by the desktop app inherit `ELECTRON_RUN_AS_NODE=1` into their shell. One
 upstream test (`build-desktop-artifact.test.ts`, the cross-architecture Windows probe) asserts

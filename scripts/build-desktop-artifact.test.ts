@@ -85,6 +85,7 @@ import {
   WSL_RUNTIME_EXTRA_RESOURCES,
   wslRuntimeArchiveTarTarget,
 } from "./build-desktop-artifact.ts";
+import { parseBundledExtensionEntries, stageBundledExtensions } from "./build-desktop-artifact.ts";
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
@@ -562,6 +563,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "!apps/desktop/prod-resources/windows-server/**/*",
       "!apps/desktop/prod-resources/wsl-runtime.tar.gz",
       "!apps/desktop/prod-resources/wsl-runtime.tar.gz.sha256",
+      "!apps/desktop/prod-resources/extensions",
+      "!apps/desktop/prod-resources/extensions/**/*",
     ]);
     assert.equal(WINDOWS_SERVER_RESOURCE_SOURCE_DIR, "apps/desktop/prod-resources/windows-server");
     assert.deepStrictEqual(WINDOWS_SERVER_EXTRA_RESOURCES, [
@@ -630,6 +633,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           from: "apps/desktop/prod-resources/resource-monitor",
           to: "resource-monitor",
         },
+        {
+          from: "apps/desktop/prod-resources/extensions",
+          to: "extensions",
+        },
         ...WINDOWS_SERVER_EXTRA_RESOURCES,
         ...WSL_RUNTIME_EXTRA_RESOURCES,
       ]);
@@ -639,6 +646,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         {
           from: "apps/desktop/prod-resources/resource-monitor",
           to: "resource-monitor",
+        },
+        {
+          from: "apps/desktop/prod-resources/extensions",
+          to: "extensions",
         },
         ...WINDOWS_SERVER_EXTRA_RESOURCES,
       ]);
@@ -1745,11 +1756,117 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
+  // `stageBundledExtensions` can also fail on the filesystem, so the error
+  // channel is a union; this narrows to the part a caller acts on.
+  const bundledFailureReason = (error: { readonly _tag: string }): string =>
+    "reason" in error && typeof error.reason === "string" ? error.reason : error._tag;
+
+  it.effect("stages nothing but still creates the extensions directory by default", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const repoRoot = yield* fs.makeTempDirectoryScoped({ prefix: "bundled-repo-" });
+        const stageResourcesDir = yield* fs.makeTempDirectoryScoped({ prefix: "bundled-stage-" });
+
+        yield* stageBundledExtensions({ repoRoot, stageResourcesDir, verbose: false, entries: "" });
+
+        const destination = path.join(stageResourcesDir, "extensions");
+        assert.isTrue(yield* fs.exists(destination));
+        assert.deepStrictEqual(yield* fs.readDirectory(destination), []);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("copies each named folder under its extension name", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const repoRoot = yield* fs.makeTempDirectoryScoped({ prefix: "bundled-repo-" });
+        const stageResourcesDir = yield* fs.makeTempDirectoryScoped({ prefix: "bundled-stage-" });
+        const source = path.join(repoRoot, "out/bach");
+        yield* fs.makeDirectory(path.join(source, "dist"), { recursive: true });
+        yield* fs.writeFileString(path.join(source, "extension.json"), "{}");
+        yield* fs.writeFileString(path.join(source, "dist/server.js"), "// built");
+
+        yield* stageBundledExtensions({
+          repoRoot,
+          stageResourcesDir,
+          verbose: false,
+          entries: "bach=out/bach",
+        });
+
+        const staged = path.join(stageResourcesDir, "extensions/bach");
+        assert.isTrue(yield* fs.exists(path.join(staged, "extension.json")));
+        assert.isTrue(yield* fs.exists(path.join(staged, "dist/server.js")));
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("fails the build when a named folder is not there to ship", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const repoRoot = yield* fs.makeTempDirectoryScoped({ prefix: "bundled-repo-" });
+        const stageResourcesDir = yield* fs.makeTempDirectoryScoped({ prefix: "bundled-stage-" });
+
+        const error = yield* stageBundledExtensions({
+          repoRoot,
+          stageResourcesDir,
+          verbose: false,
+          entries: "bach=out/bach",
+        }).pipe(Effect.flip);
+
+        assert.equal(bundledFailureReason(error), "missing-folder");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("refuses a folder that carries no manifest", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const repoRoot = yield* fs.makeTempDirectoryScoped({ prefix: "bundled-repo-" });
+        const stageResourcesDir = yield* fs.makeTempDirectoryScoped({ prefix: "bundled-stage-" });
+        yield* fs.makeDirectory(path.join(repoRoot, "out/bach"), { recursive: true });
+
+        const error = yield* stageBundledExtensions({
+          repoRoot,
+          stageResourcesDir,
+          verbose: false,
+          entries: "bach=out/bach",
+        }).pipe(Effect.flip);
+
+        assert.equal(bundledFailureReason(error), "missing-manifest");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it("reads several entries from one variable, comma or whitespace separated", () => {
+    assert.deepStrictEqual(
+      parseBundledExtensionEntries("bach=out/bach, notes=/abs/notes\n  extra=x").map(
+        ({ name, path }) => ({ name, path }),
+      ),
+      [
+        { name: "bach", path: "out/bach" },
+        { name: "notes", path: "/abs/notes" },
+        { name: "extra", path: "x" },
+      ],
+    );
+    assert.deepStrictEqual(parseBundledExtensionEntries("  "), []);
+  });
+
   it("stages the resource monitor as an external executable resource", () => {
     assert.deepStrictEqual(DESKTOP_EXTRA_RESOURCES, [
       {
         from: "apps/desktop/prod-resources/resource-monitor",
         to: "resource-monitor",
+      },
+      {
+        from: "apps/desktop/prod-resources/extensions",
+        to: "extensions",
       },
     ]);
     assert.deepStrictEqual(resolveResourceMonitorRustTargets("mac", "universal"), [

@@ -9,14 +9,17 @@
  * (`docs/internals/extensions/spikes/electron-runtime.md` §3), so nothing here
  * special-cases the packaged layout.
  */
-import { ExtensionFolderError, ExtensionManifest, type ExtensionName } from "@t3tools/contracts";
+import {
+  EXTENSION_MANIFEST_FILE,
+  ExtensionFolderError,
+  ExtensionManifest,
+  type ExtensionName,
+} from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-
-export const EXTENSION_MANIFEST_FILE = "extension.json";
 
 /**
  * Skipped when hashing and when walking. `node_modules` is not merely large:

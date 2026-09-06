@@ -16,6 +16,7 @@ import {
 import { fromYaml } from "@t3tools/shared/schemaYaml";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { clerkFrontendApiHostnameFromPublishableKey } from "@t3tools/shared/relayAuth";
+import { EXTENSION_MANIFEST_FILE, ExtensionName } from "@t3tools/contracts";
 import { FORK_APP_ID, FORK_UPDATE_REPOSITORY } from "@t3tools/shared/forkIdentity";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import rootPackageJson from "../package.json" with { type: "json" };
@@ -970,6 +971,11 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   "!apps/desktop/prod-resources/windows-server/**/*",
   "!apps/desktop/prod-resources/wsl-runtime.tar.gz",
   "!apps/desktop/prod-resources/wsl-runtime.tar.gz.sha256",
+  // Bundled extensions ship as loose resources, never inside app.asar: the
+  // server spawns each one with its folder as the cwd, and a path inside an
+  // asar cannot be a cwd.
+  "!apps/desktop/prod-resources/extensions",
+  "!apps/desktop/prod-resources/extensions/**/*",
 ] as const;
 // Windows terminal helpers cannot run on macOS and slow signing and notarization.
 export const MAC_FILE_EXCLUSIONS = [
@@ -1091,6 +1097,13 @@ export const DESKTOP_EXTRA_RESOURCES = [
   {
     from: "apps/desktop/prod-resources/resource-monitor",
     to: "resource-monitor",
+  },
+  // Always shipped, usually empty. The desktop reads every subfolder here and
+  // passes it to the server as `--extension name=path`; see
+  // `BUNDLED_EXTENSIONS_ENV`.
+  {
+    from: "apps/desktop/prod-resources/extensions",
+    to: "extensions",
   },
 ] as const;
 export const LINUX_BROWSER_SECRET_EXTRA_RESOURCES = [
@@ -2219,6 +2232,114 @@ export const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* 
 
   if (input.platform !== "win") {
     yield* fs.chmod(destinationPath, 0o755);
+  }
+});
+
+/**
+ * Names the built extension folders a build ships, as `name=path` entries
+ * separated by commas or whitespace, paths relative to the repository root or
+ * absolute. Default: none.
+ *
+ * A build flag rather than a hardcoded list so the fork can ship a pinned
+ * release without a code change, and so an ordinary build ships nothing.
+ */
+export const BUNDLED_EXTENSIONS_ENV = "T3CODE_BUNDLED_EXTENSIONS";
+
+export class BundledExtensionSourceError extends Schema.TaggedErrorClass<BundledExtensionSourceError>()(
+  "BundledExtensionSourceError",
+  {
+    entry: Schema.String,
+    reason: Schema.Literals(["malformed", "invalid-name", "missing-folder", "missing-manifest"]),
+    path: Schema.optionalKey(Schema.String),
+  },
+) {
+  override get message(): string {
+    switch (this.reason) {
+      case "malformed":
+        return `${BUNDLED_EXTENSIONS_ENV} entry "${this.entry}" is not name=path.`;
+      case "invalid-name":
+        return `${BUNDLED_EXTENSIONS_ENV} entry "${this.entry}" does not name a valid extension.`;
+      case "missing-folder":
+        return `${BUNDLED_EXTENSIONS_ENV} entry "${this.entry}" points at ${this.path}, which does not exist.`;
+      case "missing-manifest":
+        return `${BUNDLED_EXTENSIONS_ENV} entry "${this.entry}" points at ${this.path}, which has no ${EXTENSION_MANIFEST_FILE}.`;
+    }
+  }
+}
+
+const isBundledExtensionName = Schema.is(ExtensionName);
+
+export interface BundledExtensionEntry {
+  readonly name: string;
+  readonly path: string;
+  /** The raw text, so an error can quote what the operator actually wrote. */
+  readonly entry: string;
+}
+
+export const parseBundledExtensionEntries = (raw: string): ReadonlyArray<BundledExtensionEntry> =>
+  raw
+    .split(/[,\s]+/u)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== "")
+    .map((entry) => {
+      const separator = entry.indexOf("=");
+      return {
+        name: separator <= 0 ? "" : entry.slice(0, separator).trim(),
+        path: separator <= 0 ? "" : entry.slice(separator + 1).trim(),
+        entry,
+      };
+    });
+
+/**
+ * Copies each named folder to `<stage>/extensions/<name>`. The directory is
+ * created even when nothing is bundled, because the extraResources entry
+ * naming it is unconditional.
+ */
+export const stageBundledExtensions = Effect.fn("stageBundledExtensions")(function* (input: {
+  readonly repoRoot: string;
+  readonly stageResourcesDir: string;
+  readonly verbose: boolean;
+  /** Overrides the environment variable; used by tests. */
+  readonly entries?: string;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const raw =
+    input.entries ?? (yield* Config.string(BUNDLED_EXTENSIONS_ENV).pipe(Config.withDefault("")));
+  const destinationRoot = path.join(input.stageResourcesDir, "extensions");
+  yield* fs.remove(destinationRoot, { recursive: true, force: true }).pipe(Effect.ignore);
+  yield* fs.makeDirectory(destinationRoot, { recursive: true });
+
+  const parsed = parseBundledExtensionEntries(raw);
+  for (const { name, path: sourcePath, entry } of parsed) {
+    if (name === "" || sourcePath === "") {
+      return yield* new BundledExtensionSourceError({ entry, reason: "malformed" });
+    }
+    if (!isBundledExtensionName(name)) {
+      return yield* new BundledExtensionSourceError({ entry, reason: "invalid-name" });
+    }
+    const resolved = path.isAbsolute(sourcePath)
+      ? sourcePath
+      : path.join(input.repoRoot, sourcePath);
+    if (!(yield* fs.exists(resolved).pipe(Effect.orElseSucceed(() => false)))) {
+      return yield* new BundledExtensionSourceError({
+        entry,
+        reason: "missing-folder",
+        path: resolved,
+      });
+    }
+    const manifest = path.join(resolved, EXTENSION_MANIFEST_FILE);
+    if (!(yield* fs.exists(manifest).pipe(Effect.orElseSucceed(() => false)))) {
+      return yield* new BundledExtensionSourceError({
+        entry,
+        reason: "missing-manifest",
+        path: resolved,
+      });
+    }
+    yield* fs.copy(resolved, path.join(destinationRoot, name));
+    if (input.verbose) {
+      yield* Effect.log(`[desktop-artifact] Bundled extension ${name} from ${resolved}.`);
+    }
   }
 });
 
@@ -3574,6 +3695,11 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     stageResourcesDir,
     platform: options.platform,
     arch: options.arch,
+    verbose: options.verbose,
+  });
+  yield* stageBundledExtensions({
+    repoRoot,
+    stageResourcesDir,
     verbose: options.verbose,
   });
   yield* stageBrowserSecret({
