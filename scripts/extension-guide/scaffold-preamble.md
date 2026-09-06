@@ -19,10 +19,19 @@ your own.
    including the build allowance it carries, and the install fails.
 3. **Build** with `pnpm build`. This writes `dist/`, which is what the host runs: the server
    entry and, if you keep the web entry, an ES module the client imports.
-4. **Vendor the protocol types.** The reference extension keeps a copy of
-   `packages/contracts/generated/extensions/protocol.d.ts` under `protocol/`; it is generated,
-   dependency-free, and not reproduced here. Take it from the host repository, or work from
-   the JSON Schema if you are not writing TypeScript.
+4. **Vendor the protocol types.** The reference extension keeps copies of
+   `protocol.d.ts` and `protocol.schema.json` under `protocol/`; they are generated,
+   dependency-free, and not reproduced here. Take them from the host repository's
+   `packages/contracts/generated/extensions/`, or work from the JSON Schema alone if you are
+   not writing TypeScript. Copy them again whenever you move to a newer protocol version —
+   they are a snapshot, and nothing warns you when the host has moved on.
+
+   The `sync:protocol` script you will see in `package.json` is how the in-tree reference
+   extension does that same copy: it lives inside the host repository, so it can script it
+   against a relative path and have a test fail when the copy falls behind. Outside the
+   repository there is no such path, so drop the script — the copy is the part that matters,
+   not how it is made.
+
 5. **Point the host at it** with a settings entry naming the built folder, `dist/`. The host
    spawns the server entry on its own Node and passes everything it needs — name, token,
    WebSocket URL, data directory — as `T3_EXT_*` environment variables.

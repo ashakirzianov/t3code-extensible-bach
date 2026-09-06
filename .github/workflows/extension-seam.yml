@@ -38,12 +38,17 @@ jobs:
           cache: true
           run-install: true
 
-      # The generated protocol artifacts and the two guides are committed, and
-      # what an extension author reads. A change that skips either generator
-      # has to fail here rather than ship a contract that describes something
-      # else.
+      # The generated protocol artifacts, the two guides, and the reference
+      # extension's vendored copy of the protocol are all committed, and all
+      # what an extension author reads. A change that skips a generator or a
+      # re-vendor has to fail here rather than ship a contract that describes
+      # something else.
       - name: Check generated artifacts are current
-        run: vp test run packages/contracts/src/extensionsGenerated.test.ts scripts/extensionGuide.test.ts
+        run: >
+          vp test run
+          packages/contracts/src/extensionsGenerated.test.ts
+          scripts/extensionGuide.test.ts
+          scripts/vendoredProtocol.test.ts
 
       - name: Test contracts
         run: vp run --filter @t3tools/contracts test

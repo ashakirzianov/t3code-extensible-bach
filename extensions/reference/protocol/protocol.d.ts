@@ -12,6 +12,38 @@ export type ExtensionWsMethod =
   | "extensions.respondTool"
   | "extensions.respondHttp";
 
+export interface ExtensionMethodErrors {
+  "extensions.hello":
+    | ExtensionProtocolMismatchError
+    | ExtensionNotFoundError
+    | EnvironmentAuthorizationError;
+  "extensions.registerTools": ExtensionHandshakeRequiredError | EnvironmentAuthorizationError;
+  "extensions.registerHttpPrefix":
+    | ExtensionHandshakeRequiredError
+    | ExtensionHttpPrefixCollisionError
+    | EnvironmentAuthorizationError;
+  "extensions.registerWebEntry": ExtensionHandshakeRequiredError | EnvironmentAuthorizationError;
+  "extensions.setBadge": ExtensionHandshakeRequiredError | EnvironmentAuthorizationError;
+  "extensions.connect": ExtensionHandshakeRequiredError | EnvironmentAuthorizationError;
+  "extensions.respondTool": EnvironmentAuthorizationError;
+  "extensions.respondHttp": EnvironmentAuthorizationError;
+}
+
+export type EnvironmentAuthorizationError = {
+  readonly _tag: "EnvironmentAuthorizationError";
+  readonly message: string;
+  readonly requiredScope: 
+    | "orchestration:read"
+    | "orchestration:operate"
+    | "terminal:operate"
+    | "review:write"
+    | "access:read"
+    | "access:write"
+    | "relay:read"
+    | "relay:write"
+    | "extension";
+};
+
 export type ExtensionBadge =
   | {
       readonly kind: "none";
@@ -108,6 +140,11 @@ export type ExtensionManifest = {
 };
 
 export type ExtensionName = string;
+
+export type ExtensionNotFoundError = {
+  readonly _tag: "ExtensionNotFoundError";
+  readonly extensionName: ExtensionName;
+};
 
 export type ExtensionProtocolMismatchError = {
   readonly _tag: "ExtensionProtocolMismatchError";

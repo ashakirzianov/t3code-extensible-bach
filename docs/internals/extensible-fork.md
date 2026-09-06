@@ -91,7 +91,7 @@ Fork-owned new files carry no uptake risk and are not listed here:
 sides of the process boundary), `scripts/extensionGuide.ts` and
 `scripts/generate-extension-guide.ts` (the guide generator),
 `scripts/extension-guide/scaffold-preamble.md` (the one hand-written fragment of the
-scaffold), `scripts/extensionGuide.test.ts` (the drift test), the two generated guides under
+scaffold), `scripts/extensionGuide.test.ts` and `scripts/vendoredProtocol.test.ts` (the drift tests), the two generated guides under
 `docs/internals/extensions/`, `.prettierignore` (which keeps the formatter off them), and
 `.github/workflows/extension-seam.yml`.
 

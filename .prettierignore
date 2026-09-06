@@ -6,3 +6,8 @@ packages/contracts/generated/
 # fails on a change nobody made.
 docs/internals/extensions/reference.md
 docs/internals/extensions/scaffold.md
+
+# A byte-for-byte copy of packages/contracts/generated/extensions/, checked by
+# scripts/vendoredProtocol.test.ts. Formatting one side of a byte comparison
+# breaks it on a change nobody made.
+extensions/reference/protocol/

@@ -6,7 +6,8 @@ SQLite database — so that each one has a real implementation to point at.
 
 It is **standalone on purpose**. It has its own `package.json` with ordinary
 dependencies, its own build, and a vendored copy of the protocol types in
-`protocol/`. It is not a member of the repo's pnpm workspace (whose globs are
+`protocol/` (refreshed with `pnpm sync:protocol`, which a standalone extension would do
+by hand). It is not a member of the repo's pnpm workspace (whose globs are
 `apps/*`, `infra/*`, `packages/*`, `scripts` — none match `extensions/*`), and it
 imports nothing from it. Anything it can do, an extension in a repository of its
 own can do.
