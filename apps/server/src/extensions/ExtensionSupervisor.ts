@@ -28,6 +28,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schedule from "effect/Schedule";
@@ -40,6 +41,7 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 
 import { decodeUtf8 } from "../stream/collectUint8StreamText.ts";
 import { EXTENSION_ENV } from "./ExtensionIdentity.ts";
+import * as ExtensionFolderWatcher from "./ExtensionFolderWatcher.ts";
 import { ExtensionRegistry } from "./ExtensionRegistry.ts";
 import { loadFolder } from "./ExtensionFolder.ts";
 import type { ResolvedExtensionSource } from "./ExtensionSources.ts";
@@ -49,7 +51,14 @@ import type { ResolvedExtensionSource } from "./ExtensionSources.ts";
  * low enough to recover quickly once a fix lands and high enough that a
  * genuinely broken extension does not spin.
  */
-export const EXTENSION_RESTART_MIN_DELAY = Duration.seconds(1);
+export /**
+ * How long a folder must stop changing before its rebuild counts as done.
+ * Long enough to collapse a build's many writes into one hash, short enough
+ * that the nav updates while the user is still looking at it.
+ */
+const EXTENSION_FOLDER_CHANGE_DEBOUNCE = Duration.millis(500);
+
+const EXTENSION_RESTART_MIN_DELAY = Duration.seconds(1);
 export const EXTENSION_RESTART_MAX_DELAY = Duration.seconds(30);
 
 export interface ExtensionTokenMint {
@@ -70,6 +79,8 @@ export interface ExtensionSupervisorOptions {
   readonly runAsNode: boolean;
   readonly minRestartDelay?: Duration.Duration;
   readonly maxRestartDelay?: Duration.Duration;
+  /** How long the folder must be quiet before a rebuild counts as finished. */
+  readonly folderChangeDebounce?: Duration.Duration;
 }
 
 export interface ExtensionSupervisorShape {
@@ -84,6 +95,13 @@ export interface ExtensionSupervisorShape {
     readonly name: ExtensionName;
     readonly enabled: boolean;
   }) => Effect.Effect<void, ExtensionNotFoundError, Scope.Scope>;
+  /**
+   * Re-read every known folder's hash, so `changed` is right even if a watcher
+   * missed an event. Called when Settings reads the list or opens its stream:
+   * cheap, on demand, and it makes the watcher an optimisation rather than the
+   * only thing standing between the user and a stale screen.
+   */
+  readonly refreshFolderHashes: Effect.Effect<void>;
   readonly stopAll: Effect.Effect<void>;
 }
 
@@ -109,6 +127,7 @@ export const make = Effect.fnUntraced(function* (options: ExtensionSupervisorOpt
   // to call `start` — see the note in `start`.
   const supervisorScope = yield* Effect.scope;
   const registry = yield* ExtensionRegistry;
+  const watcher = yield* ExtensionFolderWatcher.ExtensionFolderWatcher;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -124,6 +143,41 @@ export const make = Effect.fnUntraced(function* (options: ExtensionSupervisorOpt
     new Map(),
   );
 
+  /**
+   * Re-read one folder and publish its hash.
+   *
+   * `setFolderHash` writes only `folderHash`; `changed` is derived from it
+   * differing from `runningHash`, so this is the whole "mark changed" step —
+   * and the same write is what wakes the registry's change stream.
+   *
+   * A folder that has become unreadable is left alone rather than reported: the
+   * running process is still fine, and a build that briefly empties its output
+   * directory should not flash an error at the user.
+   */
+  const refreshFolderHash = Effect.fn("ExtensionSupervisor.refreshFolderHash")(function* (input: {
+    readonly name: ExtensionName;
+    readonly path: string;
+  }) {
+    const loaded = yield* readFolder({ path: input.path }).pipe(Effect.option);
+    if (Option.isNone(loaded)) return;
+    yield* registry.setFolderHash({
+      name: input.name,
+      folderHash: loaded.value.hash,
+      manifest: loaded.value.manifest,
+    });
+  });
+
+  const refreshFolderHashes: ExtensionSupervisorShape["refreshFolderHashes"] = Effect.gen(
+    function* () {
+      const listed = yield* registry.list;
+      yield* Effect.forEach(
+        listed.extensions,
+        (status) => refreshFolderHash({ name: status.name, path: status.path }),
+        { discard: true, concurrency: 4 },
+      );
+    },
+  ).pipe(Effect.withSpan("ExtensionSupervisor.refreshFolderHashes"));
+
   const stop = Effect.fn("ExtensionSupervisor.stop")(function* (name: ExtensionName) {
     const entry = yield* SynchronizedRef.modify(running, (current) => {
       const found = current.get(name);
@@ -136,6 +190,27 @@ export const make = Effect.fnUntraced(function* (options: ExtensionSupervisorOpt
     // Interrupting the supervision fiber releases its scope, which kills the
     // child and closes the log pumps with it.
     yield* Fiber.interrupt(entry.fiber);
+  });
+
+  /**
+   * Fork a folder watcher into the current scope.
+   *
+   * Debounced because a build writes many files: without it a single `pnpm
+   * build` would hash the folder once per file written. The debounce is also
+   * what makes "changed" mean "a build finished" rather than "a build started".
+   */
+  const watchFolder = Effect.fn("ExtensionSupervisor.watchFolder")(function* (input: {
+    readonly name: ExtensionName;
+    readonly path: string;
+  }) {
+    yield* watcher.changes(input.path).pipe(
+      Stream.debounce(options.folderChangeDebounce ?? EXTENSION_FOLDER_CHANGE_DEBOUNCE),
+      Stream.runForEach(() => refreshFolderHash(input)),
+      // The watcher is an optimisation; `refreshFolderHashes` covers the
+      // same ground on demand. If it dies, the extension keeps running.
+      Effect.ignore,
+      Effect.forkScoped,
+    );
   });
 
   /**
@@ -218,11 +293,16 @@ export const make = Effect.fnUntraced(function* (options: ExtensionSupervisorOpt
         manifest: loaded.manifest,
       });
       yield* Effect.scoped(
-        runOnce({
-          name,
-          folder: loaded.path,
-          entry: loaded.manifest.server.entry,
-          hash: loaded.hash,
+        Effect.gen(function* () {
+          // Watch for the duration of this run, so a stopped or disabled
+          // extension has no watcher: the scope closes with the process.
+          yield* watchFolder({ name, path: loaded.path });
+          yield* runOnce({
+            name,
+            folder: loaded.path,
+            entry: loaded.manifest.server.entry,
+            hash: loaded.hash,
+          });
         }),
       );
     }).pipe(
@@ -330,7 +410,7 @@ export const make = Effect.fnUntraced(function* (options: ExtensionSupervisorOpt
     yield* Effect.forEach([...current.keys()], stop, { discard: true });
   });
 
-  return ExtensionSupervisor.of({ startAll, deploy, setEnabled, stopAll });
+  return ExtensionSupervisor.of({ startAll, deploy, setEnabled, refreshFolderHashes, stopAll });
 });
 
 export const layer = (options: ExtensionSupervisorOptions) =>

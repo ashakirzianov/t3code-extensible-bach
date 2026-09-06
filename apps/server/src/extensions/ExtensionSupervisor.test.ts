@@ -19,6 +19,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import { EXTENSION_ENV } from "./ExtensionIdentity.ts";
+import * as ExtensionFolderWatcher from "./ExtensionFolderWatcher.ts";
 import * as ExtensionRegistry from "./ExtensionRegistry.ts";
 import * as ExtensionSupervisor from "./ExtensionSupervisor.ts";
 
@@ -112,6 +113,20 @@ const harness = Effect.fn("test.harness")(function* (input: {
     }),
   );
 
+  // A watcher the test drives by hand. `watched` records which folders got a
+  // watcher at all, which is how "a disabled extension is not watched" is
+  // checked without reaching for a real filesystem event.
+  const folderTicks = yield* Queue.unbounded<void>();
+  const watched = yield* Ref.make<ReadonlyArray<string>>([]);
+  const watcher = ExtensionFolderWatcher.ExtensionFolderWatcher.of({
+    changes: (watchedPath) =>
+      Stream.unwrap(
+        Ref.update(watched, (current) => [...current, watchedPath]).pipe(
+          Effect.as(Stream.fromQueue(folderTicks)),
+        ),
+      ),
+  });
+
   const registry = yield* ExtensionRegistry.make({
     environmentId,
     hostVersion: "0.0.38",
@@ -126,12 +141,26 @@ const harness = Effect.fn("test.harness")(function* (input: {
     cwd: "/workspace",
     minRestartDelay: Duration.millis(10),
     maxRestartDelay: Duration.millis(40),
+    folderChangeDebounce: Duration.millis(500),
   }).pipe(
     Effect.provideService(ExtensionRegistry.ExtensionRegistry, registry),
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    Effect.provideService(ExtensionFolderWatcher.ExtensionFolderWatcher, watcher),
   );
 
-  return { registry, supervisor, folder, dataRoot, spawns, launched, path, fs };
+  return {
+    registry,
+    supervisor,
+    folder,
+    dataRoot,
+    spawns,
+    launched,
+    path,
+    fs,
+    /** Pretend the filesystem reported a change under the watched folder. */
+    tickFolder: Queue.offer(folderTicks, undefined),
+    watched,
+  };
 });
 
 const source = (folder: string) => [
@@ -283,6 +312,183 @@ describe("restarting", () => {
           // Every completed run counted, which is what Settings shows next to
           // a crash-looping extension.
           expect((yield* h.registry.get("bach")).restartCount).toBeGreaterThanOrEqual(5);
+        }),
+      ),
+    ),
+  );
+});
+
+/**
+ * Waits for real asynchronous work to land.
+ *
+ * The rehash reads the folder from a real filesystem, and `TestClock.adjust`
+ * moves virtual time without waiting for I/O — so after releasing the debounce
+ * a test has to let the event loop turn before the registry can have been
+ * written. Polling `setImmediate` is unaffected by the test clock, which is
+ * exactly what is wanted here.
+ */
+const settleIo = Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
+
+const awaitChanged = (registry: ExtensionRegistry.ExtensionRegistryShape, expected: boolean) =>
+  Effect.gen(function* () {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      const status = yield* registry.get("bach" as ExtensionName);
+      if (status.changed === expected) return status;
+      yield* settleIo;
+    }
+    return yield* registry.get("bach" as ExtensionName);
+  });
+
+describe("folder change detection", () => {
+  it.effect("marks a running extension changed once the folder settles", () =>
+    run(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const never = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+          const h = yield* harness({
+            spawn: () => Effect.succeed(handle({ exit: Deferred.await(never) })),
+          });
+          yield* h.supervisor.startAll(source(h.folder));
+          yield* Queue.take(h.launched);
+          expect((yield* h.registry.get("bach")).changed).toBe(false);
+
+          // A build lands: several writes, then quiet.
+          yield* h.fs.writeFileString(h.path.join(h.folder, "dist/server.js"), "// build 2");
+          yield* h.tickFolder;
+          yield* h.tickFolder;
+          // Let the stream fiber pick the ticks up and reach its debounce sleep
+          // before the clock moves; TestClock does not wake a fiber that has
+          // not yet slept.
+          yield* TestClock.adjust(Duration.zero);
+
+          // Still within the debounce: nothing has been re-hashed yet, which is
+          // what stops a half-written build from being announced.
+          yield* TestClock.adjust(Duration.millis(200));
+          expect((yield* h.registry.get("bach")).changed).toBe(false);
+
+          yield* TestClock.adjust(Duration.millis(400));
+          const after = yield* awaitChanged(h.registry, true);
+          expect(after.changed).toBe(true);
+          // The folder moved; the process did not.
+          expect(after.state).toBe("running");
+          expect(after.folderHash).not.toBe(after.runningHash);
+          // And no restart was provoked by the change.
+          expect((yield* Ref.get(h.spawns)).length).toBe(1);
+        }),
+      ),
+    ),
+  );
+
+  it.effect("a tick that changed nothing leaves the extension unchanged", () =>
+    run(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const never = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+          const h = yield* harness({
+            spawn: () => Effect.succeed(handle({ exit: Deferred.await(never) })),
+          });
+          yield* h.supervisor.startAll(source(h.folder));
+          yield* Queue.take(h.launched);
+
+          // Watchers tick spuriously — an editor's temp file, a poll on a quiet
+          // folder. The hash is the arbiter, so this must be a no-op.
+          yield* h.tickFolder;
+          yield* Effect.yieldNow;
+          yield* TestClock.adjust(Duration.seconds(1));
+          expect((yield* h.registry.get("bach")).changed).toBe(false);
+        }),
+      ),
+    ),
+  );
+
+  it.effect("deploy clears the changed flag by adopting the new build", () =>
+    run(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const never = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+          const h = yield* harness({
+            spawn: () => Effect.succeed(handle({ exit: Deferred.await(never) })),
+          });
+          yield* h.supervisor.startAll(source(h.folder));
+          yield* Queue.take(h.launched);
+
+          yield* h.fs.writeFileString(h.path.join(h.folder, "dist/server.js"), "// build 2");
+          yield* h.tickFolder;
+          yield* TestClock.adjust(Duration.seconds(1));
+          expect((yield* awaitChanged(h.registry, true)).changed).toBe(true);
+
+          yield* Effect.scoped(h.supervisor.deploy("bach"));
+          yield* Queue.take(h.launched);
+          const after = yield* h.registry.get("bach");
+          expect(after.changed).toBe(false);
+          expect(after.folderHash).toBe(after.runningHash);
+        }),
+      ),
+    ),
+  );
+
+  it.effect("a disabled extension is not watched", () =>
+    run(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const never = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+          const h = yield* harness({
+            spawn: () => Effect.succeed(handle({ exit: Deferred.await(never) })),
+          });
+          yield* h.supervisor.startAll([
+            { name: "bach" as ExtensionName, path: h.folder, enabled: false, source: "settings" },
+          ]);
+          yield* TestClock.adjust(Duration.seconds(1));
+          // Nothing running means nothing to redeploy, so there is nothing to
+          // watch for either.
+          expect(yield* Ref.get(h.watched)).toEqual([]);
+        }),
+      ),
+    ),
+  );
+
+  it.effect("stopping an extension takes its watcher with it", () =>
+    run(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const never = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+          const h = yield* harness({
+            spawn: () => Effect.succeed(handle({ exit: Deferred.await(never) })),
+          });
+          yield* h.supervisor.startAll(source(h.folder));
+          yield* Queue.take(h.launched);
+          expect(yield* Ref.get(h.watched)).toEqual([h.folder]);
+
+          yield* Effect.scoped(h.supervisor.setEnabled({ name: "bach", enabled: false }));
+          yield* h.fs.writeFileString(h.path.join(h.folder, "dist/server.js"), "// build 2");
+          yield* h.tickFolder;
+          yield* TestClock.adjust(Duration.seconds(1));
+
+          // The watcher died with the process scope, so the tick reaches nobody.
+          expect((yield* h.registry.get("bach")).state).toBe("disabled");
+        }),
+      ),
+    ),
+  );
+
+  it.effect("refreshFolderHashes catches a change the watcher missed", () =>
+    run(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const never = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+          const h = yield* harness({
+            spawn: () => Effect.succeed(handle({ exit: Deferred.await(never) })),
+          });
+          yield* h.supervisor.startAll(source(h.folder));
+          yield* Queue.take(h.launched);
+
+          // A build lands and no event arrives — a dropped inotify event, a
+          // filesystem with no recursive watch. Settings must still be right.
+          yield* h.fs.writeFileString(h.path.join(h.folder, "dist/server.js"), "// build 2");
+          expect((yield* h.registry.get("bach")).changed).toBe(false);
+
+          yield* h.supervisor.refreshFolderHashes;
+          expect((yield* h.registry.get("bach")).changed).toBe(true);
         }),
       ),
     ),

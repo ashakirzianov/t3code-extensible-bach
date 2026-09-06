@@ -2758,14 +2758,26 @@ const makeWsRpcLayer = (
           observeRpcEffect(EXTENSION_WS_METHODS.respondHttp, extensions.respondHttp(input), {
             "rpc.aggregate": "extensions",
           }),
+        // Re-read the folders before answering. The watcher normally has the
+        // hashes current already, but an event can be dropped — a filesystem
+        // with no recursive watch, an inotify overflow — and Settings asking
+        // is exactly the moment the answer has to be right.
         [EXTENSION_ADMIN_WS_METHODS.list]: (_input) =>
-          observeRpcEffect(EXTENSION_ADMIN_WS_METHODS.list, extensions.list, {
-            "rpc.aggregate": "extensions",
-          }),
+          observeRpcEffect(
+            EXTENSION_ADMIN_WS_METHODS.list,
+            extensionSupervisor.refreshFolderHashes.pipe(Effect.andThen(extensions.list)),
+            { "rpc.aggregate": "extensions" },
+          ),
         [EXTENSION_ADMIN_WS_METHODS.subscribe]: (_input) =>
-          observeRpcStream(EXTENSION_ADMIN_WS_METHODS.subscribe, extensions.changes, {
-            "rpc.aggregate": "extensions",
-          }),
+          observeRpcStream(
+            EXTENSION_ADMIN_WS_METHODS.subscribe,
+            // Same refresh, once, before the first frame: the stream then
+            // carries whatever the watcher reports from there on.
+            Stream.unwrap(
+              extensionSupervisor.refreshFolderHashes.pipe(Effect.as(extensions.changes)),
+            ),
+            { "rpc.aggregate": "extensions" },
+          ),
         [EXTENSION_ADMIN_WS_METHODS.logs]: (input) =>
           observeRpcEffect(EXTENSION_ADMIN_WS_METHODS.logs, extensions.logs(input), {
             "rpc.aggregate": "extensions",

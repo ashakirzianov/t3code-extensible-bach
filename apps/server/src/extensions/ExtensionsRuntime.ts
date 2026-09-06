@@ -20,6 +20,7 @@ import { PreviewToolkit } from "../mcp/toolkits/preview/tools.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import type { ServerSettings } from "@t3tools/contracts";
 import { EXTENSION_SUBJECT_PREFIX, EXTENSION_TOKEN_SCOPES } from "./ExtensionIdentity.ts";
+import * as ExtensionFolderWatcher from "./ExtensionFolderWatcher.ts";
 import * as ExtensionRegistry from "./ExtensionRegistry.ts";
 import { resolveExtensionSources } from "./ExtensionSources.ts";
 import * as ExtensionSupervisor from "./ExtensionSupervisor.ts";
@@ -75,6 +76,9 @@ export const layer = Layer.unwrap(
       runAsNode: process.versions.electron !== undefined,
       cwd: config.cwd,
     }).pipe(
+      // The real `fs.watch`-backed watcher: this is what makes a finished
+      // build light up Deploy without anyone opening Settings.
+      Layer.provide(ExtensionFolderWatcher.layer),
       Layer.provideMerge(
         ExtensionRegistry.layer({
           environmentId,
