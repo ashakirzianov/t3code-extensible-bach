@@ -236,28 +236,6 @@ No home lock exists anywhere — upstream has none, and the fork is not adding o
 guidance for anyone switching is standing rather than interim: **uninstall upstream after
 moving over.** That removes both the scheme race and the two-servers-one-home hazard.
 
-### Bundling an extension in the desktop build
-
-The desktop ships extensions as ordinary launch flags, not as a concept the server knows
-about. Set `T3CODE_BUNDLED_EXTENSIONS` when building the desktop artifact, naming one or more
-**built** folders as `name=path` (comma or whitespace separated; paths relative to the
-repository root or absolute):
-
-```bash
-T3CODE_BUNDLED_EXTENSIONS=bach=../bach/dist node scripts/build-desktop-artifact.ts --platform mac
-```
-
-Each folder is copied to `Contents/Resources/extensions/<name>/`, and at launch the desktop
-passes `--extension <name>=<that path>` for every subfolder there that has an
-`extension.json`. The default is none, so an ordinary build ships nothing.
-
-The build fails if a named folder is missing or has no manifest — a build that silently
-shipped nothing would be discovered by a user, not by CI. The folder is deliberately **not**
-inside `app.asar`: the server spawns each extension with its folder as the working directory,
-and a path inside an asar cannot be a `cwd`
-([spike](extensions/spikes/electron-runtime.md) §3). It also means a bundled extension can
-only be replaced by an app update — which is exactly what the settings-entry override is for.
-
 ## Fork identity — as built
 
 All values live in `packages/shared/src/forkIdentity.ts`; nothing else hardcodes them.
