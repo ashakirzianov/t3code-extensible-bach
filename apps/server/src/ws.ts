@@ -2693,6 +2693,10 @@ const makeWsRpcLayer = (
           observeRpcEffect(EXTENSION_ADMIN_WS_METHODS.list, extensions.list, {
             "rpc.aggregate": "extensions",
           }),
+        [EXTENSION_ADMIN_WS_METHODS.subscribe]: (_input) =>
+          observeRpcStream(EXTENSION_ADMIN_WS_METHODS.subscribe, extensions.changes, {
+            "rpc.aggregate": "extensions",
+          }),
         [EXTENSION_ADMIN_WS_METHODS.logs]: (input) =>
           observeRpcEffect(EXTENSION_ADMIN_WS_METHODS.logs, extensions.logs(input), {
             "rpc.aggregate": "extensions",

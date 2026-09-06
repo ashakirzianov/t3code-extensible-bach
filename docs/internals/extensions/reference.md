@@ -227,6 +227,43 @@ bundle belonging to a remote environment therefore has to be proxied through the
 backend before it can be mounted. That proxying is a follow-up; today these routes
 serve the environment the server itself is.
 
+## Web host
+
+The client draws one nav entry per **(environment, extension with a web entry)**: an
+extension runs one process per environment, and the two instances are different things to
+look at. The host draws the entry itself from the label, icon and badge the extension
+registered — an extension contributes text, never markup — and adds the environment's name
+to the label only when more than one environment is connected. An entry whose folder has
+moved under a running process also carries a Deploy affordance, which opens the host's own
+confirmation; Deploy is a human click in host UI and there is nothing an extension or an
+agent can call to reach it.
+
+Clicking an entry routes to `/ext/<environmentId>/<name>/…`. Everything below that is the
+extension's own routing space: the host passes it down as a sub-path and never interprets
+it, so an extension can have as many screens as it likes without the host knowing any of
+them. Navigating between them re-runs `mount` with the new sub-path rather than tearing the
+tree down and rebuilding it.
+
+Mounting is `extensions.admin.assetUrls` followed by a same-origin dynamic `import()` of
+what it minted — the only strategy that executes under the desktop CSP, as the section
+above explains. The client links the stylesheet first so the extension's first frame is
+already styled, imports the module, and calls `mount` with a container it owns; on the way
+out it calls `unmount` and removes the link. An extension on a remote environment cannot be
+mounted for the same reason its bundle cannot be served from here yet, so the route says so
+instead of failing quietly.
+
+The host API a mounted bundle is handed is five things and no more: `mount`, `unmount`, the
+list of connected environments, an authenticated `fetch` scoped to one of them, and
+navigation into a thread. Everything else an extension needs, it already has as an ordinary
+client on its own socket, from its own process — so nothing else belongs here. Theme is
+deliberately absent: the container sits inside the host's document, so the app's CSS custom
+properties are already in scope, and an extension styled with them follows a theme change
+while it is mounted.
+
+Mobile is a non-goal for v1. The nav entry and the route are web-only, and the mobile app
+neither lists extensions nor mounts them; the derivation from the list to the nav rows lives
+in `client-runtime` so that stays a decision rather than a rewrite.
+
 ## The reference
 
 Field-by-field definitions are generated, not written:

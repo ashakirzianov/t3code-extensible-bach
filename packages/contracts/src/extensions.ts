@@ -147,6 +147,22 @@ export const ExtensionHttpPrefix = BoundedString(64)
   .annotate({ identifier: "ExtensionHttpPrefix" });
 export type ExtensionHttpPrefix = typeof ExtensionHttpPrefix.Type;
 
+/**
+ * Where the host serves one extension's proxied HTTP routes, relative to the
+ * environment's own origin. The environment id is in the path so a URL minted
+ * for one environment cannot silently resolve against another — the server
+ * compares it rather than trusting it (`ExtensionHttpRoutes.ts`).
+ *
+ * One definition, so the route that answers, the `basePath` the extension is
+ * told, and the URLs `hostApi.fetch` builds cannot drift apart.
+ */
+export const EXTENSION_HTTP_ROUTE_PREFIX = "/ext-api";
+
+export const extensionHttpBasePath = (
+  environmentId: EnvironmentId,
+  prefix: ExtensionHttpPrefix,
+): string => `${EXTENSION_HTTP_ROUTE_PREFIX}/${environmentId}/${prefix}`;
+
 export const ExtensionConnectionId = BoundedString(64).annotate({
   identifier: "ExtensionConnectionId",
 });
@@ -758,6 +774,7 @@ export type ExtensionLogsResult = typeof ExtensionLogsResult.Type;
  */
 export const EXTENSION_ADMIN_WS_METHODS = {
   list: "extensions.admin.list",
+  subscribe: "extensions.admin.subscribe",
   deploy: "extensions.admin.deploy",
   setEnabled: "extensions.admin.setEnabled",
   logs: "extensions.admin.logs",
@@ -812,3 +829,87 @@ export const ExtensionAdminError = Schema.Union([
   ExtensionFolderError,
 ]).annotate({ identifier: "ExtensionAdminError" });
 export type ExtensionAdminError = typeof ExtensionAdminError.Type;
+
+// ---------------------------------------------------------------------------
+// The web host API
+// ---------------------------------------------------------------------------
+
+/**
+ * The contract between the host's web client and an extension's web bundle.
+ *
+ * It is deliberately five things and no more: a `mount`, an `unmount`, and the
+ * three capabilities a mounted extension cannot get for itself — the list of
+ * connected environments, an authenticated `fetch` scoped to one of them, and
+ * navigation back into a thread. Everything else an extension needs it already
+ * has as an ordinary client on its own WebSocket, from its own process.
+ *
+ * These are plain TypeScript rather than schemas because they never cross a
+ * wire: the bundle runs in the host's page and is handed these objects
+ * directly. An extension vendors the shapes (see
+ * `extensions/reference/src/web/hostApi.ts`) rather than importing them, so the
+ * bundle carries no workspace link — which makes this file the contract the two
+ * sides are checked against by hand, not by the compiler.
+ *
+ * Theme is not part of the API. The container the host hands over sits inside
+ * the host's document, so the app's CSS custom properties are already in scope
+ * and an extension that styles itself with them follows the host's theme for
+ * free — including a theme change while it is mounted.
+ */
+export interface ExtensionHostEnvironment {
+  readonly environmentId: EnvironmentId;
+  /** The name the host shows for this environment, already disambiguated. */
+  readonly label: string;
+  /** True for the environment this mount belongs to. */
+  readonly current: boolean;
+}
+
+export interface ExtensionHostApi {
+  /** The environment this mount belongs to; the usual argument to `fetch`. */
+  readonly environmentId: EnvironmentId;
+  /**
+   * Every environment the client is connected to right now. An extension runs
+   * one process per environment, so reaching a sibling instance means naming
+   * its environment here and calling `fetch` against it.
+   */
+  readonly environments: ReadonlyArray<ExtensionHostEnvironment>;
+  /**
+   * Authenticated request to this extension's own HTTP prefix on one
+   * environment. `path` is below the prefix and leading-slashed; the host
+   * supplies the origin, the base path, and the credential the client is
+   * already using for that environment.
+   */
+  readonly fetch: (
+    environmentId: EnvironmentId,
+    path: string,
+    init?: RequestInit,
+  ) => Promise<Response>;
+  /** Opens a thread in the host's chat view, leaving the extension's route. */
+  readonly navigateToThread: (threadId: ThreadId, environmentId?: EnvironmentId) => void;
+}
+
+/**
+ * The container the host hands over, typed structurally rather than as `Element`
+ * because this file is also compiled by the server, whose build has no DOM
+ * library. An extension writes `Element` on its own side and it fits.
+ */
+export interface ExtensionMountContainer {
+  readonly tagName: string;
+}
+
+/**
+ * What the host expects to find on the module it `import()`s.
+ *
+ * `mount` and `unmount` both take the container because the same extension can
+ * be mounted twice in one page under two environments, so neither side may key
+ * anything by extension name alone. `subPath` is the part of the URL below the
+ * extension's route, always leading-slashed; the host calls `mount` again with
+ * a new one rather than remounting when navigation stays inside the extension.
+ */
+export interface ExtensionWebModule {
+  readonly mount: (
+    container: ExtensionMountContainer,
+    hostApi: ExtensionHostApi,
+    subPath: string,
+  ) => void | Promise<void>;
+  readonly unmount: (container: ExtensionMountContainer) => void | Promise<void>;
+}

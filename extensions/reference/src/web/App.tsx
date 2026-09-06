@@ -23,7 +23,7 @@ export function App({ hostApi, subPath }: AppProps) {
     try {
       // Relative to the prefix the host mounted for us; the host's authenticated
       // fetch supplies origin and credentials.
-      const response = await hostApi.fetch("/status");
+      const response = await hostApi.fetch(hostApi.environmentId, "/status");
       if (!response.ok) throw new Error(`Host returned ${String(response.status)}`);
       setStatus((await response.json()) as StatusPayload);
       setError(null);
@@ -68,14 +68,12 @@ export function App({ hostApi, subPath }: AppProps) {
             ) : (
               <>
                 <span className="t3ref-echo">{status.lastEcho.message}</span>{" "}
-                {hostApi.navigateToThread !== undefined && (
-                  <button
-                    className="t3ref-link"
-                    onClick={() => hostApi.navigateToThread?.(status.lastEcho!.threadId)}
-                  >
-                    open thread
-                  </button>
-                )}
+                <button
+                  className="t3ref-link"
+                  onClick={() => hostApi.navigateToThread(status.lastEcho!.threadId)}
+                >
+                  open thread
+                </button>
               </>
             )}
           </dd>

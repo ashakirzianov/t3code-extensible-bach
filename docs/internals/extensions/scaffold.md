@@ -1012,7 +1012,7 @@ export function App({ hostApi, subPath }: AppProps) {
     try {
       // Relative to the prefix the host mounted for us; the host's authenticated
       // fetch supplies origin and credentials.
-      const response = await hostApi.fetch("/status");
+      const response = await hostApi.fetch(hostApi.environmentId, "/status");
       if (!response.ok) throw new Error(`Host returned ${String(response.status)}`);
       setStatus((await response.json()) as StatusPayload);
       setError(null);
@@ -1057,14 +1057,12 @@ export function App({ hostApi, subPath }: AppProps) {
             ) : (
               <>
                 <span className="t3ref-echo">{status.lastEcho.message}</span>{" "}
-                {hostApi.navigateToThread !== undefined && (
-                  <button
-                    className="t3ref-link"
-                    onClick={() => hostApi.navigateToThread?.(status.lastEcho!.threadId)}
-                  >
-                    open thread
-                  </button>
-                )}
+                <button
+                  className="t3ref-link"
+                  onClick={() => hostApi.navigateToThread(status.lastEcho!.threadId)}
+                >
+                  open thread
+                </button>
               </>
             )}
           </dd>
@@ -1157,11 +1155,23 @@ export function unmount(container: Element): void {
  * Typed here rather than imported: the web bundle is standalone too, and
  * importing host types would be a workspace link through the back door.
  */
+export interface HostEnvironment {
+  readonly environmentId: string;
+  readonly label: string;
+  readonly current: boolean;
+}
+
 export interface HostApi {
-  /** Authenticated fetch scoped to the environment this mount belongs to. */
-  readonly fetch: (path: string, init?: RequestInit) => Promise<Response>;
-  readonly navigateToThread?: (threadId: string) => void;
-  readonly environmentId?: string;
+  /** The environment this mount belongs to; the usual argument to `fetch`. */
+  readonly environmentId: string;
+  /**
+   * Authenticated request to this extension's own HTTP prefix on one
+   * environment. Naming the environment is what lets a mount reach the sibling
+   * instance running on another one; for its own, pass `hostApi.environmentId`.
+   */
+  readonly fetch: (environmentId: string, path: string, init?: RequestInit) => Promise<Response>;
+  readonly environments: ReadonlyArray<HostEnvironment>;
+  readonly navigateToThread: (threadId: string, environmentId?: string) => void;
 }
 
 export interface StatusPayload {

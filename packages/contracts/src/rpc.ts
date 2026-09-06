@@ -1264,6 +1264,19 @@ export const WsExtensionsAdminListRpc = Rpc.make(EXTENSION_ADMIN_WS_METHODS.list
   error: EnvironmentAuthorizationError,
 });
 
+/**
+ * The live view Settings and the sidebar render from: the whole list, re-sent
+ * whenever any part of it moves (state, badge, `changed`, web entry). Whole
+ * snapshots rather than deltas because the list is small and bounded, and a
+ * client that reconnects mid-change would otherwise have to reconcile.
+ */
+export const WsExtensionsAdminSubscribeRpc = Rpc.make(EXTENSION_ADMIN_WS_METHODS.subscribe, {
+  payload: Schema.Struct({}),
+  success: ExtensionListResult,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
 export const WsExtensionsAdminDeployRpc = Rpc.make(EXTENSION_ADMIN_WS_METHODS.deploy, {
   payload: ExtensionDeployInput,
   error: Schema.Union([ExtensionAdminError, EnvironmentAuthorizationError]),
@@ -1414,6 +1427,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsExtensionsRespondToolRpc,
   WsExtensionsRespondHttpRpc,
   WsExtensionsAdminListRpc,
+  WsExtensionsAdminSubscribeRpc,
   WsExtensionsAdminDeployRpc,
   WsExtensionsAdminSetEnabledRpc,
   WsExtensionsAdminLogsRpc,

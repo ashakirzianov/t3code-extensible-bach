@@ -24,6 +24,7 @@ import {
   ExtensionToolNameCollisionError,
   EXTENSION_SUPPORTED_PROTOCOL_VERSIONS,
   EXTENSION_WS_METHODS,
+  extensionHttpBasePath,
   ExtensionHandshakeRequiredError,
   ExtensionHttpPrefixCollisionError,
   ExtensionNotFoundError,
@@ -71,6 +72,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import { EXTENSION_SUBJECT_PREFIX } from "./ExtensionIdentity.ts";
@@ -240,6 +242,12 @@ export interface ExtensionRegistryShape {
 
   // --- admin ----------------------------------------------------------------
   readonly list: Effect.Effect<ExtensionListResult>;
+  /**
+   * The same list, re-emitted whenever it moves. Starts with the current value,
+   * so a subscriber never has to `list` first, and repeats are dropped, so a
+   * write that leaves the list identical costs a subscriber nothing.
+   */
+  readonly changes: Stream.Stream<ExtensionListResult>;
   readonly logs: (input: ExtensionLogsInput) => Effect.Effect<ExtensionLogsResult>;
   readonly get: (name: ExtensionName) => Effect.Effect<ExtensionStatus, ExtensionNotFoundError>;
 }
@@ -348,6 +356,20 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
     const current = yield* SynchronizedRef.get(state);
     if (isReady(current)) yield* Deferred.succeed(ready, undefined);
   });
+  /**
+   * Bumped by every write to `state`, which is the whole change signal: the
+   * derived list is rebuilt from the ref when a subscriber is woken, so this
+   * only has to say "something moved". `changes` drops the writes that left the
+   * list identical (a pending call taken, a log line appended), so publishing
+   * on every write rather than only the interesting ones costs nothing.
+   */
+  const revision = yield* SubscriptionRef.make(0);
+  const bumpRevision = SubscriptionRef.update(revision, (value) => value + 1);
+  const updateState = (update: (current: RegistryState) => RegistryState): Effect.Effect<void> =>
+    SynchronizedRef.update(state, update).pipe(Effect.andThen(bumpRevision));
+  const modifyState = <A>(
+    update: (current: RegistryState) => readonly [A, RegistryState],
+  ): Effect.Effect<A> => SynchronizedRef.modify(state, update).pipe(Effect.tap(() => bumpRevision));
 
   const readRecord = (name: ExtensionName) =>
     SynchronizedRef.get(state).pipe(Effect.map((current) => current.records.get(name)));
@@ -389,7 +411,7 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
     connection: ExtensionConnection,
     reason: ExtensionUnavailableError["reason"],
   ) {
-    const abandoned = yield* SynchronizedRef.modify(state, (current) => {
+    const abandoned = yield* modifyState((current) => {
       const record = current.records.get(name);
       const pending = new Map(current.pending);
       const failed: Array<PendingCall> = [];
@@ -424,7 +446,7 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
         extensionName: input.manifest.name,
       });
       if (negotiated._tag === "Failure") return yield* negotiated.failure;
-      yield* SynchronizedRef.update(state, (current) =>
+      yield* updateState((current) =>
         withRecord(current, record.name, (existing) => ({
           ...existing,
           manifest: input.manifest,
@@ -446,7 +468,7 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
     "ExtensionRegistry.registerTools",
   )(function* (input) {
     yield* requireHandshake(EXTENSION_WS_METHODS.registerTools, input);
-    const result = yield* SynchronizedRef.modify(state, (current) => {
+    const result = yield* modifyState((current) => {
       const accepted: ExtensionToolDefinition[] = [];
       const results: ExtensionToolRegistration[] = [];
       for (const tool of input.tools) {
@@ -496,12 +518,12 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
         });
       }
     }
-    yield* SynchronizedRef.update(state, (next) =>
+    yield* updateState((next) =>
       withRecord(next, input.name, (record) => ({ ...record, httpPrefix: input.prefix })),
     );
     return {
       prefix: input.prefix,
-      basePath: `/ext-api/${options.environmentId}/${input.prefix}`,
+      basePath: extensionHttpBasePath(options.environmentId, input.prefix),
     } satisfies ExtensionRegisterHttpPrefixResult;
   });
 
@@ -509,7 +531,7 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
     "ExtensionRegistry.registerWebEntry",
   )(function* (input) {
     yield* requireHandshake(EXTENSION_WS_METHODS.registerWebEntry, input);
-    yield* SynchronizedRef.update(state, (current) =>
+    yield* updateState((current) =>
       withRecord(current, input.name, (record) => ({ ...record, web: input.web })),
     );
   });
@@ -517,7 +539,7 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
   const setBadge: ExtensionRegistryShape["setBadge"] = Effect.fn("ExtensionRegistry.setBadge")(
     function* (input) {
       yield* requireHandshake(EXTENSION_WS_METHODS.setBadge, input);
-      yield* SynchronizedRef.update(state, (current) =>
+      yield* updateState((current) =>
         withRecord(current, input.name, (record) =>
           input.badge.kind === "none"
             ? (({ badge: _badge, ...rest }) => rest)(record)
@@ -535,7 +557,7 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
         const connectionId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
         const connection: ExtensionConnection = { connectionId, queue };
         yield* Queue.offer(queue, { type: "attached", connectionId });
-        const previous = yield* SynchronizedRef.modify(state, (current) => {
+        const previous = yield* modifyState((current) => {
           const record = current.records.get(input.name);
           if (!record) return [undefined, current] as const;
           const records = new Map(current.records);
@@ -556,7 +578,7 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
 
   /** Take one pending call, but only if the response names its kind and connection. */
   const takePending = (callId: string, connectionId: string, kind: PendingCall["kind"]) =>
-    SynchronizedRef.modify(state, (current) => {
+    modifyState((current) => {
       const found = current.pending.get(callId);
       if (!found || found.kind !== kind || found.connectionId !== connectionId) {
         return [undefined, current] as const;
@@ -598,12 +620,12 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
   }): Effect.Effect<A, ExtensionUnavailableError> =>
     Effect.gen(function* () {
       const deferred = yield* Deferred.make<A, ExtensionUnavailableError>();
-      yield* SynchronizedRef.update(state, (current) => {
+      yield* updateState((current) => {
         const pending = new Map(current.pending);
         pending.set(input.callId, input.toPending(deferred));
         return { ...current, pending };
       });
-      const removePending = SynchronizedRef.update(state, (current) => {
+      const removePending = updateState((current) => {
         if (!current.pending.has(input.callId)) return current;
         const pending = new Map(current.pending);
         pending.delete(input.callId);
@@ -622,7 +644,7 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
     });
 
   const nextCallId = (prefix: string) =>
-    SynchronizedRef.modify(state, (current) => [
+    modifyState((current) => [
       `${prefix}-${current.callSequence}`,
       { ...current, callSequence: current.callSequence + 1 },
     ]);
@@ -722,7 +744,7 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
   const upsertSource: ExtensionRegistryShape["upsertSource"] = Effect.fn(
     "ExtensionRegistry.upsertSource",
   )(function* (source) {
-    yield* SynchronizedRef.update(state, (current) => {
+    yield* updateState((current) => {
       const records = new Map(current.records);
       const existing = records.get(source.name);
       const base = existing ?? emptyRecord(source);
@@ -743,7 +765,7 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
 
   const setState: ExtensionRegistryShape["setState"] = Effect.fn("ExtensionRegistry.setState")(
     function* (input) {
-      yield* SynchronizedRef.update(state, (current) =>
+      yield* updateState((current) =>
         withRecord(current, input.name, (record) => {
           // A stopped or crashed extension keeps its tools but loses its badge:
           // the nav entry must not keep claiming unread work nothing is
@@ -768,7 +790,7 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
   const setFolderHash: ExtensionRegistryShape["setFolderHash"] = Effect.fn(
     "ExtensionRegistry.setFolderHash",
   )(function* (input) {
-    yield* SynchronizedRef.update(state, (current) =>
+    yield* updateState((current) =>
       withRecord(current, input.name, (record) => ({
         ...record,
         folderHash: input.folderHash,
@@ -780,7 +802,7 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
   const appendLog: ExtensionRegistryShape["appendLog"] = Effect.fn("ExtensionRegistry.appendLog")(
     function* (input) {
       const at = yield* Clock.currentTimeMillis;
-      yield* SynchronizedRef.update(state, (current) =>
+      yield* updateState((current) =>
         withRecord(current, input.name, (record) => {
           const entry: ExtensionLogEntry = {
             at,
@@ -805,7 +827,7 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
   )(function* (input) {
     const record = yield* readRecord(input.name);
     if (!record) return yield* new ExtensionNotFoundError({ extensionName: input.name });
-    yield* SynchronizedRef.update(state, (current) =>
+    yield* updateState((current) =>
       withRecord(current, input.name, (existing) => ({
         ...existing,
         enabled: input.enabled,
@@ -820,7 +842,7 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
 
   const markSourcesResolved: ExtensionRegistryShape["markSourcesResolved"] = Effect.gen(
     function* () {
-      yield* SynchronizedRef.update(state, (current) => ({ ...current, sourcesResolved: true }));
+      yield* updateState((current) => ({ ...current, sourcesResolved: true }));
       yield* checkReady;
     },
   );
@@ -829,6 +851,18 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
     Effect.map((current) => ({
       extensions: [...current.records.values()].map(toStatus),
     })),
+  );
+
+  /**
+   * Compared by encoded value rather than by reference: every emission rebuilds
+   * the statuses from the ref, so nothing structural survives to be `Equal`.
+   */
+  const sameList = (left: ExtensionListResult, right: ExtensionListResult) =>
+    JSON.stringify(left) === JSON.stringify(right);
+
+  const changes: ExtensionRegistryShape["changes"] = SubscriptionRef.changes(revision).pipe(
+    Stream.mapEffect(() => list),
+    Stream.changesWith(sameList),
   );
 
   const logs: ExtensionRegistryShape["logs"] = Effect.fn("ExtensionRegistry.logs")(
@@ -869,6 +903,7 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
     appendLog,
     setEnabled,
     list,
+    changes,
     logs,
     get,
   });

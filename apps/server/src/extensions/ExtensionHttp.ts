@@ -16,6 +16,7 @@
  */
 import {
   EXTENSION_ASSET_TOKEN_TTL_MS,
+  EXTENSION_HTTP_ROUTE_PREFIX,
   EXTENSION_HTTP_BODY_MAX_CHARS,
   type ExtensionHttpBody,
   type ExtensionHttpHeaders,
@@ -24,7 +25,8 @@ import {
   type ExtensionWebEntry,
 } from "@t3tools/contracts";
 
-export const EXT_API_ROUTE_PREFIX = "/ext-api";
+// The string lives in contracts, where the client builds the same paths from it.
+export const EXT_API_ROUTE_PREFIX = EXTENSION_HTTP_ROUTE_PREFIX;
 export const EXT_ASSETS_ROUTE_PREFIX = "/ext-assets";
 
 /**

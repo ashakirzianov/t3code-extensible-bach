@@ -12,6 +12,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Queue from "effect/Queue";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 
@@ -439,5 +440,56 @@ describe("status and logs", () => {
       expect(extensions).toHaveLength(1);
       expect(extensions[0]).toMatchObject({ name: "bach", enabled: false, state: "disabled" });
     }),
+  );
+});
+
+describe("ExtensionRegistry.changes", () => {
+  it.effect("opens with the current list and re-emits only when the list moves", () =>
+    Effect.gen(function* () {
+      const registry = yield* makeRegistry();
+      yield* registry.upsertSource({
+        name: "bach",
+        path: "/opt/bach",
+        enabled: true,
+        source: "settings",
+      });
+
+      // Subscribing before any write, and taking one emission per write, is what
+      // makes this deterministic: a suppressed emission is visible as the next
+      // take returning the *following* change rather than a repeat.
+      const queue = yield* Stream.toQueue(registry.changes, { capacity: "unbounded" });
+      const opening = yield* Queue.take(queue);
+      // The stream opens with the list as it already was, so a subscriber never
+      // has to `list` before subscribing.
+      expect(opening.extensions[0]?.state).toBe("stopped");
+      expect(opening.extensions[0]?.version).toBeUndefined();
+
+      yield* registry.hello({
+        protocolVersion: EXTENSION_PROTOCOL_VERSION,
+        manifest,
+        name: "bach",
+        subject: `${EXTENSION_SUBJECT_PREFIX}bach`,
+      });
+      expect((yield* Queue.take(queue)).extensions[0]?.version).toBe("1.0.0");
+
+      yield* registry.setBadge({
+        badge: { kind: "count", count: 2 },
+        name: "bach",
+        subject: `${EXTENSION_SUBJECT_PREFIX}bach`,
+      });
+      expect((yield* Queue.take(queue)).extensions[0]?.badge).toEqual({ kind: "count", count: 2 });
+
+      // Re-sending the same badge is a write that leaves the list identical.
+      // Registration is idempotent by design, so this happens on every
+      // reconnect and must not wake every connected client.
+      yield* registry.setBadge({
+        badge: { kind: "count", count: 2 },
+        name: "bach",
+        subject: `${EXTENSION_SUBJECT_PREFIX}bach`,
+      });
+      yield* registry.setState({ name: "bach", state: "running" });
+      const next = yield* Queue.take(queue);
+      expect(next.extensions[0]?.state).toBe("running");
+    }).pipe(Effect.scoped),
   );
 });

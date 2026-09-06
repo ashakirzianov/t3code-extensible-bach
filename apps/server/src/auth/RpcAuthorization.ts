@@ -149,6 +149,7 @@ export const RPC_REQUIRED_SCOPES = {
   [EXTENSION_WS_METHODS.respondHttp]: AuthExtensionScope,
   // Management is Settings talking, so it takes the ordinary client scopes.
   [EXTENSION_ADMIN_WS_METHODS.list]: AuthOrchestrationReadScope,
+  [EXTENSION_ADMIN_WS_METHODS.subscribe]: AuthOrchestrationReadScope,
   [EXTENSION_ADMIN_WS_METHODS.logs]: AuthOrchestrationReadScope,
   // Minting an asset URL is reading: it hands out a short-lived, signed path to
   // files the extension already declared, and changes nothing.
