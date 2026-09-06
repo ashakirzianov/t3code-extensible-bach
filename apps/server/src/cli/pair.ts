@@ -551,7 +551,9 @@ export const pairCommand = Command.make("pair", {
             `  ${EXTENSION_ENV.url}=${origin.toString()} \\`,
             `  ${EXTENSION_ENV.protocol}=${EXTENSION_PROTOCOL_VERSION} \\`,
             `  ${EXTENSION_ENV.dataDir}=<a directory your extension may write to> \\`,
-            "  node dist/server.js",
+            // The manifest names the entry; guessing a filename here sends
+            // anyone who copies this block to a file that does not exist.
+            `  node <the "server.entry" path from your extension.json>`,
             "",
             "The host must already know this extension by name, from a settings entry",
             "or an --extension launch flag, or its hello will be refused.",

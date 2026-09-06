@@ -444,7 +444,10 @@ async function main(): Promise<void> {
     });
     console.log(
       `[reference] connected to host ${ack.hostVersion} (protocol v${String(ack.protocolVersion)}), ` +
-        `environment ${ack.environmentId}, data at ${ack.dataDirectory}`,
+        // The directory this process actually writes to, which is the one the
+        // host passed at spawn. In dev mode the operator chooses it, so it can
+        // differ from the canonical path the host reports in the ack.
+        `environment ${ack.environmentId}, data at ${env.dataDirectory}`,
     );
 
     // 2. Declarative registrations. Each is answered; a rejection is not fatal.

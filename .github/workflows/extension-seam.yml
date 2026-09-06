@@ -75,12 +75,18 @@ jobs:
         working-directory: extensions/reference
         run: pnpm test
 
-      # PLACEHOLDER — end-to-end smoke (design §7). Enable once the extension
-      # lifecycle lands host-side: start a dev server against a scratch home,
-      # register the built reference extension, and assert it handshakes,
-      # registers its tool, and answers an invocation. Until the host can spawn
-      # an extension there is nothing to start, so this stays commented out
-      # rather than silently passing.
+      # End-to-end smoke (design §7): start a real server against a scratch
+      # home with the built extension registered through the `--extension`
+      # launch flag, then assert the handshake completed, the registry reports
+      # the tool, prefix and web entry, and the extension's HTTP prefix answers
+      # under the host's auth while rejecting an unauthenticated caller.
       #
-      # - name: Smoke start the reference extension
-      #   run: node scripts/extension-smoke.ts --home-dir "$RUNNER_TEMP/.t3"
+      # The rest of the end-to-end run — a real thread calling the tool,
+      # deploy, the MCP resources — needs a provider credential, so it stays a
+      # manual exercise; see
+      # docs/internals/extensions/spikes/e2e-server-2026-09-06.md.
+      #
+      # Depends on the build produced by the reference extension's own test
+      # step above, which runs `pnpm build` before its checks.
+      - name: Smoke start the reference extension
+        run: node scripts/extension-smoke.ts --home-dir "$RUNNER_TEMP/.t3-smoke"

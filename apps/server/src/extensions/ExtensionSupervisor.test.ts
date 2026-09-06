@@ -317,6 +317,37 @@ describe("deploy and enablement", () => {
     ),
   );
 
+  // Regression: `deploy` is reached from an RPC handler wrapped in its own
+  // `Effect.scoped`, which closes as soon as the call returns. Forking the new
+  // supervisor fiber into *that* scope interrupted it immediately, leaving the
+  // extension stopped and its hash never re-read. The test above could not see
+  // it because it shares one scope for the supervisor and the deploy.
+  it.effect("deploy survives the caller's scope closing, as it does over RPC", () =>
+    run(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const never = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+          const h = yield* harness({
+            spawn: () => Effect.succeed(handle({ exit: Deferred.await(never) })),
+          });
+          yield* h.supervisor.startAll(source(h.folder));
+          yield* Queue.take(h.launched);
+          const before = yield* h.registry.get("bach");
+
+          yield* h.fs.writeFileString(h.path.join(h.folder, "dist/server.js"), "// build 2");
+          // The shape ws.ts uses: a scope that ends with the request.
+          yield* Effect.scoped(h.supervisor.deploy("bach"));
+          yield* Queue.take(h.launched);
+
+          const after = yield* h.registry.get("bach");
+          expect(after.state).toBe("running");
+          expect(after.runningHash).not.toBe(before.runningHash);
+          expect((yield* Ref.get(h.spawns)).length).toBe(2);
+        }),
+      ),
+    ),
+  );
+
   it.effect("deploying a disabled extension refreshes its hash without starting it", () =>
     run(
       Effect.scoped(

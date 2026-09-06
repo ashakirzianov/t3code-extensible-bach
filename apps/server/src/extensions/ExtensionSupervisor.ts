@@ -104,6 +104,10 @@ const lines = (stream: Stream.Stream<Uint8Array, PlatformError.PlatformError>) =
   );
 
 export const make = Effect.fnUntraced(function* (options: ExtensionSupervisorOptions) {
+  // The scope this layer is built in, which lives as long as the server. Every
+  // supervisor fiber is forked into it rather than into whatever scope happened
+  // to call `start` — see the note in `start`.
+  const supervisorScope = yield* Effect.scope;
   const registry = yield* ExtensionRegistry;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fs = yield* FileSystem.FileSystem;
@@ -239,7 +243,12 @@ export const make = Effect.fnUntraced(function* (options: ExtensionSupervisorOpt
     readonly path: string;
   }) {
     yield* stop(source.name);
-    const fiber = yield* Effect.forkScoped(supervise(source.name, source));
+    // Fork into the supervisor's own scope, not the caller's. `deploy` and
+    // `setEnabled` are reached from an RPC handler wrapped in `Effect.scoped`,
+    // so `forkScoped` attached the new fiber to that request's scope and
+    // interrupted it the moment the call returned — which left the extension
+    // stopped and its folder hash never re-read.
+    const fiber = yield* Effect.forkIn(supervise(source.name, source), supervisorScope);
     yield* SynchronizedRef.update(running, (current) => {
       const next = new Map(current);
       next.set(source.name, { fiber });
