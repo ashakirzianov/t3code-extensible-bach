@@ -55,6 +55,7 @@ import * as GitLabCli from "./sourceControl/GitLabCli.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
+import * as ExtensionMcp from "./extensions/ExtensionMcp.ts";
 import * as ExtensionsRuntime from "./extensions/ExtensionsRuntime.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
@@ -547,7 +548,12 @@ export const makeRoutesLayer = Layer.mergeAll(
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,
   ),
-  McpHttpServer.layer.pipe(Layer.provide(McpSessionRegistry.layer)),
+  McpHttpServer.layer.pipe(
+    Layer.provide(McpSessionRegistry.layer),
+    // The gate sits below the MCP transport: the transport's auth middleware
+    // needs the session registry, and the registry waits on the gate.
+    Layer.provide(ExtensionMcp.layer()),
+  ),
   // The registry answers Settings whether or not anything started, so the
   // start pass is a separate layer stacked on top of it.
   ExtensionsRuntime.startLayer,

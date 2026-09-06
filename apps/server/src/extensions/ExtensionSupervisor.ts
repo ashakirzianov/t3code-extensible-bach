@@ -269,8 +269,15 @@ export const make = Effect.fnUntraced(function* (options: ExtensionSupervisorOpt
           });
           continue;
         }
+        // Marked before the fiber is forked, so a later "stopped" always means
+        // the process ran and exited rather than never having begun — which is
+        // what lets readiness treat it as settled.
+        yield* registry.setState({ name: source.name, state: "starting" });
         yield* start({ name: source.name, path: resolved });
       }
+      // Only now is the list final, so readiness can start resolving. Before
+      // this, an empty registry would look like "nothing to wait for".
+      yield* registry.markSourcesResolved;
     },
   );
 

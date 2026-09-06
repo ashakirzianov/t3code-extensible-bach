@@ -4,16 +4,9 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  EXTENSION_GUIDE_DIR,
-  GENERATE_COMMAND,
-  buildExtensionGuideArtifacts,
-} from "./extensionGuide.ts";
+import { GENERATE_COMMAND, buildExtensionGuideArtifacts } from "./extensionGuide.ts";
 
-const guideDir = NodePath.join(
-  NodePath.dirname(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url))),
-  EXTENSION_GUIDE_DIR,
-);
+const repoRoot = NodePath.dirname(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)));
 
 /**
  * The guides are what an agent with no checkout reads, so a protocol change or
@@ -21,9 +14,9 @@ const guideDir = NodePath.join(
  * rather than ship documentation that describes something else.
  */
 describe("generated extension guide", () => {
-  for (const { fileName, contents } of buildExtensionGuideArtifacts()) {
+  for (const { directory, fileName, contents } of buildExtensionGuideArtifacts()) {
     it(`${fileName} matches the committed copy`, () => {
-      const committed = NodeFS.readFileSync(NodePath.join(guideDir, fileName), "utf8");
+      const committed = NodeFS.readFileSync(NodePath.join(repoRoot, directory, fileName), "utf8");
       if (contents !== committed) {
         throw new Error(`${fileName} is stale. Regenerate with \`${GENERATE_COMMAND}\`.`);
       }
@@ -32,7 +25,12 @@ describe("generated extension guide", () => {
   }
 
   it("keeps both guides readable away from the repository", () => {
-    for (const { fileName, contents } of buildExtensionGuideArtifacts()) {
+    // Markdown only: the compiled-in module carries the same prose as string
+    // literals, where a link check would just double-count.
+    const guides = buildExtensionGuideArtifacts().filter(({ fileName }) =>
+      fileName.endsWith(".md"),
+    );
+    for (const { fileName, contents } of guides) {
       // A link with a bare relative target only resolves next to the source
       // file; served on its own it is a dead end.
       const relativeLinks = contents.match(/\]\((?!https?:\/\/|#|\/)[^)]+\)/gu) ?? [];

@@ -6,7 +6,7 @@
  * a token minter. Depending on `HttpServer` is what orders this after the
  * listener exists, the same way `McpSessionRegistry` gets its endpoint.
  */
-import type { ExtensionName } from "@t3tools/contracts";
+import type { ExtensionName, ExtensionToolName } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -16,6 +16,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { PreviewToolkit } from "../mcp/toolkits/preview/tools.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import type { ServerSettings } from "@t3tools/contracts";
 import { EXTENSION_SUBJECT_PREFIX, EXTENSION_TOKEN_SCOPES } from "./ExtensionIdentity.ts";
@@ -57,6 +58,12 @@ export const layer = Layer.unwrap(
           Effect.orDie,
         );
 
+    // Derived from the toolkit rather than listed, so a tool added to the host
+    // becomes reserved without anyone remembering to update a second list.
+    const hostToolNames = Object.values(PreviewToolkit.tools).map(
+      (tool) => tool.name as ExtensionToolName,
+    );
+
     return ExtensionSupervisor.layer({
       dataRoot,
       websocketUrl: websocketUrlFrom(httpServer.address),
@@ -73,6 +80,7 @@ export const layer = Layer.unwrap(
           environmentId,
           hostVersion: packageJson.version,
           dataRoot,
+          reservedToolNames: hostToolNames,
         }),
       ),
     );

@@ -11,3 +11,7 @@ docs/internals/extensions/scaffold.md
 # scripts/vendoredProtocol.test.ts. Formatting one side of a byte comparison
 # breaks it on a change nobody made.
 extensions/reference/protocol/
+
+# Same generator, same byte comparison: prettier rewraps the long string
+# literals and re-quotes them, so the committed copy stops matching.
+apps/server/src/extensions/guideResources.generated.ts

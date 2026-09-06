@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import { HttpServer } from "effect/unstable/http";
 
+import * as ExtensionMcp from "../extensions/ExtensionMcp.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpProviderSession from "./McpProviderSession.ts";
@@ -54,6 +55,13 @@ interface RegistryState {
 export interface McpSessionRegistryOptions {
   readonly livenessWindowMs?: number;
   readonly now?: () => number;
+  /**
+   * Run before a credential is minted. A provider process caches the MCP
+   * catalogue when it connects, so this is the last moment anything can be
+   * added for it — the extension seam uses it to wait for its extensions and
+   * to register their tools.
+   */
+  readonly beforeIssue?: Effect.Effect<void>;
 }
 
 /**
@@ -123,6 +131,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
 
   const issue: McpSessionRegistryShape["issue"] = Effect.fn("McpSessionRegistry.issue")(
     function* (request) {
+      if (options.beforeIssue) yield* options.beforeIssue;
       const issuedAt = yield* currentTimeMillis;
       const providerSessionId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
       const rawToken = yield* crypto.randomBytes(32).pipe(Effect.map(tokenFromBytes), Effect.orDie);
@@ -208,23 +217,29 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
 
 let activeMcpSessionRegistry: McpSessionRegistryShape | undefined;
 
-const make = Effect.acquireRelease(
-  makeWithOptions().pipe(
-    Effect.tap((registry) =>
-      Effect.sync(() => {
-        activeMcpSessionRegistry = registry;
-      }),
+const make = (options: McpSessionRegistryOptions = {}) =>
+  Effect.acquireRelease(
+    makeWithOptions(options).pipe(
+      Effect.tap((registry) =>
+        Effect.sync(() => {
+          activeMcpSessionRegistry = registry;
+        }),
+      ),
     ),
-  ),
-  (registry) =>
-    Effect.sync(() => {
-      if (activeMcpSessionRegistry === registry) {
-        activeMcpSessionRegistry = undefined;
-      }
-    }),
-);
+    (registry) =>
+      Effect.sync(() => {
+        if (activeMcpSessionRegistry === registry) {
+          activeMcpSessionRegistry = undefined;
+        }
+      }),
+  );
 
-export const layer = Layer.effect(McpSessionRegistry, make);
+export const layer = Layer.unwrap(
+  Effect.gen(function* () {
+    const extensions = yield* ExtensionMcp.ExtensionMcp;
+    return Layer.effect(McpSessionRegistry, make({ beforeIssue: extensions.prepareForSession }));
+  }),
+);
 
 export const issueActiveMcpCredential = (
   request: McpCredentialRequest,

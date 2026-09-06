@@ -10,6 +10,7 @@ import { McpProtocol, McpSchema, McpServer, Tool } from "effect/unstable/ai";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
 import packageJson from "../../package.json" with { type: "json" };
+import * as ExtensionMcp from "../extensions/ExtensionMcp.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
@@ -220,6 +221,18 @@ const McpTransportLive = McpServer.layerHttp({
   version: packageJson.version,
   path: "/mcp",
   protocols: [McpProtocol.v2025_06_18],
+  // The one server-level slot MCP gives us. Clients that honour it put this in
+  // the model's context, so it says what the extension surface is and where
+  // the guides are rather than repeating either.
+  instructions: ExtensionMcp.EXTENSION_MCP_INSTRUCTIONS,
 }).pipe(Layer.provide(McpAuthMiddlewareLive));
 
-export const layer = PreviewToolkitRegistrationLive.pipe(Layer.provideMerge(McpTransportLive));
+export const layer = Layer.mergeAll(
+  PreviewToolkitRegistrationLive,
+  // Resources must be registered before serving starts or the `resources`
+  // capability is never advertised and no client looks for them.
+  ExtensionMcp.resourcesLayer,
+  // Hands the gate below us the sync that needs `McpServer`, which only
+  // exists here.
+  ExtensionMcp.toolsLayer,
+).pipe(Layer.provideMerge(McpTransportLive));

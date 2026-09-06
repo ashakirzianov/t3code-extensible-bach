@@ -139,7 +139,25 @@ interface RegistryState {
   readonly records: ReadonlyMap<ExtensionName, ExtensionRecord>;
   readonly pending: ReadonlyMap<string, PendingCall>;
   readonly callSequence: number;
+  /** False until the supervisor has finished resolving settings and flags. */
+  readonly sourcesResolved: boolean;
 }
+
+/**
+ * Readiness for the MCP catalogue: every enabled extension has either
+ * connected or given up. A crashed or stopped one counts as settled — waiting
+ * on it would hold every agent session hostage to a broken build.
+ */
+const isReady = (state: RegistryState): boolean => {
+  if (!state.sourcesResolved) return false;
+  for (const record of state.records.values()) {
+    if (!record.enabled) continue;
+    if (record.connection !== undefined) continue;
+    if (record.state === "crashed" || record.state === "stopped") continue;
+    return false;
+  }
+  return true;
+};
 
 export interface ExtensionRegistryShape {
   // --- protocol, extension to host -----------------------------------------
@@ -179,6 +197,14 @@ export interface ExtensionRegistryShape {
   }) => Effect.Effect<ExtensionHttpResponse, ExtensionUnavailableError | ExtensionNotFoundError>;
   /** Every tool the host should register with MCP, in start order. */
   readonly listTools: Effect.Effect<ReadonlyArray<ExtensionToolOwner>>;
+  /**
+   * Completes once every enabled extension has either connected or reached a
+   * terminal state — the condition the MCP catalogue has to be complete under,
+   * since a provider caches it when its process connects. Never completes
+   * before the source list is final, so a caller that arrives during startup
+   * waits rather than seeing an empty registry and concluding "ready".
+   */
+  readonly awaitReady: Effect.Effect<void>;
 
   // --- lifecycle, called by the supervisor ---------------------------------
   readonly upsertSource: (
@@ -209,6 +235,8 @@ export interface ExtensionRegistryShape {
     readonly name: ExtensionName;
     readonly enabled: boolean;
   }) => Effect.Effect<void, ExtensionNotFoundError>;
+  /** The supervisor has finished reading settings and flags; readiness can now resolve. */
+  readonly markSourcesResolved: Effect.Effect<void>;
 
   // --- admin ----------------------------------------------------------------
   readonly list: Effect.Effect<ExtensionListResult>;
@@ -222,6 +250,12 @@ export class ExtensionRegistry extends Context.Service<ExtensionRegistry, Extens
 
 export interface ExtensionRegistryOptions {
   readonly environmentId: EnvironmentId;
+  /**
+   * Tool names the host itself serves over MCP. An extension that claims one
+   * is rejected with a collision naming T3 Code as the owner, because the
+   * catalogue is one flat namespace and the host's tools were there first.
+   */
+  readonly reservedToolNames?: ReadonlyArray<ExtensionToolName>;
   readonly hostVersion: string;
   /** `<stateDir>/extensions`; each extension gets a directory named after it. */
   readonly dataRoot: string;
@@ -300,10 +334,19 @@ const subjectMismatch = (input: ExtensionConnectionInput): boolean =>
 export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptions) {
   const crypto = yield* Crypto.Crypto;
   const callTimeoutMs = options.callTimeoutMs ?? EXTENSION_CALL_TIMEOUT_MS;
+  const reservedToolNames = new Set<string>(options.reservedToolNames ?? []);
   const state = yield* SynchronizedRef.make<RegistryState>({
     records: new Map(),
     pending: new Map(),
     callSequence: 0,
+    sourcesResolved: false,
+  });
+  const ready = yield* Deferred.make<void>();
+
+  /** Completes readiness the first time the condition holds. */
+  const checkReady = Effect.gen(function* () {
+    const current = yield* SynchronizedRef.get(state);
+    if (isReady(current)) yield* Deferred.succeed(ready, undefined);
   });
 
   const readRecord = (name: ExtensionName) =>
@@ -403,10 +446,19 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
     "ExtensionRegistry.registerTools",
   )(function* (input) {
     yield* requireHandshake(EXTENSION_WS_METHODS.registerTools, input);
-    return yield* SynchronizedRef.modify(state, (current) => {
+    const result = yield* SynchronizedRef.modify(state, (current) => {
       const accepted: ExtensionToolDefinition[] = [];
       const results: ExtensionToolRegistration[] = [];
       for (const tool of input.tools) {
+        if (reservedToolNames.has(tool.name)) {
+          results.push({
+            status: "rejected",
+            name: tool.name,
+            reason: "name-collision",
+            message: new ExtensionToolNameCollisionError({ toolName: tool.name }).message,
+          });
+          continue;
+        }
         const owner = ownerOfTool(current, tool.name, input.name);
         if (owner !== undefined) {
           results.push({
@@ -425,6 +477,7 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
         withRecord(current, input.name, (record) => ({ ...record, tools: accepted })),
       ] as const;
     });
+    return result;
   });
 
   const registerHttpPrefix: ExtensionRegistryShape["registerHttpPrefix"] = Effect.fn(
@@ -490,6 +543,7 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
           return [record.connection, { ...current, records }] as const;
         });
         if (previous) yield* dropConnection(input.name, previous, "restarting");
+        yield* checkReady;
         return connection;
       });
       return Stream.unwrap(
@@ -684,6 +738,7 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
       });
       return { ...current, records };
     });
+    yield* checkReady;
   });
 
   const setState: ExtensionRegistryShape["setState"] = Effect.fn("ExtensionRegistry.setState")(
@@ -706,6 +761,7 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
           } as ExtensionRecord;
         }),
       );
+      yield* checkReady;
     },
   );
 
@@ -762,6 +818,13 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
     );
   });
 
+  const markSourcesResolved: ExtensionRegistryShape["markSourcesResolved"] = Effect.gen(
+    function* () {
+      yield* SynchronizedRef.update(state, (current) => ({ ...current, sourcesResolved: true }));
+      yield* checkReady;
+    },
+  );
+
   const list: ExtensionRegistryShape["list"] = SynchronizedRef.get(state).pipe(
     Effect.map((current) => ({
       extensions: [...current.records.values()].map(toStatus),
@@ -798,6 +861,8 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
     invokeTool,
     proxyHttp,
     listTools,
+    awaitReady: Deferred.await(ready),
+    markSourcesResolved,
     upsertSource,
     setState,
     setFolderHash,
