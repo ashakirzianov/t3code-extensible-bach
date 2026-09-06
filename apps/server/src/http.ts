@@ -268,7 +268,8 @@ export function resolveDevRedirectUrl(devUrl: URL, requestUrl: URL): string {
   return redirectUrl.toString();
 }
 
-const authenticateRawRouteWithScope = (
+/** Exported so the extension routes authenticate exactly as the `/api` routes do. */
+export const authenticateRawRouteWithScope = (
   scope: typeof AuthOrchestrationReadScope | typeof AuthOrchestrationOperateScope,
 ) =>
   Effect.gen(function* () {

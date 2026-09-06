@@ -111,6 +111,7 @@ import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { EXTENSION_SUBJECT_PREFIX } from "./extensions/ExtensionIdentity.ts";
 import * as ExtensionRegistryService from "./extensions/ExtensionRegistry.ts";
+import { mintExtensionAssetUrls } from "./extensions/ExtensionAssetAccess.ts";
 import * as ExtensionSupervisorService from "./extensions/ExtensionSupervisor.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -2700,6 +2701,12 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             EXTENSION_ADMIN_WS_METHODS.deploy,
             Effect.scoped(extensionSupervisor.deploy(input.name)),
+            { "rpc.aggregate": "extensions" },
+          ),
+        [EXTENSION_ADMIN_WS_METHODS.assetUrls]: (input) =>
+          observeRpcEffect(
+            EXTENSION_ADMIN_WS_METHODS.assetUrls,
+            mintExtensionAssetUrls(extensions, input.name),
             { "rpc.aggregate": "extensions" },
           ),
         [EXTENSION_ADMIN_WS_METHODS.setEnabled]: (input) =>

@@ -96,6 +96,8 @@ import {
   ExtensionHttpPrefixCollisionError,
   ExtensionHttpResponse,
   ExtensionListResult,
+  ExtensionAssetUrlsInput,
+  ExtensionAssetUrlsResult,
   ExtensionLogsInput,
   ExtensionLogsResult,
   ExtensionNotFoundError,
@@ -1278,6 +1280,12 @@ export const WsExtensionsAdminLogsRpc = Rpc.make(EXTENSION_ADMIN_WS_METHODS.logs
   error: Schema.Union([ExtensionAdminError, EnvironmentAuthorizationError]),
 });
 
+export const WsExtensionsAdminAssetUrlsRpc = Rpc.make(EXTENSION_ADMIN_WS_METHODS.assetUrls, {
+  payload: ExtensionAssetUrlsInput,
+  success: ExtensionAssetUrlsResult,
+  error: Schema.Union([ExtensionAdminError, EnvironmentAuthorizationError]),
+});
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
@@ -1409,4 +1417,5 @@ export const WsRpcGroup = RpcGroup.make(
   WsExtensionsAdminDeployRpc,
   WsExtensionsAdminSetEnabledRpc,
   WsExtensionsAdminLogsRpc,
+  WsExtensionsAdminAssetUrlsRpc,
 );

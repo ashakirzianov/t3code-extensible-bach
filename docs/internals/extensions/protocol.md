@@ -173,6 +173,55 @@ Streams are pull-based: after each `Chunk` the host waits for an `Ack` before
 sending the next. An extension that never acknowledges sees exactly one event and
 then silence, which is the first thing to check when a stream looks dead.
 
+## The HTTP surface
+
+Two routes put an extension on the host's own origin, under the host's own auth. An
+extension never opens a port and never sees a client's credential.
+
+**`/ext-api/<environmentId>/<prefix>/*`** proxies one request onto the extension's
+stream. It requires the same orchestration read scope as the `/api` routes, so
+reaching an extension is exactly as privileged as reaching the rest of the
+environment. The environment id in the path is compared against the server's own
+rather than trusted — a URL minted for another environment does not resolve here just
+because it arrived.
+
+What crosses the wire: the method, the path **below the prefix** (so an extension
+routes on `/status` wherever the host mounted it), the raw query string, and headers
+lowercased with hop-by-hop and credential headers removed. The body is `utf8` when the
+content type is textual and `base64` otherwise, capped at
+`EXTENSION_HTTP_BODY_MAX_CHARS` measured on the encoded string — base64 is a third
+larger than the bytes it carries.
+
+| Situation                    | Status                                   |
+| ---------------------------- | ---------------------------------------- |
+| No extension owns the prefix | 404                                      |
+| Registered but not connected | 503, the error's own message as the body |
+| Connected but did not answer | 504                                      |
+| Body over the cap            | 413                                      |
+| Method outside the contract  | 405                                      |
+
+**`/ext-assets/<signed>/<name>/<path>`** serves the web bundle. The client loads it
+with a same-origin `import()`, which cannot set an `Authorization` header, so the
+credential travels as a signed path segment — an HMAC over a claims blob with a
+one-hour life, the same shape and for the same reason as `assets/AssetAccess.ts`, with
+its own signing key so a token cannot be replayed across the two surfaces.
+
+`extensions.admin.assetUrls({ name })` mints them: absolute paths on the host origin
+for the entry, and for the css and icon when declared. Serving is deliberately narrow —
+only an extension that is running or starting, only one with a registered web entry,
+and only files inside that entry's own directory, so a code-split bundle's sibling
+chunks resolve while a traversal does not. The module is served as `text/javascript`,
+which the browser requires before it will execute it at all.
+
+Every failure — forged, expired, wrong extension, missing file, traversal — answers 404. Distinguishing them only helps a prober.
+
+**Not yet: an extension on a remote environment.** The desktop renderer's
+`script-src 'self'` means a bundle can only execute from the host's own origin, and
+the fetch-then-`blob:` escape is blocked too ([spike](spikes/electron-runtime.md)). A
+bundle belonging to a remote environment therefore has to be proxied through the local
+backend before it can be mounted. That proxying is a follow-up; today these routes
+serve the environment the server itself is.
+
 ## The reference
 
 Field-by-field definitions are generated, not written:

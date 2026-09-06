@@ -691,6 +691,37 @@ export const ExtensionSetEnabledInput = Schema.Struct({
 }).annotate({ identifier: "ExtensionSetEnabledInput" });
 export type ExtensionSetEnabledInput = typeof ExtensionSetEnabledInput.Type;
 
+/**
+ * Signed, short-lived URLs for one extension's web assets.
+ *
+ * The client loads the bundle with a same-origin `import()`, which cannot set
+ * an `Authorization` header, so the credential has to travel in the URL — the
+ * same reason `AssetAccess` mints signed asset URLs. Paths are absolute on the
+ * host's own origin, so remote, relay, and tunnel clients use them unchanged.
+ */
+export const ExtensionAssetUrlsInput = Schema.Struct({ name: ExtensionName }).annotate({
+  identifier: "ExtensionAssetUrlsInput",
+});
+export type ExtensionAssetUrlsInput = typeof ExtensionAssetUrlsInput.Type;
+
+export const ExtensionAssetUrlsResult = Schema.Struct({
+  name: ExtensionName,
+  /** The ES module to `import()`. */
+  entry: BoundedString(2048),
+  css: Schema.optionalKey(BoundedString(2048)),
+  icon: Schema.optionalKey(BoundedString(2048)),
+  /** Epoch millis after which these stop resolving and must be re-minted. */
+  expiresAt: Schema.Number,
+}).annotate({ identifier: "ExtensionAssetUrlsResult" });
+export type ExtensionAssetUrlsResult = typeof ExtensionAssetUrlsResult.Type;
+
+/**
+ * How long a minted asset URL stays valid. Matches `AssetAccess`'s window: long
+ * enough that a mounted extension does not re-mint mid-session, short enough
+ * that a leaked URL stops working.
+ */
+export const EXTENSION_ASSET_TOKEN_TTL_MS = 60 * 60 * 1000;
+
 /** Bounded so one noisy extension cannot grow the host's memory without limit. */
 export const EXTENSION_LOG_BUFFER_LINES = 500;
 
@@ -727,6 +758,7 @@ export const EXTENSION_ADMIN_WS_METHODS = {
   deploy: "extensions.admin.deploy",
   setEnabled: "extensions.admin.setEnabled",
   logs: "extensions.admin.logs",
+  assetUrls: "extensions.admin.assetUrls",
 } as const;
 
 export class ExtensionNotFoundError extends Schema.TaggedErrorClass<ExtensionNotFoundError>()(
