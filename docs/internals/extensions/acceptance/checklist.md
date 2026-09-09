@@ -14,7 +14,8 @@ extension is not running at all.
 **Do:** the §6 check from the runbook — new thread after Deploy, ask it to list its
 non-built-in tools.
 
-**See:** exactly six — `spawn_agent`, `list_agents`, `send_message`, `inbox`,
+**See:** exactly six _Bach_ tools — the host's own `preview_*` tools appear alongside them and
+do not count against this — `spawn_agent`, `list_agents`, `send_message`, `inbox`,
 `request_from_user`, `notify_user`. Record the list verbatim, including any extras.
 
 ## 2. Spawning, and the permission gate
@@ -96,7 +97,7 @@ JS
 node /tmp/host-tables.mjs .t3-acceptance/userdata/state.sqlite
 ```
 
-**See:** only the host's own tables — `orchestration_*`, `projection_*`, `auth_*`,
-`checkpoint_*`, `provider_session_runtime`. **Nothing** named for the extension. Its own
+**See:** only the host's own tables — `auth_*`, `checkpoint_*`, `effect_sql_migrations`,
+`orchestration_*`, `projection_*`, `provider_session_runtime`, `sqlite_sequence`. **Nothing** named for the extension. Its own
 database should be a separate file under
 `.t3-acceptance/userdata/extensions/<name>/`; confirm that file exists.

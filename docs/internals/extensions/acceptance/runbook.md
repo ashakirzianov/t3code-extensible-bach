@@ -18,12 +18,16 @@ Roles: the **examiner** (an agent in a fork checkout, which prepared this) and t
 
 ```bash
 cd ~/repos/t3code-extensible
-git checkout main && git pull
+git checkout main
 eval "$(fnm env)"
 CI=true pnpm install
 export PATH="$PWD/node_modules/.bin:$PATH"
 node scripts/dev-runner.ts dev --home-dir "$PWD/.t3-acceptance"
 ```
+
+The fork's `main` is **local** — nothing is pushed and nothing is pulled, so there is no
+`git pull` here. Taking upstream's changes is a deliberate, separate uptake (see the fork
+note's uptake log); doing it mid-run would change what is being tested.
 
 A **separate home** (`.t3-acceptance`, not `.t3`) so the run starts with no projects, no
 threads, and no extensions, and so a previous run cannot contaminate this one. If the folder
@@ -43,8 +47,8 @@ included) in a browser. Leave this server running for the whole run.
 All four must pass. Paste the results back with your report.
 
 ```bash
-# 1. No global agent instruction mentions Bach.
-grep -ci bach ~/.claude/CLAUDE.md || echo "0 (file absent — also fine)"
+# 1. No global agent instruction mentions Bach. Prints a number; 0 is what you want.
+grep -ci bach ~/.claude/CLAUDE.md 2>/dev/null || echo 0
 
 # 2. The fresh home has no extensions installed and no Bach anywhere.
 ls ~/repos/t3code-extensible/.t3-acceptance/userdata/extensions 2>/dev/null || echo "none"
@@ -56,8 +60,14 @@ mkdir -p ~/acceptance/bach-clean && ls -A ~/acceptance/bach-clean
 ls -A ~/acceptance
 ```
 
-Check 1 must print `0`. Checks 2–4 must show nothing Bach-related. `~/acceptance/...` is
+Check 1 must print `0` (`grep -c` exits non-zero when it finds nothing, hence the `|| echo 0`). Checks 2–4 must show nothing Bach-related. `~/acceptance/...` is
 deliberately outside `~/repos` so the builder cannot wander into the real Bach or this fork.
+
+**Not yet enforced, and it matters:** the 2026-09-09 run showed the builder reading this
+checkout directly — 45% of its tool calls — because nothing stopped it. The working folder and
+the home are isolated; _read access to `~/repos/t3code-extensible` is not_. Until that is
+closed, the host-source count in the diagnostic measures convenience as much as it measures the
+guide. Deny it before the next run.
 
 ## 3. Give the builder a project
 

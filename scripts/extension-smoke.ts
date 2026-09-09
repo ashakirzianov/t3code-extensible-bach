@@ -1,5 +1,8 @@
 #!/usr/bin/env node
-// @effect-diagnostics nodeBuiltinImport:off - Standalone CI script, no Effect runtime.
+// @effect-diagnostics nodeBuiltinImport:off globalConsole:off globalDate:off globalTimers:off globalFetch:off
+// ^ Standalone CI script: it runs under `node` outside the Effect runtime, so
+// there is no Clock, Logger or HttpClient to reach for. Same posture as
+// scripts/mobile-showcase.ts.
 /**
  * End-to-end smoke test for the extension seam (design §7).
  *
@@ -36,7 +39,10 @@ const homeDir = NodePath.resolve(argOf("home-dir") ?? NodePath.join(repoRoot, ".
 const port = Number(argOf("port") ?? 17533);
 const extensionDist = NodePath.join(repoRoot, "extensions/reference/dist");
 
-const fail = (message: string): never => {
+// Annotated on the binding, not just the arrow: TypeScript only narrows past a
+// never-returning call when the variable itself carries the type. Without it
+// every `if (!x) fail(...)` leaves `x` possibly-undefined below.
+const fail: (message: string) => never = (message) => {
   console.error(`[smoke] FAIL ${message}`);
   process.exit(1);
 };
@@ -95,10 +101,17 @@ try {
       // Any answer means the HTTP router is live. Status is deliberately not
       // checked: without a built web client the static fallback answers 503,
       // and an authenticated route answers 401 — both mean "up".
-      await fetch(`${base}/api/auth/pairing-links`);
+      //
+      // The per-attempt timeout is load-bearing. The server binds the port
+      // before it is command-ready, and a global router middleware holds every
+      // request until it is — so an early probe connects and then waits. With
+      // no timeout that one attempt sits on undici's ~85s headers timeout and
+      // eats the whole budget, and the loop reports "did not start" against a
+      // server that started fine.
+      await fetch(`${base}/api/auth/pairing-links`, { signal: AbortSignal.timeout(2000) });
       break;
     } catch {
-      // Not listening yet.
+      // Not listening, or not answering yet.
     }
     await sleep(500);
   }
