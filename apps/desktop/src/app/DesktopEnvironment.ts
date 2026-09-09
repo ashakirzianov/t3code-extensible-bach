@@ -14,6 +14,7 @@ import * as Path from "effect/Path";
 
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
+import { resolveLinuxDesktopEntryName } from "./DesktopEarlyElectronStartup.ts";
 import { resolveDesktopBaseDir, resolveDesktopStateDir } from "./DesktopStatePaths.ts";
 import { isNightlyDesktopVersion } from "../updates/updateChannels.ts";
 
@@ -99,7 +100,7 @@ function resolveDesktopAppStageLabel(input: {
   return isNightlyDesktopVersion(input.appVersion) ? "Nightly" : "Alpha";
 }
 
-function resolveDesktopAppBranding(input: {
+export function resolveDesktopAppBranding(input: {
   readonly isDevelopment: boolean;
   readonly appVersion: string;
 }): DesktopAppBranding {
@@ -231,9 +232,9 @@ const make = Effect.fn("desktop.environment.make")(function* (
     appUserModelId: Option.getOrElse(config.appUserModelIdOverride, () =>
       isDevelopment ? ForkIdentity.FORK_DEV_APP_ID : ForkIdentity.FORK_APP_ID,
     ),
-    linuxDesktopEntryName: isDevelopment
-      ? ForkIdentity.FORK_DEV_LINUX_DESKTOP_ENTRY_NAME
-      : ForkIdentity.FORK_LINUX_DESKTOP_ENTRY_NAME,
+    // Upstream now derives this in one helper used from two places; the fork
+    // patches the helper instead of this call site, so both agree.
+    linuxDesktopEntryName: resolveLinuxDesktopEntryName(isDevelopment),
     linuxWmClass: isDevelopment
       ? ForkIdentity.FORK_DEV_LINUX_WM_CLASS
       : ForkIdentity.FORK_LINUX_WM_CLASS,

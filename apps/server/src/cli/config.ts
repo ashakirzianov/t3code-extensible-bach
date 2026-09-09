@@ -18,7 +18,7 @@ import { extensionLaunchFlagsFromRecord } from "../extensions/ExtensionSources.t
 import * as ServerConfig from "../config.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
 
-export const modeFlag = Flag.choice("mode", ServerConfig.RuntimeMode.literals).pipe(
+const modeFlag = Flag.choice("mode", ServerConfig.RuntimeMode.literals).pipe(
   Flag.withDescription("Runtime mode. `desktop` keeps loopback defaults unless overridden."),
   Flag.optional,
 );
@@ -81,7 +81,7 @@ export const extensionFlag = Flag.keyValuePair("extension").pipe(
   Flag.withDefault({}),
 );
 
-export const tailscaleServePortFlag = Flag.integer("tailscale-serve-port").pipe(
+const tailscaleServePortFlag = Flag.integer("tailscale-serve-port").pipe(
   Flag.withSchema(PortSchema),
   Flag.withDescription("HTTPS port for Tailscale Serve when --tailscale-serve is enabled."),
   Flag.optional,

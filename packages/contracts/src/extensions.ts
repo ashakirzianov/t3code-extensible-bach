@@ -511,7 +511,7 @@ export type ExtensionHttpResponse = typeof ExtensionHttpResponse.Type;
 // Errors
 // ---------------------------------------------------------------------------
 
-export class ExtensionProtocolMismatchError extends Schema.TaggedErrorClass<ExtensionProtocolMismatchError>()(
+export class ExtensionProtocolMismatchError extends Schema.TaggedError<ExtensionProtocolMismatchError>()(
   "ExtensionProtocolMismatchError",
   {
     extensionName: Schema.optionalKey(ExtensionName),
@@ -524,7 +524,7 @@ export class ExtensionProtocolMismatchError extends Schema.TaggedErrorClass<Exte
   }
 }
 
-export class ExtensionHandshakeRequiredError extends Schema.TaggedErrorClass<ExtensionHandshakeRequiredError>()(
+export class ExtensionHandshakeRequiredError extends Schema.TaggedError<ExtensionHandshakeRequiredError>()(
   "ExtensionHandshakeRequiredError",
   {
     method: BoundedString(128),
@@ -535,7 +535,7 @@ export class ExtensionHandshakeRequiredError extends Schema.TaggedErrorClass<Ext
   }
 }
 
-export class ExtensionToolNameCollisionError extends Schema.TaggedErrorClass<ExtensionToolNameCollisionError>()(
+export class ExtensionToolNameCollisionError extends Schema.TaggedError<ExtensionToolNameCollisionError>()(
   "ExtensionToolNameCollisionError",
   {
     toolName: ExtensionToolName,
@@ -550,7 +550,7 @@ export class ExtensionToolNameCollisionError extends Schema.TaggedErrorClass<Ext
   }
 }
 
-export class ExtensionUnknownToolError extends Schema.TaggedErrorClass<ExtensionUnknownToolError>()(
+export class ExtensionUnknownToolError extends Schema.TaggedError<ExtensionUnknownToolError>()(
   "ExtensionUnknownToolError",
   {
     toolName: ExtensionToolName,
@@ -575,7 +575,7 @@ export type ExtensionUnavailableReason = typeof ExtensionUnavailableReason.Type;
  * Its `message` reaches the agent verbatim as an MCP error result, so it says
  * what happened rather than what failed internally.
  */
-export class ExtensionUnavailableError extends Schema.TaggedErrorClass<ExtensionUnavailableError>()(
+export class ExtensionUnavailableError extends Schema.TaggedError<ExtensionUnavailableError>()(
   "ExtensionUnavailableError",
   {
     extensionName: ExtensionName,
@@ -601,7 +601,7 @@ export class ExtensionUnavailableError extends Schema.TaggedErrorClass<Extension
   }
 }
 
-export class ExtensionHttpPrefixCollisionError extends Schema.TaggedErrorClass<ExtensionHttpPrefixCollisionError>()(
+export class ExtensionHttpPrefixCollisionError extends Schema.TaggedError<ExtensionHttpPrefixCollisionError>()(
   "ExtensionHttpPrefixCollisionError",
   {
     prefix: ExtensionHttpPrefix,
@@ -826,7 +826,7 @@ export const EXTENSION_ADMIN_WS_METHODS = {
   assetUrls: "extensions.admin.assetUrls",
 } as const;
 
-export class ExtensionNotFoundError extends Schema.TaggedErrorClass<ExtensionNotFoundError>()(
+export class ExtensionNotFoundError extends Schema.TaggedError<ExtensionNotFoundError>()(
   "ExtensionNotFoundError",
   {
     extensionName: ExtensionName,
@@ -845,7 +845,7 @@ export class ExtensionNotFoundError extends Schema.TaggedErrorClass<ExtensionNot
  * host installed the folder under: the host's name is authoritative, and the
  * same built folder may be installed more than once.
  */
-export class ExtensionFolderError extends Schema.TaggedErrorClass<ExtensionFolderError>()(
+export class ExtensionFolderError extends Schema.TaggedError<ExtensionFolderError>()(
   "ExtensionFolderError",
   {
     extensionName: Schema.optionalKey(ExtensionName),
@@ -877,7 +877,7 @@ export class ExtensionFolderError extends Schema.TaggedErrorClass<ExtensionFolde
  * one has to be refused rather than merged. Overriding a shipped extension with
  * a local build is an *edit* of the existing entry's path, not a second install.
  */
-export class ExtensionAlreadyInstalledError extends Schema.TaggedErrorClass<ExtensionAlreadyInstalledError>()(
+export class ExtensionAlreadyInstalledError extends Schema.TaggedError<ExtensionAlreadyInstalledError>()(
   "ExtensionAlreadyInstalledError",
   {
     extensionName: ExtensionName,

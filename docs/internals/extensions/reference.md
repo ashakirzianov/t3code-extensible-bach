@@ -457,7 +457,7 @@ stream of the listed element rather than a single result.
 
 | Method | Payload | Result | Errors |
 | --- | --- | --- | --- |
-| `provider.consumeResetCredit` | `{instanceId}` | `{outcome}` | `ProviderSetupError` \| `EnvironmentAuthorizationError` |
+| `provider.consumeResetCredit` | union of 2 | `{outcome, warning}` | `ProviderSetupError` \| `UsageLimitSourceError` \| `EnvironmentAuthorizationError` |
 | `provider.auth.start` | `{instanceId}` | `{instanceId, phase, flowId, +3}` | `ProviderSetupError` \| `EnvironmentAuthorizationError` |
 | `provider.auth.complete` | `{instanceId, flowId, callbackUrl}` | `{instanceId, phase, flowId, +3}` | `ProviderSetupError` \| `EnvironmentAuthorizationError` |
 | `provider.auth.cancel` | `{instanceId, flowId}` | `{instanceId, phase, flowId, +3}` | `ProviderSetupError` \| `EnvironmentAuthorizationError` |
@@ -631,7 +631,7 @@ stream of the listed element rather than a single result.
 
 | Method | Payload | Result | Errors |
 | --- | --- | --- | --- |
-| `orchestration.dispatchCommand` | `project.create` \| `project.meta.update` \| `project.delete` \| +20 | `{sequence}` | `OrchestrationDispatchCommandError` \| `EnvironmentAuthorizationError` |
+| `orchestration.dispatchCommand` | `project.create` \| `project.meta.update` \| `project.delete` \| +22 | `{sequence}` | `OrchestrationDispatchCommandError` \| `EnvironmentAuthorizationError` |
 | `orchestration.getWorkflowScript` | `{threadId, scriptPath}` | `{scriptPath, contents, truncated}` | `OrchestrationGetWorkflowScriptError` \| `EnvironmentAuthorizationError` |
 | `orchestration.getTurnDiff` | `OrchestrationTurnDiffRange` | `OrchestrationTurnDiffRange` | `OrchestrationGetTurnDiffError` \| `EnvironmentAuthorizationError` |
 | `orchestration.getFullThreadDiff` | `{threadId, toTurnCount, ignoreWhitespace}` | `OrchestrationTurnDiffRange` | `OrchestrationGetFullThreadDiffError` \| `EnvironmentAuthorizationError` |

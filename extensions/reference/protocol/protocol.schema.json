@@ -163,14 +163,8 @@
             },
             "count": {
               "type": "integer",
-              "allOf": [
-                {
-                  "minimum": 0
-                },
-                {
-                  "maximum": 9999
-                }
-              ]
+              "minimum": 0,
+              "maximum": 9999
             }
           },
           "required": [
@@ -195,14 +189,8 @@
     },
     "ExtensionConnectionId": {
       "type": "string",
-      "allOf": [
-        {
-          "minLength": 1
-        },
-        {
-          "maxLength": 64
-        }
-      ]
+      "minLength": 1,
+      "maxLength": 64
     },
     "ExtensionError": {
       "anyOf": [
@@ -237,14 +225,8 @@
         },
         "method": {
           "type": "string",
-          "allOf": [
-            {
-              "minLength": 1
-            },
-            {
-              "maxLength": 128
-            }
-          ]
+          "minLength": 1,
+          "maxLength": 128
         }
       },
       "required": [
@@ -267,14 +249,8 @@
         },
         "hostVersion": {
           "type": "string",
-          "allOf": [
-            {
-              "minLength": 1
-            },
-            {
-              "maxLength": 64
-            }
-          ]
+          "minLength": 1,
+          "maxLength": 64
         },
         "environmentId": {
           "type": "string"
@@ -314,14 +290,8 @@
     },
     "ExtensionHostPath": {
       "type": "string",
-      "allOf": [
-        {
-          "minLength": 1
-        },
-        {
-          "maxLength": 1024
-        }
-      ]
+      "minLength": 1,
+      "maxLength": 1024
     },
     "ExtensionHttpBody": {
       "type": "object",
@@ -335,11 +305,7 @@
         },
         "data": {
           "type": "string",
-          "allOf": [
-            {
-              "maxLength": 8388608
-            }
-          ]
+          "maxLength": 8388608
         }
       },
       "required": [
@@ -368,17 +334,9 @@
     },
     "ExtensionHttpPrefix": {
       "type": "string",
-      "allOf": [
-        {
-          "minLength": 1
-        },
-        {
-          "maxLength": 64
-        },
-        {
-          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
-        }
-      ]
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
     },
     "ExtensionHttpPrefixCollisionError": {
       "type": "object",
@@ -413,22 +371,12 @@
         },
         "path": {
           "type": "string",
-          "allOf": [
-            {
-              "maxLength": 2048
-            },
-            {
-              "pattern": "^\\/"
-            }
-          ]
+          "maxLength": 2048,
+          "pattern": "^\\/"
         },
         "query": {
           "type": "string",
-          "allOf": [
-            {
-              "maxLength": 4096
-            }
-          ]
+          "maxLength": 4096
         },
         "headers": {
           "$ref": "#/$defs/ExtensionHttpHeaders"
@@ -451,14 +399,8 @@
     },
     "ExtensionHttpRequestId": {
       "type": "string",
-      "allOf": [
-        {
-          "minLength": 1
-        },
-        {
-          "maxLength": 128
-        }
-      ]
+      "minLength": 1,
+      "maxLength": 128
     },
     "ExtensionHttpResponse": {
       "type": "object",
@@ -471,12 +413,8 @@
         },
         "status": {
           "type": "integer",
-          "allOf": [
-            {
-              "minimum": 100,
-              "maximum": 599
-            }
-          ]
+          "minimum": 100,
+          "maximum": 599
         },
         "headers": {
           "$ref": "#/$defs/ExtensionHttpHeaders"
@@ -495,14 +433,8 @@
     },
     "ExtensionInvocationId": {
       "type": "string",
-      "allOf": [
-        {
-          "minLength": 1
-        },
-        {
-          "maxLength": 128
-        }
-      ]
+      "minLength": 1,
+      "maxLength": 128
     },
     "ExtensionManifest": {
       "type": "object",
@@ -512,28 +444,16 @@
         },
         "version": {
           "type": "string",
-          "allOf": [
-            {
-              "minLength": 1
-            },
-            {
-              "maxLength": 64
-            }
-          ]
+          "minLength": 1,
+          "maxLength": 64
         },
         "protocolVersion": {
           "$ref": "#/$defs/ExtensionProtocolVersion"
         },
         "minHostVersion": {
           "type": "string",
-          "allOf": [
-            {
-              "minLength": 1
-            },
-            {
-              "maxLength": 64
-            }
-          ]
+          "minLength": 1,
+          "maxLength": 64
         },
         "server": {
           "$ref": "#/$defs/ExtensionServerEntry"
@@ -552,17 +472,9 @@
     },
     "ExtensionName": {
       "type": "string",
-      "allOf": [
-        {
-          "minLength": 1
-        },
-        {
-          "maxLength": 64
-        },
-        {
-          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
-        }
-      ]
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
     },
     "ExtensionNotFoundError": {
       "type": "object",
@@ -614,11 +526,7 @@
     },
     "ExtensionProtocolVersion": {
       "type": "integer",
-      "allOf": [
-        {
-          "minimum": 1
-        }
-      ]
+      "minimum": 1
     },
     "ExtensionRegisterHttpPrefixInput": {
       "type": "object",
@@ -640,14 +548,8 @@
         },
         "basePath": {
           "type": "string",
-          "allOf": [
-            {
-              "minLength": 1
-            },
-            {
-              "maxLength": 512
-            }
-          ]
+          "minLength": 1,
+          "maxLength": 512
         }
       },
       "required": [
@@ -664,11 +566,7 @@
           "items": {
             "$ref": "#/$defs/ExtensionToolDefinition"
           },
-          "allOf": [
-            {
-              "maxItems": 64
-            }
-          ]
+          "maxItems": 64
         }
       },
       "required": [
@@ -705,17 +603,9 @@
     },
     "ExtensionRelativePath": {
       "type": "string",
-      "allOf": [
-        {
-          "minLength": 1
-        },
-        {
-          "maxLength": 512
-        },
-        {
-          "pattern": "^(?!.*(?:^|\\/)\\.\\.(?:\\/|$))[A-Za-z0-9._-]+(?:\\/[A-Za-z0-9._-]+)*$"
-        }
-      ]
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?!.*(?:^|\\/)\\.\\.(?:\\/|$))[A-Za-z0-9._-]+(?:\\/[A-Za-z0-9._-]+)*$"
     },
     "ExtensionServerEntry": {
       "type": "object",
@@ -821,14 +711,8 @@
         },
         "providerSessionId": {
           "type": "string",
-          "allOf": [
-            {
-              "minLength": 1
-            },
-            {
-              "maxLength": 256
-            }
-          ]
+          "minLength": 1,
+          "maxLength": 256
         },
         "providerInstanceId": {
           "type": "string"
@@ -855,11 +739,7 @@
             },
             "text": {
               "type": "string",
-              "allOf": [
-                {
-                  "maxLength": 1048576
-                }
-              ]
+              "maxLength": 1048576
             }
           },
           "required": [
@@ -879,22 +759,12 @@
             },
             "data": {
               "type": "string",
-              "allOf": [
-                {
-                  "maxLength": 8388608
-                }
-              ]
+              "maxLength": 8388608
             },
             "mimeType": {
               "type": "string",
-              "allOf": [
-                {
-                  "minLength": 1
-                },
-                {
-                  "maxLength": 100
-                }
-              ]
+              "minLength": 1,
+              "maxLength": 100
             }
           },
           "required": [
@@ -914,14 +784,8 @@
         },
         "description": {
           "type": "string",
-          "allOf": [
-            {
-              "minLength": 1
-            },
-            {
-              "maxLength": 4096
-            }
-          ]
+          "minLength": 1,
+          "maxLength": 4096
         },
         "inputSchema": {
           "type": "object"
@@ -960,17 +824,9 @@
     },
     "ExtensionToolName": {
       "type": "string",
-      "allOf": [
-        {
-          "minLength": 1
-        },
-        {
-          "maxLength": 64
-        },
-        {
-          "pattern": "^[A-Za-z0-9_-]+$"
-        }
-      ]
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_-]+$"
     },
     "ExtensionToolNameCollisionError": {
       "type": "object",
@@ -1032,14 +888,8 @@
             },
             "message": {
               "type": "string",
-              "allOf": [
-                {
-                  "minLength": 1
-                },
-                {
-                  "maxLength": 512
-                }
-              ]
+              "minLength": 1,
+              "maxLength": 512
             }
           },
           "required": [
@@ -1157,14 +1007,8 @@
         },
         "label": {
           "type": "string",
-          "allOf": [
-            {
-              "minLength": 1
-            },
-            {
-              "maxLength": 64
-            }
-          ]
+          "minLength": 1,
+          "maxLength": 64
         },
         "icon": {
           "$ref": "#/$defs/ExtensionRelativePath"

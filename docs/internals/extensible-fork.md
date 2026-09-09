@@ -35,6 +35,43 @@ fork's operational half and does not restate it.
 
 What each merge actually cost, so the next one can be estimated rather than guessed at.
 
+### 2026-09-09 — `upstream/main` at `6c583620f` (183 commits)
+
+**Ten conflicts, all in table files** — `McpHttpServer.ts`, `Migrations.ts`,
+`DesktopEnvironment.ts` + its test, `cli/config.ts`, `contracts/package.json`,
+`contracts/settings.ts`, `build-desktop-artifact.ts` + its test, and the effect patch. Most
+were both-sides-added-a-line and resolved by keeping both. Two were upstream un-exporting
+something the fork had exported (`makeMigrationLoader`, `tailscaleServePortFlag`); nothing
+outside their files imports either, so upstream's `const` won.
+
+**The expensive one: effect beta.103 → rc.112 renamed the patch file and moved the code the
+fork patches.** The merged patch kept the fork's `instructions` hunks but their context was
+stale, and `pnpm install` failed with `ERR_PNPM_PATCH_FAILED`. Rebuilding it is a fixed
+recipe worth writing down: `npm pack effect@<version>`, unpack twice as `pristine` and
+`edited`, `git apply` upstream's patch to `edited`, re-make the fork's edit there, then
+`git diff` the two into the patch file. Hand-merging the `index` blob-hash lines does not
+work — the hunks themselves have to be regenerated.
+
+**Two silent breaks, neither of which conflicted:**
+
+- `Schema.TaggedErrorClass` is now `Schema.TaggedError`. Upstream migrated its own files;
+  the fork's `extensions.ts` (9 uses), `Migrations.ts` and `build-desktop-artifact.ts` were
+  left behind, and the _generators_ failed before any typecheck ran. **This is the same
+  lesson as last time in a new costume**: a fork-only file that consumes an upstream API
+  breaks without ever conflicting.
+- Upstream introduced `resolveLinuxDesktopEntryName` and now calls it from **two** places,
+  one of which the fork had never patched. Keeping only the fork's old call-site override
+  would have made the fork write _upstream's_ launcher entry — precisely the collision the
+  identity knob exists to prevent. The fork now patches the helper instead of the call site,
+  which is one touch point instead of two, and four upstream assertions moved to the fork's
+  names.
+
+**Open, and deliberately not decided here:** upstream's new Linux screen-capture feature
+hardcodes `com.t3tools.T3Code` in several files (`KdeSnapShot.ts`'s desktop file, Hyprland
+bind strings, portal identity). Those are fork-identity surface the fork note does not yet
+cover. They do not break anything today because their tests pass their own literals, but a
+fork build will register upstream's capture identity. Decide before shipping Linux builds.
+
 ### 2026-09-06 — `upstream/main` at `223ff4490` (306 commits)
 
 **Two textual conflicts, both predicted by the table.** `packages/contracts/src/settings.ts`
