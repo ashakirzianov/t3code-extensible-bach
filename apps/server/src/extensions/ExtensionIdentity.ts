@@ -7,11 +7,10 @@
  * needs them to mint a dev credential, and a CLI command should not have to
  * pull in the HTTP server and the settings service to do it.
  */
-import {
-  AuthExtensionScope,
-  AuthOrchestrationOperateScope,
-  AuthOrchestrationReadScope,
-} from "@t3tools/contracts";
+// Re-exported rather than defined here: the scope set is part of what an
+// extension author needs to know, so it lives with the rest of the protocol
+// constants and the generated guide can read it without importing the server.
+export { EXTENSION_TOKEN_SCOPES } from "@t3tools/contracts";
 
 /**
  * A connection may only speak for the extension its token was minted for. The
@@ -20,18 +19,6 @@ import {
  * yourself" work without a second auth concept.
  */
 export const EXTENSION_SUBJECT_PREFIX = "extension:";
-
-/**
- * What an extension's token may do. The orchestration scopes are the ones an
- * extension actually uses — dispatching commands and reading threads. Terminal,
- * review, and relay are deliberately withheld: nothing in the design needs
- * them, and a token is easier to widen later than to narrow.
- */
-export const EXTENSION_TOKEN_SCOPES = [
-  AuthOrchestrationReadScope,
-  AuthOrchestrationOperateScope,
-  AuthExtensionScope,
-] as const;
 
 /** Environment variables the extension reads to find its host and its state. */
 export const EXTENSION_ENV = {

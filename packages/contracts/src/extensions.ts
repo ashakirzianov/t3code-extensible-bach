@@ -1,6 +1,11 @@
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
+import {
+  AuthExtensionScope,
+  AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
+} from "./auth.ts";
 import { EnvironmentId, NonNegativeInt, ThreadId } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
@@ -96,6 +101,21 @@ export const EXTENSION_WS_METHODS = {
   respondTool: "extensions.respondTool",
   respondHttp: "extensions.respondHttp",
 } as const;
+
+/**
+ * What an extension's token may do. The orchestration scopes are the ones an
+ * extension actually uses — dispatching commands and reading threads. Terminal,
+ * review, and relay are deliberately withheld: nothing in the design needs
+ * them, and a token is easier to widen later than to narrow.
+ *
+ * Contract rather than server detail: it is what decides which of the client
+ * methods an extension can call, so the guide lists it alongside them.
+ */
+export const EXTENSION_TOKEN_SCOPES = [
+  AuthOrchestrationReadScope,
+  AuthOrchestrationOperateScope,
+  AuthExtensionScope,
+] as const;
 
 // ---------------------------------------------------------------------------
 // Names and paths

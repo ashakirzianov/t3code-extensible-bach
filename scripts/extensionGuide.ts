@@ -12,6 +12,10 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
+import * as Schema from "effect/Schema";
+import * as RpcSchema from "effect/unstable/rpc/RpcSchema";
+import { EXTENSION_TOKEN_SCOPES, WsRpcGroup } from "@t3tools/contracts";
+
 export const EXTENSION_GUIDE_DIR = "docs/internals/extensions";
 export const GENERATE_COMMAND = "pnpm generate:extension-guide";
 
@@ -215,7 +219,10 @@ const renderMethod = (name: string, method: ProtocolMethod): ReadonlyArray<strin
 const absolutizeLinks = (markdown: string) =>
   markdown.replaceAll(
     /\]\((?!https?:\/\/|#|\/)([^)]+)\)/gu,
-    (_match, target: string) => `](${EXTENSION_GUIDE_DIR}/${target})`,
+    // Normalized, so a link out of this directory (`../overview.md`) becomes
+    // the repo path it means rather than one with `..` still in it.
+    (_match, target: string) =>
+      `](${NodePath.posix.normalize(`${EXTENSION_GUIDE_DIR}/${target}`)})`,
   );
 
 const buildReference = (): string => {
@@ -237,6 +244,7 @@ const buildReference = (): string => {
     "## Methods",
     "",
     ...Object.entries(schema["x-methods"]).flatMap(([name, method]) => renderMethod(name, method)),
+    ...renderClientApi(),
     "## Definitions",
     "",
     ...Object.entries(rest).flatMap(([name, definition]) => renderDefinition(name, definition)),
@@ -244,6 +252,156 @@ const buildReference = (): string => {
     .join("\n")
     .replace(/\n{3,}/gu, "\n\n")
     .replace(/\n*$/u, "\n");
+};
+
+// ---------------------------------------------------------------------------
+// Client API listing
+// ---------------------------------------------------------------------------
+
+/**
+ * An extension is a client, so the whole client API is already available to it
+ * — but nothing said so, and the first clean-room build read host source for
+ * half its calls to find out what was there. This is the index that was
+ * missing: every non-`extensions.*` method, what it takes, and what comes
+ * back. Deliberately a listing rather than a reference; the shapes live in
+ * `packages/contracts` and an author who needs a field reads them there.
+ */
+
+/**
+ * Tagged error classes name their JSON shape `<Tag>Encoded`, which the vendored
+ * artifacts already strip. Strip it here too so one name means one thing.
+ */
+const displayName = (name: string): string =>
+  name.endsWith("Encoded") ? name.slice(0, -"Encoded".length) : name;
+
+/** How many members of a union or fields of a struct are worth naming inline. */
+const INLINE_LIMIT = 3;
+
+const capped = (parts: ReadonlyArray<string>, separator: string): string => {
+  const shown = parts.slice(0, INLINE_LIMIT).join(separator);
+  return parts.length <= INLINE_LIMIT
+    ? shown
+    : `${shown}${separator}+${parts.length - INLINE_LIMIT}`;
+};
+
+/**
+ * A one-line type expression. Named schemas keep their name; anything inline is
+ * summarised by the part an author actually navigates by — a struct's field
+ * names, a discriminated union's tags.
+ */
+const describeSchema = (schema: Schema.Top): string => {
+  const root = Schema.toJsonSchemaDocument(schema).schema as JsonSchema & {
+    readonly not?: unknown;
+  };
+  if (typeof root.$ref === "string") return `\`${displayName(refName(root.$ref))}\``;
+  // `Schema.Never` (no error channel) and `Schema.Void` (nothing returned).
+  if (root.not !== undefined || root.type === "null") return "—";
+
+  if (Array.isArray(root.anyOf)) {
+    const members = root.anyOf.filter(isJsonSchema);
+    // `Schema.Struct({})` encodes as an unconstrained object-or-array union:
+    // an empty payload, not a choice between two things.
+    const carriesNothing = members.every(
+      (member) =>
+        member.$ref === undefined && member.properties === undefined && member.enum === undefined,
+    );
+    if (carriesNothing) return "—";
+
+    const named = members.flatMap((member) =>
+      typeof member.$ref === "string" ? [`\`${displayName(refName(member.$ref))}\``] : [],
+    );
+    if (named.length === members.length) return capped(named, " \\| ");
+
+    // A discriminated union is far more useful listed by its tags than by the
+    // fact that it is a union.
+    const tags = members.flatMap((member) => {
+      const discriminant =
+        member.properties?.["_tag"] ?? member.properties?.["kind"] ?? member.properties?.["type"];
+      return discriminant?.enum?.length === 1 ? [`\`${String(discriminant.enum[0])}\``] : [];
+    });
+    return tags.length === members.length ? capped(tags, " \\| ") : `union of ${members.length}`;
+  }
+
+  if (root.properties !== undefined) {
+    const fields = Object.keys(root.properties);
+    return fields.length === 0 ? "—" : `\`{${capped(fields, ", ")}}\``;
+  }
+  return `\`${root.type ?? "unknown"}\``;
+};
+
+const isJsonSchema = (value: unknown): value is JsonSchema =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+interface ClientMethod {
+  readonly name: string;
+  readonly stream: boolean;
+  readonly payload: string;
+  readonly success: string;
+  readonly errors: string;
+}
+
+const clientMethods = (): ReadonlyArray<ClientMethod> =>
+  [...WsRpcGroup.requests.entries()]
+    .filter(([name]) => !name.startsWith("extensions."))
+    .map(([name, rpc]) => {
+      // A streaming RPC keeps its element and error schemas inside the stream
+      // schema and leaves `errorSchema` as Never.
+      const success = rpc.successSchema;
+      const stream = RpcSchema.isStreamSchema(success);
+      return {
+        name,
+        stream,
+        payload: describeSchema(rpc.payloadSchema),
+        success: describeSchema(stream ? success.success : success),
+        errors: describeSchema(stream ? success.error : rpc.errorSchema),
+      };
+    });
+
+const renderClientApi = (): ReadonlyArray<string> => {
+  const methods = clientMethods();
+  // A handful of methods carry no prefix at all (`subscribeVcsStatus`); they
+  // are one group rather than one group each.
+  const UNPREFIXED = "Ungrouped";
+  const groups = new Map<string, Array<ClientMethod>>();
+  for (const method of methods) {
+    const dot = method.name.indexOf(".");
+    const prefix = dot === -1 ? UNPREFIXED : `${method.name.slice(0, dot)}.`;
+    const group = groups.get(prefix);
+    if (group === undefined) groups.set(prefix, [method]);
+    else group.push(method);
+  }
+
+  const scopes = EXTENSION_TOKEN_SCOPES.map((scope) => `\`${scope}\``).join(", ");
+
+  return [
+    "## Client API",
+    "",
+    "An extension is an ordinary client, so everything below is callable on the same socket",
+    "as the `extensions.*` methods and needs no additional machinery. This is where an",
+    "extension spawns work, sends messages, and reads state; the `extensions.*` surface only",
+    "covers what has no client equivalent.",
+    "",
+    `Your token carries ${scopes}. The orchestration methods are open to you;`,
+    "anything gated on a scope you were not granted — terminals, review, relay — answers",
+    "with an authorization error rather than silently doing nothing.",
+    "",
+    `${methods.length} methods. This is an index, not a reference: payload and result shapes are`,
+    "listed by name where they have one and by their fields or tags where they do not, and the",
+    "full schemas live in the host's `packages/contracts`. A method marked **stream** returns a",
+    "stream of the listed element rather than a single result.",
+    "",
+    ...[...groups].flatMap(([prefix, group]) => [
+      prefix === UNPREFIXED ? `### ${prefix}` : `### \`${prefix}\``,
+      "",
+      "| Method | Payload | Result | Errors |",
+      "| --- | --- | --- | --- |",
+      ...group.map(
+        (method) =>
+          `| \`${method.name}\`${method.stream ? " **stream**" : ""} | ${method.payload} | ${method.success} | ${method.errors} |`,
+      ),
+      "",
+    ]),
+  ];
 };
 
 // ---------------------------------------------------------------------------

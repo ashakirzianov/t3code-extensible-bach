@@ -10,10 +10,24 @@ ordinary client protocol**, using a token that carries the new `extension` scope
 whatever orchestration scopes it needs. Nothing loads into the host process, and the host
 never dials out.
 
-Because it is a client, the whole existing client API is already available to it —
-`orchestration.dispatchCommand`, `subscribeShell`, `subscribeThread`, `searchThreads` — under
-its token's scopes. That is where spawning, messaging, and state derivation happen. The
-`extensions.*` methods below are only the surface that has no client equivalent.
+## Your extension is a client
+
+Read this before reaching for anything below. An extension holds an ordinary client token on
+an ordinary client socket, so **the API the product is built on is already your API** — the
+same `orchestration.dispatchCommand`, `subscribeShell`, `subscribeThread`, and
+`searchThreads` the web app calls, under whatever scopes your token carries. Spawning agents,
+sending messages, and deriving state all happen there. Everything the `extensions.*` methods
+add is the small remainder that has no client equivalent: registering tools, claiming an HTTP
+prefix, mounting a web entry, and answering what the host pushes back. If you are wondering
+which of the two surfaces a thing belongs to, the answer is almost always the client one.
+
+The generated [Client API](#client-api) section lists every method available to you, grouped
+by prefix, with what each takes and returns. For the model behind the orchestration methods —
+why a dispatched command is an intent rather than a result, and why the acknowledgement
+arrives before the provider has done anything — read
+[Durable intent and side effects](docs/internals/overview.md#durable-intent-and-side-effects). An
+extension that treats a command acknowledgement as completion will look broken in exactly the
+ways that document explains.
 
 ## The connection
 
@@ -277,10 +291,10 @@ decision rather than a rewrite.
 
 Field-by-field definitions are generated, not written:
 
-- **[`packages/contracts/generated/extensions/protocol.schema.json`](docs/internals/extensions/../../../packages/contracts/generated/extensions/protocol.schema.json)**
+- **[`packages/contracts/generated/extensions/protocol.schema.json`](packages/contracts/generated/extensions/protocol.schema.json)**
   — JSON Schema for the manifest and every message, plus an `x-methods` map from method name
   to the schemas that describe it. This is the contract for an extension in any language.
-- **[`packages/contracts/generated/extensions/protocol.d.ts`](docs/internals/extensions/../../../packages/contracts/generated/extensions/protocol.d.ts)**
+- **[`packages/contracts/generated/extensions/protocol.d.ts`](packages/contracts/generated/extensions/protocol.d.ts)**
   — the same shapes as dependency-free TypeScript declarations, to copy into a TypeScript
   extension.
 
@@ -376,6 +390,238 @@ Answers one proxyHttp event.
 - Input: [`ExtensionHttpResponse`](#extensionhttpresponse)
 - Success: acknowledgement only
 - Errors: [`EnvironmentAuthorizationError`](#environmentauthorizationerror)
+
+## Client API
+
+An extension is an ordinary client, so everything below is callable on the same socket
+as the `extensions.*` methods and needs no additional machinery. This is where an
+extension spawns work, sends messages, and reads state; the `extensions.*` surface only
+covers what has no client equivalent.
+
+Your token carries `orchestration:read`, `orchestration:operate`, `extension`. The orchestration methods are open to you;
+anything gated on a scope you were not granted — terminals, review, relay — answers
+with an authorization error rather than silently doing nothing.
+
+121 methods. This is an index, not a reference: payload and result shapes are
+listed by name where they have one and by their fields or tags where they do not, and the
+full schemas live in the host's `packages/contracts`. A method marked **stream** returns a
+stream of the listed element rather than a single result.
+
+### `server.`
+
+| Method | Payload | Result | Errors |
+| --- | --- | --- | --- |
+| `server.probe` | — | — | `EnvironmentAuthorizationError` |
+| `server.getConfig` | — | `{environment, auth, cwd, +15}` | `KeybindingsConfigParseError` \| `ServerSettingsError` \| `EnvironmentAuthorizationError` |
+| `server.refreshProviders` | `{instanceId, cwd, refreshModels}` | `{providers}` | `EnvironmentAuthorizationError` \| `ProviderSetupError` |
+| `server.updateProvider` | `{provider, instanceId}` | `{providers}` | `ServerProviderUpdateError` \| `EnvironmentAuthorizationError` |
+| `server.updateServer` | `{targetVersion, continueRunningThreads}` | `{targetVersion, method, updateId, +1}` | `ServerSelfUpdateError` \| `EnvironmentAuthorizationError` |
+| `server.updateServerWithProgress` **stream** | `{targetVersion, continueRunningThreads}` | `progress` \| `complete` | `ServerSelfUpdateError` \| `EnvironmentAuthorizationError` |
+| `server.commitDesktopUpdate` | `{requestId}` | `{targetVersion, method, updateId, +1}` | `ServerSelfUpdateError` \| `EnvironmentAuthorizationError` |
+| `server.upsertKeybinding` | `{key, command, when, +1}` | `{keybindings, issues}` | `KeybindingsConfigParseError` \| `EnvironmentAuthorizationError` |
+| `server.removeKeybinding` | `{key, command, when}` | `{keybindings, issues}` | `KeybindingsConfigParseError` \| `EnvironmentAuthorizationError` |
+| `server.getSettings` | — | `{enableLegacyTokenStreaming, enableProviderUpdateChecks, continueThreadsAfterServerUpdate, +28}` | `ServerSettingsError` \| `EnvironmentAuthorizationError` |
+| `server.updateSettings` | `{patch}` | `{enableLegacyTokenStreaming, enableProviderUpdateChecks, continueThreadsAfterServerUpdate, +28}` | `ServerSettingsError` \| `EnvironmentAuthorizationError` |
+| `server.discoverSourceControl` | — | `{versionControlSystems, sourceControlProviders}` | `EnvironmentAuthorizationError` |
+| `server.getTraceDiagnostics` | — | `{traceFilePath, scannedFilePaths, readAt, +16}` | `EnvironmentAuthorizationError` |
+| `server.getProcessDiagnostics` | — | `{serverPid, readAt, processCount, +4}` | `EnvironmentAuthorizationError` |
+| `server.getHostResources` | — | `{sampledAt, cpuUtilization, cpuCount, +2}` | `EnvironmentAuthorizationError` |
+| `server.getProcessResourceHistory` | `{windowMs, bucketMs}` | `{readAt, windowMs, bucketMs, +6}` | `EnvironmentAuthorizationError` |
+| `server.getResourceTelemetryHistory` | `{windowMs, bucketMs}` | `{readAt, windowMs, bucketMs, +5}` | `EnvironmentAuthorizationError` |
+| `server.retryResourceTelemetry` | — | `{accepted, snapshot}` | `EnvironmentAuthorizationError` |
+| `server.getUsageSummary` | `{sinceDay, untilDay, timeZone, +3}` | `{contractVersion, readAt, timeZone, +6}` | `EnvironmentAuthorizationError` \| `UsageReadError` |
+| `server.refreshUsageRates` | — | `{status, source, fetchedAt, +1}` | `EnvironmentAuthorizationError` |
+| `server.signalProcess` | `{pid, startTimeMs, signal}` | `{pid, signal, signaled, +1}` | `EnvironmentAuthorizationError` |
+| `server.reportClientActivity` | `{environmentId, clientId, clientKind, +10}` | — | `EnvironmentAuthorizationError` |
+| `server.reportHostPowerState` | `{source, idle, idleSeconds, +7}` | — | `EnvironmentAuthorizationError` |
+| `server.getBackgroundPolicy` | — | `{hostPower, leases, activeForegroundLeaseCount, +3}` | `EnvironmentAuthorizationError` |
+
+### `provider.`
+
+| Method | Payload | Result | Errors |
+| --- | --- | --- | --- |
+| `provider.consumeResetCredit` | `{instanceId}` | `{outcome}` | `ProviderSetupError` \| `EnvironmentAuthorizationError` |
+| `provider.auth.start` | `{instanceId}` | `{instanceId, phase, flowId, +3}` | `ProviderSetupError` \| `EnvironmentAuthorizationError` |
+| `provider.auth.complete` | `{instanceId, flowId, callbackUrl}` | `{instanceId, phase, flowId, +3}` | `ProviderSetupError` \| `EnvironmentAuthorizationError` |
+| `provider.auth.cancel` | `{instanceId, flowId}` | `{instanceId, phase, flowId, +3}` | `ProviderSetupError` \| `EnvironmentAuthorizationError` |
+| `provider.auth.logout` | `{instanceId}` | `{instanceId, phase, flowId, +3}` | `ProviderSetupError` \| `EnvironmentAuthorizationError` |
+| `provider.auth.subscribe` **stream** | `{instanceId}` | `{instanceId, phase, flowId, +3}` | `ProviderSetupError` \| `EnvironmentAuthorizationError` |
+| `provider.install.start` | `{instanceId}` | `{driver, operationId, phase, +6}` | `ProviderSetupError` \| `EnvironmentAuthorizationError` |
+| `provider.install.cancel` | `{instanceId, operationId}` | `{driver, operationId, phase, +6}` | `ProviderSetupError` \| `EnvironmentAuthorizationError` |
+| `provider.install.subscribe` **stream** | `{instanceId}` | `{driver, operationId, phase, +6}` | `ProviderSetupError` \| `EnvironmentAuthorizationError` |
+| `provider.install.remove` | `{instanceId}` | `{driver, operationId, phase, +6}` | `ProviderSetupError` \| `EnvironmentAuthorizationError` |
+| `provider.uploadFeedback` | `{threadId, reason}` | `{feedbackId}` | `ProviderUploadFeedbackError` \| `EnvironmentAuthorizationError` |
+
+### `cloud.`
+
+| Method | Payload | Result | Errors |
+| --- | --- | --- | --- |
+| `cloud.getRelayClientStatus` | — | union of 3 | `EnvironmentAuthorizationError` |
+| `cloud.installRelayClient` **stream** | — | `progress` \| `complete` | `RelayClientInstallFailedError` \| `EnvironmentAuthorizationError` |
+
+### `pullRequests.`
+
+| Method | Payload | Result | Errors |
+| --- | --- | --- | --- |
+| `pullRequests.list` | `{state, involvement, filters, +6}` | `{viewers, providers, entries, +3}` | `PullRequestUnavailableError` \| `PullRequestOperationError` \| `EnvironmentAuthorizationError` |
+| `pullRequests.listStats` | `{refs}` | `{stats}` | `PullRequestUnavailableError` \| `PullRequestOperationError` \| `EnvironmentAuthorizationError` |
+| `pullRequests.summary` | `{projectId, repository, number}` | `{provider, projectId, repository, +10}` | `PullRequestUnavailableError` \| `PullRequestOperationError` \| `EnvironmentAuthorizationError` |
+| `pullRequests.detail` | `{projectId, repository, number}` | `{provider, capabilities, viewerPermissions, +32}` | `PullRequestUnavailableError` \| `PullRequestOperationError` \| `EnvironmentAuthorizationError` |
+| `pullRequests.activity` | `{projectId, repository, number}` | `{author, reviewers, comments, +5}` | `PullRequestUnavailableError` \| `PullRequestOperationError` \| `EnvironmentAuthorizationError` |
+| `pullRequests.threadComments` | `{projectId, repository, number, +2}` | `{comments, nextCursor}` | `PullRequestUnavailableError` \| `PullRequestOperationError` \| `EnvironmentAuthorizationError` |
+| `pullRequests.diffFileContents` | `{projectId, repository, number, +4}` | `{oldContents, newContents}` | `PullRequestUnavailableError` \| `PullRequestOperationError` \| `EnvironmentAuthorizationError` |
+| `pullRequests.runAction` | `{projectId, repository, number, +3}` | — | `PullRequestUnavailableError` \| `PullRequestOperationError` \| `EnvironmentAuthorizationError` |
+| `pullRequests.update` | `{projectId, repository, number, +2}` | — | `PullRequestUnavailableError` \| `PullRequestOperationError` \| `EnvironmentAuthorizationError` |
+| `pullRequests.comment` | `{projectId, repository, number, +1}` | — | `PullRequestUnavailableError` \| `PullRequestOperationError` \| `EnvironmentAuthorizationError` |
+| `pullRequests.updateComment` | `{projectId, repository, number, +3}` | — | `PullRequestUnavailableError` \| `PullRequestOperationError` \| `EnvironmentAuthorizationError` |
+| `pullRequests.submitReview` | `{projectId, repository, number, +3}` | — | `PullRequestUnavailableError` \| `PullRequestOperationError` \| `EnvironmentAuthorizationError` |
+| `pullRequests.replyToThread` | `{projectId, repository, number, +2}` | — | `PullRequestUnavailableError` \| `PullRequestOperationError` \| `EnvironmentAuthorizationError` |
+| `pullRequests.setThreadResolution` | `{projectId, repository, number, +2}` | — | `PullRequestUnavailableError` \| `PullRequestOperationError` \| `EnvironmentAuthorizationError` |
+| `pullRequests.setReaction` | `{projectId, repository, number, +3}` | — | `PullRequestUnavailableError` \| `PullRequestOperationError` \| `EnvironmentAuthorizationError` |
+| `pullRequests.invalidate` | `{reference}` | — | `PullRequestUnavailableError` \| `PullRequestOperationError` \| `EnvironmentAuthorizationError` |
+| `pullRequests.subscribeRefreshes` **stream** | — | `integer` | `EnvironmentAuthorizationError` |
+| `pullRequests.reviewerCandidates` | `{projectId, repository, number}` | `{candidates, truncated}` | `PullRequestUnavailableError` \| `PullRequestOperationError` \| `EnvironmentAuthorizationError` |
+| `pullRequests.requestReviewers` | `{projectId, repository, number, +2}` | — | `PullRequestUnavailableError` \| `PullRequestOperationError` \| `EnvironmentAuthorizationError` |
+| `pullRequests.labelCandidates` | `{projectId, repository, number}` | `{candidates, truncated}` | `PullRequestUnavailableError` \| `PullRequestOperationError` \| `EnvironmentAuthorizationError` |
+| `pullRequests.setLabels` | `{projectId, repository, number, +2}` | — | `PullRequestUnavailableError` \| `PullRequestOperationError` \| `EnvironmentAuthorizationError` |
+
+### `sourceControl.`
+
+| Method | Payload | Result | Errors |
+| --- | --- | --- | --- |
+| `sourceControl.lookupRepository` | `{provider, repository, cwd}` | `{provider, nameWithOwner, url, +1}` | `SourceControlRepositoryError` \| `EnvironmentAuthorizationError` |
+| `sourceControl.cloneRepository` | `{provider, repository, remoteUrl, +2}` | `{cwd, remoteUrl, repository}` | `SourceControlRepositoryError` \| `EnvironmentAuthorizationError` |
+| `sourceControl.publishRepository` | `{cwd, provider, repository, +3}` | `{repository, remoteName, remoteUrl, +3}` | `SourceControlRepositoryError` \| `EnvironmentAuthorizationError` |
+
+### `projects.`
+
+| Method | Payload | Result | Errors |
+| --- | --- | --- | --- |
+| `projects.listEntries` | `{cwd}` | `{entries, truncated}` | `ProjectListEntriesError` \| `EnvironmentAuthorizationError` |
+| `projects.readFile` | `{cwd, relativePath}` | `{relativePath, contents, byteLength, +1}` | `ProjectReadFileError` \| `EnvironmentAuthorizationError` |
+| `projects.searchContents` | `{cwd, query, limit, +3}` | `{matches, truncated, regexFallbackError}` | `ProjectSearchContentsError` \| `EnvironmentAuthorizationError` |
+| `projects.searchEntries` | `{cwd, query, limit, +2}` | `{entries, truncated}` | `ProjectSearchEntriesError` \| `EnvironmentAuthorizationError` |
+| `projects.writeFile` | `{cwd, relativePath, contents}` | `{relativePath}` | `ProjectWriteFileError` \| `EnvironmentAuthorizationError` |
+
+### `shell.`
+
+| Method | Payload | Result | Errors |
+| --- | --- | --- | --- |
+| `shell.openInEditor` | `{cwd, editor, reveal}` | — | union of 2 |
+
+### `filesystem.`
+
+| Method | Payload | Result | Errors |
+| --- | --- | --- | --- |
+| `filesystem.browse` | `{partialPath, cwd}` | `{parentPath, entries}` | `FilesystemBrowseError` \| `EnvironmentAuthorizationError` |
+
+### `agentSessions.`
+
+| Method | Payload | Result | Errors |
+| --- | --- | --- | --- |
+| `agentSessions.scan` | — | `{candidates, scannedAt, truncated}` | `AgentSessionScanError` \| `EnvironmentAuthorizationError` |
+| `agentSessions.import` | `{projectId, expectedWorkspaceRoot}` | `{importedCount, skippedCount}` | `AgentSessionImportProjectChangedError` \| `AgentSessionImportProjectNotFoundError` \| `AgentSessionScanError` \| +1 |
+
+### `assets.`
+
+| Method | Payload | Result | Errors |
+| --- | --- | --- | --- |
+| `assets.createUrl` | `{resource}` | `{relativeUrl, expiresAt, sourcePath, +1}` | union of 2 |
+
+### `attachments.`
+
+| Method | Payload | Result | Errors |
+| --- | --- | --- | --- |
+| `attachments.createUploadUrl` | `image` \| `file` | `{attachmentId, relativeUrl, expiresAt}` | `AttachmentUploadSigningKeyError` \| `EnvironmentAuthorizationError` |
+| `attachments.delete` | `{attachmentId}` | — | `EnvironmentAuthorizationError` |
+
+### Ungrouped
+
+| Method | Payload | Result | Errors |
+| --- | --- | --- | --- |
+| `subscribeVcsStatus` **stream** | `{cwd}` | `snapshot` \| `localUpdated` \| `remoteUpdated` | union of 2 |
+| `subscribeTerminalEvents` **stream** | — | `started` \| `output` \| `exited` \| +5 | `EnvironmentAuthorizationError` |
+| `subscribeTerminalMetadata` **stream** | — | `snapshot` \| `upsert` \| `remove` | `EnvironmentAuthorizationError` |
+| `subscribePreviewEvents` **stream** | — | `opened` \| `navigated` \| `resized` \| +2 | `EnvironmentAuthorizationError` |
+| `subscribeDiscoveredLocalServers` **stream** | `{configuredUrls}` | `{servers, scannedAt, configuredUrlProbing}` | `EnvironmentAuthorizationError` |
+| `subscribeServerConfig` **stream** | `{environmentThemes, usageLimitSources, usageLimitsCommand}` | `snapshot` \| `keybindingsUpdated` \| `providerStatuses` \| +3 | `KeybindingsConfigParseError` \| `ServerSettingsError` \| `EnvironmentAuthorizationError` |
+| `subscribeServerLifecycle` **stream** | — | `welcome` \| `ready` | `EnvironmentAuthorizationError` |
+| `subscribeAuthAccess` **stream** | — | `snapshot` \| `pairingLinkUpserted` \| `pairingLinkRemoved` \| +2 | `AuthAccessStreamError` \| `EnvironmentAuthorizationError` |
+| `subscribeBackgroundPolicy` **stream** | — | `{hostPower, leases, activeForegroundLeaseCount, +3}` | `EnvironmentAuthorizationError` |
+| `subscribeResourceTelemetry` **stream** | — | `{readAt, sampleIntervalMs, processes, +5}` | `EnvironmentAuthorizationError` |
+
+### `vcs.`
+
+| Method | Payload | Result | Errors |
+| --- | --- | --- | --- |
+| `vcs.pull` | `{cwd}` | `{status, refName, upstreamRef}` | `GitCommandError` \| `EnvironmentAuthorizationError` |
+| `vcs.refreshStatus` | `{cwd}` | `{isRepo, sourceControlProvider, hasPrimaryRemote, +9}` | union of 2 |
+| `vcs.listRefs` | `{cwd, query, cursor, +4}` | `{refs, isRepo, hasPrimaryRemote, +2}` | `GitCommandError` \| `EnvironmentAuthorizationError` |
+| `vcs.createWorktree` | `{cwd, refName, newRefName, +2}` | `{worktree}` | `GitCommandError` \| `EnvironmentAuthorizationError` |
+| `vcs.removeWorktree` | `{cwd, path, force}` | — | `GitCommandError` \| `EnvironmentAuthorizationError` |
+| `vcs.createRef` | `{cwd, refName, switchRef}` | `{refName}` | `GitCommandError` \| `EnvironmentAuthorizationError` |
+| `vcs.switchRef` | `{cwd, refName}` | `{refName}` | `GitCommandError` \| `EnvironmentAuthorizationError` |
+| `vcs.init` | `{cwd, kind}` | — | union of 2 |
+
+### `git.`
+
+| Method | Payload | Result | Errors |
+| --- | --- | --- | --- |
+| `git.runStackedAction` **stream** | `{actionId, cwd, action, +3}` | `action_started` \| `phase_started` \| `hook_started` \| +4 | union of 2 |
+| `git.resolvePullRequest` | `{cwd, reference}` | `{pullRequest}` | union of 2 |
+| `git.preparePullRequestThread` | `{cwd, reference, mode, +1}` | `{pullRequest, branch, worktreePath, +1}` | union of 2 |
+
+### `review.`
+
+| Method | Payload | Result | Errors |
+| --- | --- | --- | --- |
+| `review.getDiffPreview` | `{cwd, baseRef, ignoreWhitespace}` | `{cwd, generatedAt, sources}` | union of 2 |
+| `review.getDiffFileContents` | `{cwd, sourceKind, changeType, +4}` | `{oldContents, newContents}` | union of 2 |
+
+### `terminal.`
+
+| Method | Payload | Result | Errors |
+| --- | --- | --- | --- |
+| `terminal.open` | `{threadId, terminalId, cwd, +5}` | `{threadId, terminalId, cwd, +9}` | union of 2 |
+| `terminal.attach` **stream** | `{threadId, terminalId, cwd, +6}` | `snapshot` \| `output` \| `exited` \| +5 | union of 2 |
+| `terminal.write` | `{threadId, terminalId, data}` | — | union of 2 |
+| `terminal.resize` | `{threadId, terminalId, cols, +1}` | — | union of 2 |
+| `terminal.clear` | `{threadId, terminalId}` | — | union of 2 |
+| `terminal.restart` | `{threadId, terminalId, cwd, +5}` | `{threadId, terminalId, cwd, +9}` | union of 2 |
+| `terminal.close` | `{threadId, terminalId, deleteHistory}` | — | union of 2 |
+
+### `preview.`
+
+| Method | Payload | Result | Errors |
+| --- | --- | --- | --- |
+| `preview.open` | `{threadId, url, viewport, +1}` | `{threadId, tabId, navStatus, +5}` | union of 2 |
+| `preview.navigate` | `{threadId, tabId, url, +1}` | `{threadId, tabId, navStatus, +5}` | union of 2 |
+| `preview.resize` | `{threadId, tabId, viewport}` | `{threadId, tabId, navStatus, +5}` | union of 2 |
+| `preview.refresh` | `{threadId, tabId}` | — | union of 2 |
+| `preview.close` | `{threadId, tabId}` | — | union of 2 |
+| `preview.list` | `{threadId}` | `{sessions, serverEpoch, revision}` | `EnvironmentAuthorizationError` |
+| `preview.reportStatus` | `{threadId, tabId, navStatus, +2}` | — | union of 2 |
+
+### `previewAutomation.`
+
+| Method | Payload | Result | Errors |
+| --- | --- | --- | --- |
+| `previewAutomation.connect` **stream** | `{clientId, environmentId, supportedOperations}` | `connected` \| `request` | union of 2 |
+| `previewAutomation.respond` | `{clientId, connectionId, requestId, +3}` | — | union of 2 |
+| `previewAutomation.focusHost` | `{clientId, environmentId, connectionId, +1}` | — | `EnvironmentAuthorizationError` |
+
+### `orchestration.`
+
+| Method | Payload | Result | Errors |
+| --- | --- | --- | --- |
+| `orchestration.dispatchCommand` | `project.create` \| `project.meta.update` \| `project.delete` \| +20 | `{sequence}` | `OrchestrationDispatchCommandError` \| `EnvironmentAuthorizationError` |
+| `orchestration.getWorkflowScript` | `{threadId, scriptPath}` | `{scriptPath, contents, truncated}` | `OrchestrationGetWorkflowScriptError` \| `EnvironmentAuthorizationError` |
+| `orchestration.getTurnDiff` | `OrchestrationTurnDiffRange` | `OrchestrationTurnDiffRange` | `OrchestrationGetTurnDiffError` \| `EnvironmentAuthorizationError` |
+| `orchestration.getFullThreadDiff` | `{threadId, toTurnCount, ignoreWhitespace}` | `OrchestrationTurnDiffRange` | `OrchestrationGetFullThreadDiffError` \| `EnvironmentAuthorizationError` |
+| `orchestration.searchThreads` | `{query, limit}` | `{matches}` | `OrchestrationSearchThreadsError` \| `EnvironmentAuthorizationError` |
+| `orchestration.getArchivedShellSnapshot` | — | `{snapshotSequence, projects, threads, +1}` | `OrchestrationGetSnapshotError` \| `EnvironmentAuthorizationError` |
+| `orchestration.subscribeShell` **stream** | `{afterSequence, requestCompletionMarker}` | union of 3 | `OrchestrationGetSnapshotError` \| `EnvironmentAuthorizationError` |
+| `orchestration.subscribeThread` **stream** | `{threadId, afterSequence, requestCompletionMarker, +1}` | `synchronized` \| `snapshot` \| `event` | `OrchestrationGetSnapshotError` \| `EnvironmentAuthorizationError` |
 
 ## Definitions
 

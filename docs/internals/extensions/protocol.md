@@ -5,10 +5,24 @@ ordinary client protocol**, using a token that carries the new `extension` scope
 whatever orchestration scopes it needs. Nothing loads into the host process, and the host
 never dials out.
 
-Because it is a client, the whole existing client API is already available to it —
-`orchestration.dispatchCommand`, `subscribeShell`, `subscribeThread`, `searchThreads` — under
-its token's scopes. That is where spawning, messaging, and state derivation happen. The
-`extensions.*` methods below are only the surface that has no client equivalent.
+## Your extension is a client
+
+Read this before reaching for anything below. An extension holds an ordinary client token on
+an ordinary client socket, so **the API the product is built on is already your API** — the
+same `orchestration.dispatchCommand`, `subscribeShell`, `subscribeThread`, and
+`searchThreads` the web app calls, under whatever scopes your token carries. Spawning agents,
+sending messages, and deriving state all happen there. Everything the `extensions.*` methods
+add is the small remainder that has no client equivalent: registering tools, claiming an HTTP
+prefix, mounting a web entry, and answering what the host pushes back. If you are wondering
+which of the two surfaces a thing belongs to, the answer is almost always the client one.
+
+The generated [Client API](#client-api) section lists every method available to you, grouped
+by prefix, with what each takes and returns. For the model behind the orchestration methods —
+why a dispatched command is an intent rather than a result, and why the acknowledgement
+arrives before the provider has done anything — read
+[Durable intent and side effects](../overview.md#durable-intent-and-side-effects). An
+extension that treats a command acknowledgement as completion will look broken in exactly the
+ways that document explains.
 
 ## The connection
 

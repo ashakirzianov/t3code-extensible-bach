@@ -32,10 +32,17 @@ describe("generated extension guide", () => {
     );
     for (const { fileName, contents } of guides) {
       // A link with a bare relative target only resolves next to the source
-      // file; served on its own it is a dead end.
-      const relativeLinks = contents.match(/\]\((?!https?:\/\/|#|\/)[^)]+\)/gu) ?? [];
-      const unrooted = relativeLinks.filter((link) => !link.startsWith("](docs/"));
-      expect({ fileName, unrooted }).toEqual({ fileName, unrooted: [] });
+      // file; served on its own it is a dead end. Every one must therefore
+      // read from the repository root — and, since that is checkable, point at
+      // something that is actually there.
+      const relativeLinks = contents.match(/\]\((?!https?:\/\/|#|\/)([^)]+)\)/gu) ?? [];
+      const broken = relativeLinks.filter((link) => {
+        const target = link.slice("](".length, -1).split("#")[0];
+        if (target === undefined || target === "") return false;
+        if (target.includes("../")) return true;
+        return !NodeFS.existsSync(NodePath.join(repoRoot, target));
+      });
+      expect({ fileName, broken }).toEqual({ fileName, broken: [] });
     }
   });
 });
