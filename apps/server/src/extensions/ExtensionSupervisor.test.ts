@@ -18,6 +18,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
+import * as ServerSettings from "../serverSettings.ts";
 import { EXTENSION_ENV } from "./ExtensionIdentity.ts";
 import * as ExtensionFolderWatcher from "./ExtensionFolderWatcher.ts";
 import * as ExtensionRegistry from "./ExtensionRegistry.ts";
@@ -132,6 +133,13 @@ const harness = Effect.fn("test.harness")(function* (input: {
     hostVersion: "0.0.38",
     dataRoot,
   });
+  // The supervisor reads and writes the extension list through settings, so the
+  // harness needs a real one. Built once and handed to both sides: a second
+  // `layerTest()` would be a second in-memory store, and the test would be
+  // reading settings the supervisor never wrote.
+  const settings = yield* ServerSettings.ServerSettingsService.pipe(
+    Effect.provide(ServerSettings.layerTest()),
+  );
   const supervisor = yield* ExtensionSupervisor.make({
     dataRoot,
     websocketUrl: "ws://127.0.0.1:13773/ws",
@@ -146,10 +154,12 @@ const harness = Effect.fn("test.harness")(function* (input: {
     Effect.provideService(ExtensionRegistry.ExtensionRegistry, registry),
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     Effect.provideService(ExtensionFolderWatcher.ExtensionFolderWatcher, watcher),
+    Effect.provideService(ServerSettings.ServerSettingsService, settings),
   );
 
   return {
     registry,
+    settings,
     supervisor,
     folder,
     dataRoot,
@@ -180,7 +190,7 @@ describe("starting", () => {
           const h = yield* harness({
             spawn: () => Effect.succeed(handle({ exit: Deferred.await(never) })),
           });
-          yield* h.supervisor.startAll(source(h.folder));
+          yield* h.supervisor.reconcile(source(h.folder));
           const spawn = yield* Queue.take(h.launched);
           expect(spawn.command).toBe("/fake/node");
           expect(spawn.args).toStrictEqual(["dist/server.js"]);
@@ -209,7 +219,7 @@ describe("starting", () => {
           const h = yield* harness({
             spawn: () => Effect.succeed(handle({ exit: Deferred.await(never) })),
           });
-          yield* h.supervisor.startAll(source(h.folder));
+          yield* h.supervisor.reconcile(source(h.folder));
           const spawn = yield* Queue.take(h.launched);
           const dataDirectory = spawn.env[EXTENSION_ENV.dataDir];
           expect(dataDirectory).toBe(h.path.join(h.dataRoot, "bach"));
@@ -225,7 +235,7 @@ describe("starting", () => {
         Effect.gen(function* () {
           const h = yield* harness({ spawn: () => Effect.succeed(handle({})) });
           yield* h.fs.remove(h.path.join(h.folder, "dist/server.js"));
-          yield* h.supervisor.startAll(source(h.folder));
+          yield* h.supervisor.reconcile(source(h.folder));
           expect(yield* Ref.get(h.spawns)).toStrictEqual([]);
           const status = yield* h.registry.get("bach");
           expect(status.state).toBe("crashed");
@@ -240,7 +250,7 @@ describe("starting", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const h = yield* harness({ spawn: () => Effect.succeed(handle({})) });
-          yield* h.supervisor.startAll([{ ...source(h.folder)[0]!, enabled: false }]);
+          yield* h.supervisor.reconcile([{ ...source(h.folder)[0]!, enabled: false }]);
           expect(yield* Ref.get(h.spawns)).toStrictEqual([]);
           expect(yield* h.registry.get("bach")).toMatchObject({
             state: "disabled",
@@ -259,7 +269,7 @@ describe("starting", () => {
             spawn: () =>
               Effect.succeed(handle({ code: 1, stdout: "ready\nlistening", stderr: "warn" })),
           });
-          yield* h.supervisor.startAll(source(h.folder));
+          yield* h.supervisor.reconcile(source(h.folder));
           yield* Queue.take(h.launched);
           // The run drains its output before reporting the exit, so waiting for
           // the restart is waiting for run one's logs to be complete.
@@ -285,7 +295,7 @@ describe("restarting", () => {
           const h = yield* harness({
             spawn: () => Effect.succeed(handle({ code: 1 })),
           });
-          yield* h.supervisor.startAll(source(h.folder));
+          yield* h.supervisor.reconcile(source(h.folder));
           yield* Queue.take(h.launched);
 
           // The exit lands, and nothing is retried before the minimum delay.
@@ -348,7 +358,7 @@ describe("folder change detection", () => {
           const h = yield* harness({
             spawn: () => Effect.succeed(handle({ exit: Deferred.await(never) })),
           });
-          yield* h.supervisor.startAll(source(h.folder));
+          yield* h.supervisor.reconcile(source(h.folder));
           yield* Queue.take(h.launched);
           expect((yield* h.registry.get("bach")).changed).toBe(false);
 
@@ -387,7 +397,7 @@ describe("folder change detection", () => {
           const h = yield* harness({
             spawn: () => Effect.succeed(handle({ exit: Deferred.await(never) })),
           });
-          yield* h.supervisor.startAll(source(h.folder));
+          yield* h.supervisor.reconcile(source(h.folder));
           yield* Queue.take(h.launched);
 
           // Watchers tick spuriously — an editor's temp file, a poll on a quiet
@@ -409,7 +419,7 @@ describe("folder change detection", () => {
           const h = yield* harness({
             spawn: () => Effect.succeed(handle({ exit: Deferred.await(never) })),
           });
-          yield* h.supervisor.startAll(source(h.folder));
+          yield* h.supervisor.reconcile(source(h.folder));
           yield* Queue.take(h.launched);
 
           yield* h.fs.writeFileString(h.path.join(h.folder, "dist/server.js"), "// build 2");
@@ -435,7 +445,7 @@ describe("folder change detection", () => {
           const h = yield* harness({
             spawn: () => Effect.succeed(handle({ exit: Deferred.await(never) })),
           });
-          yield* h.supervisor.startAll([
+          yield* h.supervisor.reconcile([
             { name: "bach" as ExtensionName, path: h.folder, enabled: false, source: "settings" },
           ]);
           yield* TestClock.adjust(Duration.seconds(1));
@@ -455,7 +465,7 @@ describe("folder change detection", () => {
           const h = yield* harness({
             spawn: () => Effect.succeed(handle({ exit: Deferred.await(never) })),
           });
-          yield* h.supervisor.startAll(source(h.folder));
+          yield* h.supervisor.reconcile(source(h.folder));
           yield* Queue.take(h.launched);
           expect(yield* Ref.get(h.watched)).toEqual([h.folder]);
 
@@ -479,7 +489,7 @@ describe("folder change detection", () => {
           const h = yield* harness({
             spawn: () => Effect.succeed(handle({ exit: Deferred.await(never) })),
           });
-          yield* h.supervisor.startAll(source(h.folder));
+          yield* h.supervisor.reconcile(source(h.folder));
           yield* Queue.take(h.launched);
 
           // A build lands and no event arrives — a dropped inotify event, a
@@ -504,7 +514,7 @@ describe("deploy and enablement", () => {
           const h = yield* harness({
             spawn: () => Effect.succeed(handle({ exit: Deferred.await(never) })),
           });
-          yield* h.supervisor.startAll(source(h.folder));
+          yield* h.supervisor.reconcile(source(h.folder));
           yield* Queue.take(h.launched);
           const before = yield* h.registry.get("bach");
           expect(before.changed).toBe(false);
@@ -536,7 +546,7 @@ describe("deploy and enablement", () => {
           const h = yield* harness({
             spawn: () => Effect.succeed(handle({ exit: Deferred.await(never) })),
           });
-          yield* h.supervisor.startAll(source(h.folder));
+          yield* h.supervisor.reconcile(source(h.folder));
           yield* Queue.take(h.launched);
           const before = yield* h.registry.get("bach");
 
@@ -559,7 +569,7 @@ describe("deploy and enablement", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const h = yield* harness({ spawn: () => Effect.succeed(handle({})) });
-          yield* h.supervisor.startAll([{ ...source(h.folder)[0]!, enabled: false }]);
+          yield* h.supervisor.reconcile([{ ...source(h.folder)[0]!, enabled: false }]);
           const before = yield* h.registry.get("bach");
 
           yield* h.fs.writeFileString(h.path.join(h.folder, "dist/server.js"), "// build 2");
@@ -582,7 +592,7 @@ describe("deploy and enablement", () => {
           const h = yield* harness({
             spawn: () => Effect.succeed(handle({ exit: Deferred.await(never) })),
           });
-          yield* h.supervisor.startAll(source(h.folder));
+          yield* h.supervisor.reconcile(source(h.folder));
           yield* Queue.take(h.launched);
 
           yield* h.supervisor.setEnabled({ name: "bach", enabled: false });
@@ -595,6 +605,213 @@ describe("deploy and enablement", () => {
           yield* Queue.take(h.launched);
           expect((yield* Ref.get(h.spawns)).length).toBe(2);
           expect(yield* h.registry.get("bach")).toMatchObject({ state: "running", enabled: true });
+        }),
+      ),
+    ),
+  );
+});
+
+describe("reconciling", () => {
+  /** A spawner whose children never exit, so "running" stays observable. */
+  const staysUp = Effect.fn("test.staysUp")(function* () {
+    const never = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+    return () => Effect.succeed(handle({ exit: Deferred.await(never) }));
+  });
+
+  it.effect("starts an entry that appears and forgets one that goes", () =>
+    run(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* harness({ spawn: yield* staysUp() });
+          yield* h.supervisor.reconcile(source(h.folder));
+          yield* Queue.take(h.launched);
+          expect((yield* h.registry.list).extensions.map((e) => e.name)).toStrictEqual(["bach"]);
+
+          // Gone from settings: the record goes with it, so its tool names and
+          // HTTP prefix are free again rather than held by something dead.
+          yield* h.supervisor.reconcile([]);
+          expect((yield* h.registry.list).extensions).toStrictEqual([]);
+        }),
+      ),
+    ),
+  );
+
+  it.effect("leaves an unchanged list completely alone", () =>
+    run(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* harness({ spawn: yield* staysUp() });
+          yield* h.supervisor.reconcile(source(h.folder));
+          yield* Queue.take(h.launched);
+          // Reconciling is called on every settings write, most of which have
+          // nothing to do with extensions; a restart on each would be brutal.
+          yield* h.supervisor.reconcile(source(h.folder));
+          yield* h.supervisor.reconcile(source(h.folder));
+          expect(yield* Ref.get(h.spawns)).toHaveLength(1);
+        }),
+      ),
+    ),
+  );
+
+  it.effect("follows enabled from the entry, both ways", () =>
+    run(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* harness({ spawn: yield* staysUp() });
+          yield* h.supervisor.reconcile(source(h.folder));
+          yield* Queue.take(h.launched);
+
+          yield* h.supervisor.reconcile([{ ...source(h.folder)[0]!, enabled: false }]);
+          const off = (yield* h.registry.list).extensions[0]!;
+          expect(off.state).toBe("disabled");
+          expect(off.enabled).toBe(false);
+
+          yield* h.supervisor.reconcile(source(h.folder));
+          yield* Queue.take(h.launched);
+          expect((yield* h.registry.list).extensions[0]!.enabled).toBe(true);
+          expect(yield* Ref.get(h.spawns)).toHaveLength(2);
+        }),
+      ),
+    ),
+  );
+
+  it.effect("restarts on the new folder when the entry's path moves", () =>
+    run(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* harness({ spawn: yield* staysUp() });
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* h.supervisor.reconcile(source(h.folder));
+          const first = yield* Queue.take(h.launched);
+
+          // A second build of the same extension somewhere else. The name is
+          // the same, so this is a path change rather than an install.
+          const moved = yield* fs.makeTempDirectoryScoped({ prefix: "extension-moved-" });
+          yield* fs.writeFileString(path.join(moved, "extension.json"), JSON.stringify(manifest));
+          yield* fs.makeDirectory(path.join(moved, "dist"), { recursive: true });
+          yield* fs.writeFileString(path.join(moved, "dist/server.js"), "// build 2");
+
+          yield* h.supervisor.reconcile([{ ...source(h.folder)[0]!, path: moved }]);
+          const second = yield* Queue.take(h.launched);
+          expect(first.cwd).toBe(h.folder);
+          expect(second.cwd).toBe(moved);
+          expect((yield* h.registry.list).extensions[0]!.path).toBe(moved);
+        }),
+      ),
+    ),
+  );
+});
+
+describe("install and remove", () => {
+  const staysUp = Effect.fn("test.staysUp")(function* () {
+    const never = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+    return () => Effect.succeed(handle({ exit: Deferred.await(never) }));
+  });
+
+  it.effect("installs a folder by its manifest's name and starts it", () =>
+    run(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* harness({ spawn: yield* staysUp() });
+          const name = yield* h.supervisor.install({ path: h.folder });
+          expect(name).toBe("bach");
+          yield* Queue.take(h.launched);
+          expect((yield* h.registry.list).extensions[0]!.state).toBe("running");
+          // The entry is what survives a restart, so it has to be written.
+          const stored = yield* h.settings.getSettings;
+          expect(stored.extensions).toStrictEqual([
+            { name: "bach", path: h.folder, enabled: true },
+          ]);
+        }),
+      ),
+    ),
+  );
+
+  it.effect("refuses a folder that is not an extension, writing nothing", () =>
+    run(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* harness({ spawn: yield* staysUp() });
+          const fs = yield* FileSystem.FileSystem;
+          const empty = yield* fs.makeTempDirectoryScoped({ prefix: "extension-empty-" });
+
+          const exit = yield* Effect.exit(h.supervisor.install({ path: empty }));
+          expect(exit._tag).toBe("Failure");
+          // A refused install must not leave an entry for the user to find
+          // later and wonder about.
+          expect((yield* h.settings.getSettings).extensions).toStrictEqual([]);
+          expect((yield* h.registry.list).extensions).toStrictEqual([]);
+        }),
+      ),
+    ),
+  );
+
+  it.effect("refuses a second folder claiming an installed name", () =>
+    run(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* harness({ spawn: yield* staysUp() });
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* h.supervisor.install({ path: h.folder });
+          yield* Queue.take(h.launched);
+
+          const other = yield* fs.makeTempDirectoryScoped({ prefix: "extension-other-" });
+          yield* fs.writeFileString(path.join(other, "extension.json"), JSON.stringify(manifest));
+          yield* fs.makeDirectory(path.join(other, "dist"), { recursive: true });
+          yield* fs.writeFileString(path.join(other, "dist/server.js"), "// other");
+
+          const exit = yield* Effect.exit(h.supervisor.install({ path: other }));
+          expect(exit._tag).toBe("Failure");
+          // The first install still owns the name and its original path.
+          expect((yield* h.settings.getSettings).extensions).toStrictEqual([
+            { name: "bach", path: h.folder, enabled: true },
+          ]);
+        }),
+      ),
+    ),
+  );
+
+  it.effect("removes it, and keeps its data unless asked", () =>
+    run(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* harness({ spawn: yield* staysUp() });
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* h.supervisor.install({ path: h.folder });
+          yield* Queue.take(h.launched);
+          const dataDir = path.join(h.dataRoot, "bach");
+          yield* fs.makeDirectory(dataDir, { recursive: true });
+          yield* fs.writeFileString(path.join(dataDir, "state.json"), "{}");
+
+          yield* h.supervisor.remove({ name: "bach" as ExtensionName, deleteData: false });
+          expect((yield* h.settings.getSettings).extensions).toStrictEqual([]);
+          expect((yield* h.registry.list).extensions).toStrictEqual([]);
+          // Removing to reinstall is the common case; discarding state silently
+          // would make that lossy.
+          expect(yield* fs.exists(dataDir)).toBe(true);
+        }),
+      ),
+    ),
+  );
+
+  it.effect("deletes the data directory when asked", () =>
+    run(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* harness({ spawn: yield* staysUp() });
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* h.supervisor.install({ path: h.folder });
+          yield* Queue.take(h.launched);
+          const dataDir = path.join(h.dataRoot, "bach");
+          yield* fs.makeDirectory(dataDir, { recursive: true });
+          yield* fs.writeFileString(path.join(dataDir, "state.json"), "{}");
+
+          yield* h.supervisor.remove({ name: "bach" as ExtensionName, deleteData: true });
+          expect(yield* fs.exists(dataDir)).toBe(false);
         }),
       ),
     ),

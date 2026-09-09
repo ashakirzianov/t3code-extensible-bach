@@ -821,6 +821,8 @@ export const EXTENSION_ADMIN_WS_METHODS = {
   deploy: "extensions.admin.deploy",
   setEnabled: "extensions.admin.setEnabled",
   logs: "extensions.admin.logs",
+  install: "extensions.admin.install",
+  remove: "extensions.admin.remove",
   assetUrls: "extensions.admin.assetUrls",
 } as const;
 
@@ -867,9 +869,52 @@ export class ExtensionFolderError extends Schema.TaggedErrorClass<ExtensionFolde
   }
 }
 
+/**
+ * The name in the folder's manifest is already installed in this environment.
+ *
+ * Names are the environment's namespace — they key the settings entry, the
+ * data directory, the tool owners and the nav row — so a second folder claiming
+ * one has to be refused rather than merged. Overriding a shipped extension with
+ * a local build is an *edit* of the existing entry's path, not a second install.
+ */
+export class ExtensionAlreadyInstalledError extends Schema.TaggedErrorClass<ExtensionAlreadyInstalledError>()(
+  "ExtensionAlreadyInstalledError",
+  {
+    extensionName: ExtensionName,
+  },
+) {
+  override get message(): string {
+    return `An extension named ${this.extensionName} is already installed in this environment.`;
+  }
+}
+
+export const ExtensionInstallInput = Schema.Struct({
+  /** A folder on the host. Relative paths resolve against the server's cwd. */
+  path: BoundedString(1024),
+}).annotate({ identifier: "ExtensionInstallInput" });
+export type ExtensionInstallInput = typeof ExtensionInstallInput.Type;
+
+/** The name came from the folder's manifest, so the caller is told what it got. */
+export const ExtensionInstallResult = Schema.Struct({
+  name: ExtensionName,
+}).annotate({ identifier: "ExtensionInstallResult" });
+export type ExtensionInstallResult = typeof ExtensionInstallResult.Type;
+
+export const ExtensionRemoveInput = Schema.Struct({
+  name: ExtensionName,
+  /**
+   * Also delete `<userdata>/extensions/<name>/`. Off by default and asked for
+   * explicitly: an extension is usually removed in order to reinstall it, and
+   * discarding its state silently would make that lossy.
+   */
+  deleteData: Schema.Boolean,
+}).annotate({ identifier: "ExtensionRemoveInput" });
+export type ExtensionRemoveInput = typeof ExtensionRemoveInput.Type;
+
 export const ExtensionAdminError = Schema.Union([
   ExtensionNotFoundError,
   ExtensionFolderError,
+  ExtensionAlreadyInstalledError,
 ]).annotate({ identifier: "ExtensionAdminError" });
 export type ExtensionAdminError = typeof ExtensionAdminError.Type;
 

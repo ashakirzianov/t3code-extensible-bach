@@ -134,3 +134,30 @@ describe("extension nav entries", () => {
     expect(extensionUnavailableMessage(starting!)).toBe("Starting is starting.");
   });
 });
+
+describe("extension nav icons", () => {
+  const web = (label: string, icon?: string) => ({
+    entry: "web/entry.js",
+    label,
+    ...(icon === undefined ? {} : { icon }),
+  });
+
+  it("carries the manifest's icon path when it declares one, and nothing when it does not", () => {
+    const entries = extensionNavEntries([
+      {
+        environmentId: environmentId("env-1"),
+        environmentLabel: "Laptop",
+        extensions: [
+          status({ name: "with-icon", web: web("With", "web/icon.svg") }),
+          status({ name: "without-icon", web: web("Without") }),
+        ],
+      },
+    ]);
+
+    // The row falls back to the host's own icon when the manifest declares
+    // none, so "no icon" has to be visible as an absent path rather than an
+    // empty string the client would then try to sign and serve.
+    expect(entries[0]?.web.icon).toBe("web/icon.svg");
+    expect(entries[1]?.web.icon).toBeUndefined();
+  });
+});

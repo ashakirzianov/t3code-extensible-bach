@@ -240,6 +240,17 @@ export interface ExtensionRegistryShape {
     readonly name: ExtensionName;
     readonly enabled: boolean;
   }) => Effect.Effect<void, ExtensionNotFoundError>;
+  /**
+   * Forget an extension entirely, freeing its tool names and HTTP prefix for
+   * whoever asks next. The caller stops the process first — this only drops the
+   * record, and a record with a live connection would strand it.
+   *
+   * MCP tools cannot be withdrawn from a connected agent
+   * (`spikes/mcp-client-behaviour.md`), so a removed extension's tools keep
+   * answering until the agent's process restarts — with `ExtensionUnknownToolError`
+   * rather than a stale result, which is the honest answer.
+   */
+  readonly removeSource: (name: ExtensionName) => Effect.Effect<void>;
   /** The supervisor has finished reading settings and flags; readiness can now resolve. */
   readonly markSourcesResolved: Effect.Effect<void>;
 
@@ -932,6 +943,17 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
     return toStatus(record);
   });
 
+  const removeSource: ExtensionRegistryShape["removeSource"] = Effect.fn(
+    "ExtensionRegistry.removeSource",
+  )(function* (name) {
+    yield* updateState((current) => {
+      if (!current.records.has(name)) return current;
+      const records = new Map(current.records);
+      records.delete(name);
+      return { ...current, records };
+    });
+  });
+
   return ExtensionRegistry.of({
     hello,
     registerTools,
@@ -951,6 +973,7 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
     setFolderHash,
     appendLog,
     setEnabled,
+    removeSource,
     list,
     changes,
     logs,

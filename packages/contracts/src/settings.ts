@@ -1148,6 +1148,19 @@ const OpenCodeSettingsPatch = Schema.Struct({
 });
 
 export const ServerSettingsPatch = Schema.Struct({
+  /**
+   * The environment's extension entries.
+   *
+   * Writable through the generic patch, unlike the theme preference above,
+   * because it grants nothing the caller does not already have: the scope this
+   * patch requires is the same one that spawns agents and runs terminal
+   * commands on this environment. What the *seam* cares about — that the folder
+   * is really an extension and its name is free — is enforced where it can be,
+   * in `extensions.admin.install` and again when the supervisor reconciles: an
+   * entry pointing at a folder with no readable `extension.json` is recorded as
+   * crashed with that reason, never executed.
+   */
+  extensions: Schema.optionalKey(Schema.Array(ExtensionSettingsEntry)),
   // Server settings
   enableLegacyTokenStreaming: Schema.optionalKey(Schema.Boolean),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),

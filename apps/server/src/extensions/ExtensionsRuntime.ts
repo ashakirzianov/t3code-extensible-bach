@@ -17,12 +17,9 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { PreviewToolkit } from "../mcp/toolkits/preview/tools.ts";
-import { ServerSettingsService } from "../serverSettings.ts";
-import type { ServerSettings } from "@t3tools/contracts";
 import { EXTENSION_SUBJECT_PREFIX, EXTENSION_TOKEN_SCOPES } from "./ExtensionIdentity.ts";
 import * as ExtensionFolderWatcher from "./ExtensionFolderWatcher.ts";
 import * as ExtensionRegistry from "./ExtensionRegistry.ts";
-import { resolveExtensionSources } from "./ExtensionSources.ts";
 import * as ExtensionSupervisor from "./ExtensionSupervisor.ts";
 
 type HttpServerAddress = (typeof HttpServer.HttpServer)["Service"]["address"];
@@ -75,6 +72,7 @@ export const layer = Layer.unwrap(
       nodePath: process.execPath,
       runAsNode: process.versions.electron !== undefined,
       cwd: config.cwd,
+      launchFlags: config.extensionLaunchFlags ?? [],
     }).pipe(
       // The real `fs.watch`-backed watcher: this is what makes a finished
       // build light up Deploy without anyone opening Settings.
@@ -98,20 +96,11 @@ export const layer = Layer.unwrap(
  */
 export const startLayer = Layer.effectDiscard(
   Effect.gen(function* () {
-    const config = yield* ServerConfig.ServerConfig;
     const supervisor = yield* ExtensionSupervisor.ExtensionSupervisor;
-    const settings = yield* ServerSettingsService;
-    // A settings file this build cannot read is a reason to run no extensions,
-    // not a reason to fail the server's startup.
-    const stored = yield* settings.getSettings.pipe(
-      Effect.map((current) => current.extensions),
-      Effect.orElseSucceed((): ServerSettings["extensions"] => []),
-    );
-    const sources = resolveExtensionSources({
-      settingsEntries: stored,
-      launchFlags: config.extensionLaunchFlags ?? [],
-    });
-    if (sources.length === 0) return;
-    yield* supervisor.startAll(sources);
+    // Reconciles once against the current settings, then keeps reconciling —
+    // so installing or removing an extension takes effect without a restart.
+    // Unconditional even when nothing is installed: the whole point is that
+    // something can be installed later.
+    yield* supervisor.watchSettings;
   }),
 );

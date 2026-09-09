@@ -175,6 +175,10 @@ export function applyServerSettingsPatch(
     usagePriceOverrides: usagePriceOverridesPatch,
     projectAgentBrowserAccessOverrides: projectAgentBrowserAccessOverridesPatch,
     projectAutoPullOverrides: projectAutoPullOverridesPatch,
+    // Replaced wholesale, never merged: `deepMerge` walks into arrays index by
+    // index, so a patch that drops the last extension would leave it in place —
+    // uninstall would silently do nothing.
+    extensions: extensionsPatch,
     ...patchForMerge
   } = patch;
   const currentBackgroundActivity = normalizeServerBackgroundActivitySettings(current);
@@ -212,7 +216,8 @@ export function applyServerSettingsPatch(
             },
           }
         : undefined;
-  const next = deepMerge(current, patchForMerge);
+  const merged = deepMerge(current, patchForMerge);
+  const next = extensionsPatch === undefined ? merged : { ...merged, extensions: extensionsPatch };
   const nextWithReplacementsBase = {
     ...next,
     ...(backgroundActivity !== undefined

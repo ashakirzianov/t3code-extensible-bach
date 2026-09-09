@@ -2794,6 +2794,18 @@ const makeWsRpcLayer = (
             mintExtensionAssetUrls(extensions, input.name),
             { "rpc.aggregate": "extensions" },
           ),
+        [EXTENSION_ADMIN_WS_METHODS.install]: (input) =>
+          observeRpcEffect(
+            EXTENSION_ADMIN_WS_METHODS.install,
+            Effect.scoped(extensionSupervisor.install(input)).pipe(
+              Effect.map((name): { readonly name: typeof name } => ({ name })),
+            ),
+            { "rpc.aggregate": "extensions" },
+          ),
+        [EXTENSION_ADMIN_WS_METHODS.remove]: (input) =>
+          observeRpcEffect(EXTENSION_ADMIN_WS_METHODS.remove, extensionSupervisor.remove(input), {
+            "rpc.aggregate": "extensions",
+          }),
         [EXTENSION_ADMIN_WS_METHODS.setEnabled]: (input) =>
           observeRpcEffect(
             EXTENSION_ADMIN_WS_METHODS.setEnabled,

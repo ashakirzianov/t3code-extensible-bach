@@ -159,6 +159,10 @@ export const RPC_REQUIRED_SCOPES = {
   [EXTENSION_ADMIN_WS_METHODS.assetUrls]: AuthOrchestrationReadScope,
   [EXTENSION_ADMIN_WS_METHODS.deploy]: AuthOrchestrationOperateScope,
   [EXTENSION_ADMIN_WS_METHODS.setEnabled]: AuthOrchestrationOperateScope,
+  // Installing runs code the user pointed at, and removing can delete its data;
+  // both are the same "change this environment" privilege as deploy.
+  [EXTENSION_ADMIN_WS_METHODS.install]: AuthOrchestrationOperateScope,
+  [EXTENSION_ADMIN_WS_METHODS.remove]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewAutomationConnect]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewAutomationRespond]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewAutomationFocusHost]: AuthOrchestrationOperateScope,

@@ -73,6 +73,13 @@ A registered prefix is served under the host's own origin and auth, so remote, r
 tunnel clients reach it unchanged. The host proxies each request onto the stream and waits
 for the matching response. Bodies are `utf8` or `base64` so binary survives a JSON wire.
 
+The nav row the host draws carries the manifest's `icon` when it declares one —
+served, like the bundle, by the signed asset route — and the host's own icon when
+it does not. The row is labelled, sits at the end of the thread list, and shows
+the badge at its end; a folder that has moved under a running process adds a
+small affordance that leads to Settings, where Deploy lives with the version, the
+path and the logs.
+
 The web entry is a path to an ES module inside the extension's folder. The client loads it
 with a same-origin `import()` — the only thing that executes under the desktop CSP
 ([spike](spikes/electron-runtime.md)) — and mounts it in a container the host owns. The host
@@ -85,6 +92,16 @@ Two sources, and no third: entries in the environment's settings
 flags. The desktop shell passes a flag for whatever sits in its resources directory, so a
 shipped extension is indistinguishable from one a developer pointed at by hand — the word
 "bundled" appears nowhere in the server.
+
+Both are read again whenever the environment's settings change, so **installing
+or removing an extension takes effect without a restart**: a new entry has its
+folder read and starts, an entry that goes stops and is unregistered — freeing
+its tool names and HTTP prefix — one whose path moved restarts on the new folder,
+and `enabled` is followed either way. `extensions.admin.install` takes a path,
+reads the folder's manifest for the name, refuses one already installed, and
+writes the entry; `extensions.admin.remove` drops it, and deletes the data
+directory only when asked. Reconciling is idempotent, so a settings write that
+has nothing to do with extensions costs nothing.
 
 **A settings entry wins by name.** Writing an entry for `bach` pointing at your checkout's
 build overrides the shipped copy; writing one with `enabled: false` turns it off. That one

@@ -1,13 +1,22 @@
+import { useAtomValue } from "@effect/atom-react";
 import type { ExtensionNavEntry } from "@t3tools/client-runtime/extensions";
 import { PuzzleIcon, RefreshCwIcon } from "lucide-react";
 import { memo, useCallback } from "react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
+import * as Option from "effect/Option";
+import { AsyncResult } from "effect/unstable/reactivity";
 
 import { cn } from "../lib/utils";
-import { useExtensionNavEntries } from "../state/extensions";
 import { useNavigateToExtensionSettings } from "../components/settings/ExtensionsSettings";
+import { extensionEnvironment, useExtensionNavEntries } from "../state/extensions";
+import { useEnvironmentHttpBaseUrl } from "../state/environments";
 import { Button } from "../components/ui/button";
-import { SidebarMenuButton, SidebarMenuItem, useSidebar } from "../components/ui/sidebar";
+import {
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  useSidebar,
+} from "../components/ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
 
 /**
@@ -29,16 +38,38 @@ const badgeLabel = (entry: ExtensionNavEntry): string | null => {
   return entry.badge.count > 99 ? "99+" : String(entry.badge.count);
 };
 
-const tooltipLabel = (entry: ExtensionNavEntry): string =>
-  entry.environmentLabel === null ? entry.label : `${entry.label} — ${entry.environmentLabel}`;
+/**
+ * The manifest's icon, or `null` to fall back.
+ *
+ * The URL is signed and short-lived, so it is queried rather than derived — and
+ * an extension with no icon never asks for one.
+ */
+function useExtensionIconUrl(entry: ExtensionNavEntry): string | null {
+  const httpBaseUrl = useEnvironmentHttpBaseUrl(entry.environmentId);
+  const result = useAtomValue(
+    extensionEnvironment.assetUrlsQuery({
+      environmentId: entry.environmentId,
+      input: { name: entry.name },
+    }),
+  );
+  const urls = Option.getOrNull(AsyncResult.value(result));
+  if (entry.web.icon === undefined || urls?.icon === undefined || httpBaseUrl === null) return null;
+  try {
+    return new URL(urls.icon, httpBaseUrl).toString();
+  } catch {
+    return null;
+  }
+}
 
-function ExtensionSidebarEntry({ entry }: { entry: ExtensionNavEntry }) {
+function ExtensionSidebarRow({ entry }: { entry: ExtensionNavEntry }) {
   const navigate = useNavigate();
   const { isMobile, setOpenMobile } = useSidebar();
+  const openSettings = useNavigateToExtensionSettings();
   const isActive = useLocation({
     select: (location) => location.pathname.startsWith(`/ext/${entry.environmentId}/${entry.name}`),
   });
   const badge = badgeLabel(entry);
+  const iconUrl = useExtensionIconUrl(entry);
 
   const handleOpen = useCallback(() => {
     if (isMobile) setOpenMobile(false);
@@ -48,62 +79,66 @@ function ExtensionSidebarEntry({ entry }: { entry: ExtensionNavEntry }) {
     });
   }, [entry.environmentId, entry.name, isMobile, navigate, setOpenMobile]);
 
-  // Deploy stops and restarts a process, so the sidebar points at it rather
-  // than doing it: Settings is where the version, the state and the output that
-  // make it a decision are, and it is the one place Deploy is implemented.
-  const openInSettings = useNavigateToExtensionSettings();
-  const handleDeploy = useCallback(() => {
+  // Deploy is a human click, and it belongs where the version, the path and the
+  // logs are — so this affordance takes you there rather than being a second
+  // implementation of the confirmation.
+  const handleRedeploy = useCallback(() => {
     if (isMobile) setOpenMobile(false);
-    openInSettings({ environmentId: entry.environmentId, name: entry.name });
-  }, [entry.environmentId, entry.name, isMobile, openInSettings, setOpenMobile]);
+    openSettings({ environmentId: entry.environmentId, name: entry.name });
+  }, [entry.environmentId, entry.name, isMobile, openSettings, setOpenMobile]);
 
   return (
-    <SidebarMenuItem className="shrink-0">
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <SidebarMenuButton
-              aria-label={tooltipLabel(entry)}
-              className="relative"
-              data-active={isActive ? "" : undefined}
-              onClick={handleOpen}
-              size="icon"
-            >
-              <PuzzleIcon className={cn(!entry.available && "opacity-50")} />
-              {badge !== null ? (
-                <span
-                  aria-hidden="true"
-                  className={cn(
-                    "pointer-events-none absolute top-0.5 right-0.5 rounded-full bg-primary text-primary-foreground",
-                    badge === ""
-                      ? "size-1.5"
-                      : "min-w-3.5 px-0.5 text-center text-[0.625rem] leading-3.5",
-                  )}
-                >
-                  {badge}
-                </span>
-              ) : null}
-            </SidebarMenuButton>
-          }
-        />
-        <TooltipPopup side="top">{tooltipLabel(entry)}</TooltipPopup>
-      </Tooltip>
+    <SidebarMenuItem className="relative">
+      <SidebarMenuButton
+        data-active={isActive ? "" : undefined}
+        onClick={handleOpen}
+        title={entry.environmentLabel === null ? undefined : entry.environmentLabel}
+      >
+        {iconUrl === null ? (
+          <PuzzleIcon className={cn(!entry.available && "opacity-50")} />
+        ) : (
+          // An extension's own artwork, drawn as an image rather than inlined:
+          // an SVG in an `<img>` cannot run script or reach the host's DOM.
+          <img
+            alt=""
+            aria-hidden="true"
+            className={cn("size-4 shrink-0", !entry.available && "opacity-50")}
+            src={iconUrl}
+          />
+        )}
+        <span className="min-w-0 flex-1 truncate">{entry.label}</span>
+        {entry.environmentLabel === null ? null : (
+          <span className="shrink-0 truncate text-xs text-sidebar-muted-foreground/70">
+            {entry.environmentLabel}
+          </span>
+        )}
+        {badge === null ? null : (
+          <span
+            className={cn(
+              "shrink-0 rounded-full bg-primary text-primary-foreground",
+              badge === "" ? "size-1.5" : "min-w-4 px-1 text-center text-[0.625rem] leading-4",
+            )}
+          >
+            {badge}
+          </span>
+        )}
+      </SidebarMenuButton>
       {entry.changed ? (
         <Tooltip>
           <TooltipTrigger
             render={
               <Button
-                aria-label={`${entry.label} has a new build on disk — open it in Settings`}
-                className="absolute -right-1 -bottom-1 size-4 rounded-full"
-                onClick={handleDeploy}
+                aria-label={`A new build of ${entry.label} is on disk`}
+                className="absolute top-1/2 right-1 size-5 -translate-y-1/2"
+                onClick={handleRedeploy}
                 size="icon-xs"
                 variant="ghost-muted"
               />
             }
           >
-            <RefreshCwIcon className="size-2.5" />
+            <RefreshCwIcon className="size-3" />
           </TooltipTrigger>
-          <TooltipPopup side="top">A new build is on disk. Deploy it in Settings.</TooltipPopup>
+          <TooltipPopup side="right">A new build is on disk. Deploy it in Settings.</TooltipPopup>
         </Tooltip>
       ) : null}
     </SidebarMenuItem>
@@ -114,10 +149,10 @@ export const ExtensionSidebarEntries = memo(function ExtensionSidebarEntries() {
   const entries = useExtensionNavEntries();
   if (entries.length === 0) return null;
   return (
-    <>
+    <SidebarMenu>
       {entries.map((entry) => (
-        <ExtensionSidebarEntry key={`${entry.environmentId}:${entry.name}`} entry={entry} />
+        <ExtensionSidebarRow key={`${entry.environmentId}:${entry.name}`} entry={entry} />
       ))}
-    </>
+    </SidebarMenu>
   );
 });

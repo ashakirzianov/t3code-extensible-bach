@@ -106,6 +106,9 @@ import {
   ExtensionHttpResponse,
   ExtensionListResult,
   ExtensionAssetUrlsInput,
+  ExtensionInstallInput,
+  ExtensionInstallResult,
+  ExtensionRemoveInput,
   ExtensionAssetUrlsResult,
   ExtensionLogsInput,
   ExtensionLogsResult,
@@ -1293,6 +1296,21 @@ export const WsExtensionsAdminSetEnabledRpc = Rpc.make(EXTENSION_ADMIN_WS_METHOD
   error: Schema.Union([ExtensionAdminError, EnvironmentAuthorizationError]),
 });
 
+/**
+ * Add a folder as an extension of this environment and start it, without a
+ * restart. Named by its manifest, so the caller supplies only a path.
+ */
+export const WsExtensionsAdminInstallRpc = Rpc.make(EXTENSION_ADMIN_WS_METHODS.install, {
+  payload: ExtensionInstallInput,
+  success: ExtensionInstallResult,
+  error: Schema.Union([ExtensionAdminError, EnvironmentAuthorizationError]),
+});
+
+export const WsExtensionsAdminRemoveRpc = Rpc.make(EXTENSION_ADMIN_WS_METHODS.remove, {
+  payload: ExtensionRemoveInput,
+  error: Schema.Union([ExtensionAdminError, EnvironmentAuthorizationError]),
+});
+
 export const WsExtensionsAdminLogsRpc = Rpc.make(EXTENSION_ADMIN_WS_METHODS.logs, {
   payload: ExtensionLogsInput,
   success: ExtensionLogsResult,
@@ -1440,5 +1458,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsExtensionsAdminDeployRpc,
   WsExtensionsAdminSetEnabledRpc,
   WsExtensionsAdminLogsRpc,
+  WsExtensionsAdminInstallRpc,
+  WsExtensionsAdminRemoveRpc,
   WsExtensionsAdminAssetUrlsRpc,
 );

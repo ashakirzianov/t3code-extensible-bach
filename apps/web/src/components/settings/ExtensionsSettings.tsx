@@ -3,8 +3,9 @@ import type {
   ExtensionSettingsRow,
   ExtensionStateTone,
 } from "@t3tools/client-runtime/extensions";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { extensionToggleAction } from "@t3tools/client-runtime/extensions";
-import { ChevronRightIcon, PuzzleIcon, RefreshCwIcon } from "lucide-react";
+import { ChevronRightIcon, PlusIcon, PuzzleIcon, RefreshCwIcon } from "lucide-react";
 import { useCallback, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 
@@ -15,12 +16,15 @@ import { extensionEnvironment, useExtensionSettingsGroups } from "../../state/ex
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
 import { ScrollArea } from "../ui/scroll-area";
 import { toastManager } from "../ui/toast";
 import { StartTruncatedPath } from "../StartTruncatedPath";
 import {
   confirmAndDeployExtension,
+  confirmAndRemoveExtension,
+  installExtension,
   toggleExtensionEnabled,
   type ExtensionActionOutcome,
 } from "./ExtensionsSettings.logic";
@@ -122,6 +126,16 @@ function ExtensionCard({ row }: { row: ExtensionSettingsRow }) {
   const setEnabled = useAtomCommand(extensionEnvironment.setEnabled);
   const toggle = extensionToggleAction(row);
 
+  const remove = useAtomCommand(extensionEnvironment.remove);
+  const handleRemove = useCallback(
+    async (deleteData: boolean) => {
+      reportOutcome(
+        await confirmAndRemoveExtension({ row, deleteData, confirm: requestConfirmDialog, remove }),
+      );
+    },
+    [remove, row],
+  );
+
   const handleDeploy = useCallback(async () => {
     reportOutcome(await confirmAndDeployExtension({ row, confirm: requestConfirmDialog, deploy }));
   }, [deploy, row]);
@@ -188,6 +202,17 @@ function ExtensionCard({ row }: { row: ExtensionSettingsRow }) {
           >
             {toggle.label}
           </Button>
+          <Button onClick={() => void handleRemove(false)} size="xs" variant="ghost-muted">
+            Remove
+          </Button>
+          <Button
+            onClick={() => void handleRemove(true)}
+            size="xs"
+            variant="ghost-muted"
+            title="Remove and delete its data directory"
+          >
+            Remove &amp; delete data
+          </Button>
         </div>
       </div>
 
@@ -220,6 +245,55 @@ function ExtensionCard({ row }: { row: ExtensionSettingsRow }) {
   );
 }
 
+/**
+ * Adding an extension by path.
+ *
+ * A path input rather than a folder picker: the folder is on the *server*, which
+ * may not be this machine at all, so a native picker would browse the wrong
+ * filesystem. The name is not asked for — the manifest supplies it, and the
+ * install answers with what it found.
+ */
+function AddExtensionForm({ environmentId }: { environmentId: EnvironmentId }) {
+  const [path, setPath] = useState("");
+  const [busy, setBusy] = useState(false);
+  const install = useAtomCommand(extensionEnvironment.install);
+
+  // Not memoized: it is used once, by this form's own submit handler.
+  const submit = async () => {
+    setBusy(true);
+    try {
+      const outcome = await installExtension({ environmentId, path, install });
+      reportOutcome(outcome);
+      if (outcome.status === "done") setPath("");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form
+      className="flex flex-wrap items-center gap-2 px-3 py-3 sm:px-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void submit();
+      }}
+    >
+      <Input
+        aria-label="Path to a built extension folder"
+        className="min-w-0 flex-1"
+        onChange={(event) => setPath(event.target.value)}
+        placeholder="/path/to/extension/dist"
+        size="sm"
+        value={path}
+      />
+      <Button disabled={busy || path.trim().length === 0} size="sm" type="submit" variant="outline">
+        <PlusIcon aria-hidden="true" />
+        Add extension
+      </Button>
+    </form>
+  );
+}
+
 function ExtensionGroup({
   group,
   showLabel,
@@ -240,12 +314,12 @@ function ExtensionGroup({
     >
       {group.rows.length === 0 ? (
         <p className="px-3 py-3 text-xs text-muted-foreground sm:px-4">
-          Add one with an <code className="font-mono">extensions</code> entry in this server&apos;s
-          settings, or a <code className="font-mono">--extension name=path</code> launch flag.
+          Point this server at a built extension folder to add one.
         </p>
       ) : (
         group.rows.map((row) => <ExtensionCard key={row.anchorId} row={row} />)
       )}
+      <AddExtensionForm environmentId={group.environmentId} />
     </SettingsSection>
   );
 }

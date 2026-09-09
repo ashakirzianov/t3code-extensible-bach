@@ -811,6 +811,10 @@ const buildAppUnderTest = (options?: {
           getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
           updateSettings: () => Effect.succeed(DEFAULT_SERVER_SETTINGS),
           streamChanges: Stream.empty,
+          // Same intent as `streamChanges` above — a settings service that
+          // never changes — for the consumer that acquires the subscription
+          // eagerly rather than reading the lazy stream.
+          subscribeChanges: Effect.succeed(Stream.empty),
           ...options?.layers?.serverSettings,
         }),
       ),

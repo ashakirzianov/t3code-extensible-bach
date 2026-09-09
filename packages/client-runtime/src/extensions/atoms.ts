@@ -41,6 +41,20 @@ export function createExtensionEnvironmentAtoms<R, E>(
      * signature, so a cached one outlives its usefulness faster than the atom
      * would evict it.
      */
+    /**
+     * The same URLs, as cached query data for the nav rows' icons.
+     *
+     * Refreshed well inside the signature's one-hour life, the way workspace
+     * asset URLs are (`state/assets.ts`): a row that is on screen for an hour
+     * must not start showing a broken image.
+     */
+    assetUrlsQuery: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:extensions:asset-urls-query",
+      tag: EXTENSION_ADMIN_WS_METHODS.assetUrls,
+      staleTimeMs: 5 * 60_000,
+      refreshIntervalMs: 30 * 60_000,
+      idleTtlMs: 60 * 60_000,
+    }),
     assetUrls: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:extensions:asset-urls",
       tag: EXTENSION_ADMIN_WS_METHODS.assetUrls,
@@ -58,6 +72,24 @@ export function createExtensionEnvironmentAtoms<R, E>(
     deploy: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:extensions:deploy",
       tag: EXTENSION_ADMIN_WS_METHODS.deploy,
+      scheduler: adminScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.name]),
+      },
+    }),
+    install: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:extensions:install",
+      tag: EXTENSION_ADMIN_WS_METHODS.install,
+      scheduler: adminScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.path]),
+      },
+    }),
+    remove: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:extensions:remove",
+      tag: EXTENSION_ADMIN_WS_METHODS.remove,
       scheduler: adminScheduler,
       concurrency: {
         mode: "serial",

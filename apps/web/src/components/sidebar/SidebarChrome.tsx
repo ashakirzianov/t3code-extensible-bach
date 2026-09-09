@@ -217,7 +217,6 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             label="Usage"
             onClick={handleUsageClick}
           />
-          <ExtensionSidebarEntries />
         </>
       )}
       <SidebarUpdatePill />
@@ -230,6 +229,10 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
     <SidebarFooter className="p-[var(--sidebar-content-inset)]">
       <SidebarProviderUpdatePill />
       <SidebarUpdateArchitectureWarning />
+      {/* Extensions sit at the end of the thread list, immediately above the
+          utility row, so a named row reads as part of the list rather than as
+          another icon in the chrome. */}
+      <ExtensionSidebarEntries />
       <SidebarUtilityMenu />
     </SidebarFooter>
   );

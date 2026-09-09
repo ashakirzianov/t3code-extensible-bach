@@ -18,9 +18,11 @@
  */
 import {
   EXTENSION_PROTOCOL_VERSION,
+  ExtensionAlreadyInstalledError,
   ExtensionFolderError,
   ExtensionNotFoundError,
   type ExtensionName,
+  type ExtensionSettingsEntry,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
@@ -44,7 +46,12 @@ import { EXTENSION_ENV } from "./ExtensionIdentity.ts";
 import * as ExtensionFolderWatcher from "./ExtensionFolderWatcher.ts";
 import { ExtensionRegistry } from "./ExtensionRegistry.ts";
 import { loadFolder } from "./ExtensionFolder.ts";
-import type { ResolvedExtensionSource } from "./ExtensionSources.ts";
+import {
+  resolveExtensionSources,
+  type ExtensionLaunchFlag,
+  type ResolvedExtensionSource,
+} from "./ExtensionSources.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 
 /**
  * Restart backoff. A crash loop is usually a broken build, so the ceiling is
@@ -77,6 +84,11 @@ export interface ExtensionSupervisorOptions {
   readonly cwd: string;
   /** Electron needs `ELECTRON_RUN_AS_NODE`; a plain Node host does not. */
   readonly runAsNode: boolean;
+  /**
+   * The process's `--extension` flags. Held here rather than re-read per
+   * reconcile because they cannot change while the server runs.
+   */
+  readonly launchFlags?: ReadonlyArray<ExtensionLaunchFlag>;
   readonly minRestartDelay?: Duration.Duration;
   readonly maxRestartDelay?: Duration.Duration;
   /** How long the folder must be quiet before a rebuild counts as finished. */
@@ -84,13 +96,51 @@ export interface ExtensionSupervisorOptions {
 }
 
 export interface ExtensionSupervisorShape {
-  /** Read each source's folder, register it, and start the enabled ones. */
-  readonly startAll: (
+  /**
+   * Make the running set match `sources`.
+   *
+   * Idempotent, and the only way the set changes: startup calls it with the
+   * resolved sources, and every settings change calls it again. A name that is
+   * new starts, one that has gone stops and is forgotten, one whose path moved
+   * restarts on the new folder, and one whose `enabled` flipped follows it.
+   * Calling it with an unchanged list does nothing, which is what lets the
+   * install and remove RPCs both write settings and reconcile without caring
+   * whether the change stream got there first.
+   */
+  readonly reconcile: (
     sources: ReadonlyArray<ResolvedExtensionSource>,
   ) => Effect.Effect<void, never, Scope.Scope>;
+  /**
+   * Reconcile now, then keep reconciling as settings change. Called once at
+   * startup; the fiber it forks lives as long as the server.
+   */
+  readonly watchSettings: Effect.Effect<void, never, Scope.Scope>;
   readonly deploy: (
     name: ExtensionName,
   ) => Effect.Effect<void, ExtensionNotFoundError | ExtensionFolderError, Scope.Scope>;
+  /**
+   * Add a folder to this environment's settings and start it.
+   *
+   * The folder is read before anything is written, so a path that is not an
+   * extension is refused without leaving a broken entry behind for the user to
+   * find later.
+   */
+  readonly install: (input: {
+    readonly path: string;
+  }) => Effect.Effect<
+    ExtensionName,
+    ExtensionFolderError | ExtensionAlreadyInstalledError,
+    Scope.Scope
+  >;
+  /**
+   * Stop it, drop its settings entry, and forget it. The data directory is kept
+   * unless asked for: an extension is usually removed to reinstall it, and
+   * silently discarding its state would make that lossy.
+   */
+  readonly remove: (input: {
+    readonly name: ExtensionName;
+    readonly deleteData: boolean;
+  }) => Effect.Effect<void, ExtensionNotFoundError>;
   readonly setEnabled: (input: {
     readonly name: ExtensionName;
     readonly enabled: boolean;
@@ -132,6 +182,7 @@ export const make = Effect.fnUntraced(function* (options: ExtensionSupervisorOpt
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const crypto = yield* Crypto.Crypto;
+  const serverSettings = yield* ServerSettingsService;
   /** The folder reader with this layer's platform services already supplied. */
   const readFolder = (input: Parameters<typeof loadFolder>[0]) =>
     loadFolder(input).pipe(
@@ -336,37 +387,171 @@ export const make = Effect.fnUntraced(function* (options: ExtensionSupervisorOpt
     });
   });
 
-  const startAll: ExtensionSupervisorShape["startAll"] = Effect.fn("ExtensionSupervisor.startAll")(
-    function* (sources) {
-      for (const source of sources) {
-        const resolved = path.isAbsolute(source.path)
-          ? source.path
-          : path.resolve(options.cwd, source.path);
-        const loaded = yield* readFolder({ path: resolved }).pipe(
-          Effect.map((folder) => ({ manifest: folder.manifest, folderHash: folder.hash })),
-          Effect.catchTag("ExtensionFolderError", (error) =>
-            Effect.succeed({ loadError: error.message }),
-          ),
-        );
-        yield* registry.upsertSource({ ...source, path: resolved, ...loaded });
-        if (!source.enabled) continue;
-        if ("loadError" in loaded) {
-          yield* registry.setState({
-            name: source.name,
-            state: "crashed",
-            lastError: loaded.loadError,
-          });
-          continue;
-        }
-        // Marked before the fiber is forked, so a later "stopped" always means
-        // the process ran and exited rather than never having begun — which is
-        // what lets readiness treat it as settled.
-        yield* registry.setState({ name: source.name, state: "starting" });
-        yield* start({ name: source.name, path: resolved });
+  const absolutePath = (value: string) =>
+    path.isAbsolute(value) ? value : path.resolve(options.cwd, value);
+
+  /** Register one source and start it if it is enabled and readable. */
+  const load = Effect.fn("ExtensionSupervisor.load")(function* (
+    source: ResolvedExtensionSource & { readonly path: string },
+  ) {
+    const loaded = yield* readFolder({ path: source.path }).pipe(
+      Effect.map((folder) => ({ manifest: folder.manifest, folderHash: folder.hash })),
+      Effect.catchTag("ExtensionFolderError", (error) =>
+        Effect.succeed({ loadError: error.message }),
+      ),
+    );
+    yield* registry.upsertSource({ ...source, ...loaded });
+    if (!source.enabled) return;
+    if ("loadError" in loaded) {
+      yield* registry.setState({
+        name: source.name,
+        state: "crashed",
+        lastError: loaded.loadError,
+      });
+      return;
+    }
+    // Marked before the fiber is forked, so a later "stopped" always means
+    // the process ran and exited rather than never having begun — which is
+    // what lets readiness treat it as settled.
+    yield* registry.setState({ name: source.name, state: "starting" });
+    yield* start({ name: source.name, path: source.path });
+  });
+
+  const reconcile: ExtensionSupervisorShape["reconcile"] = Effect.fn(
+    "ExtensionSupervisor.reconcile",
+  )(function* (sources) {
+    const known = new Map(
+      (yield* registry.list).extensions.map((status) => [status.name, status] as const),
+    );
+    const desired = sources.map((source) => ({ ...source, path: absolutePath(source.path) }));
+    const desiredNames = new Set(desired.map((source) => source.name));
+
+    // Gone from settings: stop it and forget it, so its tool names and HTTP
+    // prefix are free again rather than held by a record nothing can start.
+    for (const name of known.keys()) {
+      if (desiredNames.has(name)) continue;
+      yield* stop(name);
+      yield* registry.removeSource(name);
+    }
+
+    for (const source of desired) {
+      const existing = known.get(source.name);
+      if (!existing) {
+        yield* load(source);
+        continue;
       }
-      // Only now is the list final, so readiness can start resolving. Before
-      // this, an empty registry would look like "nothing to wait for".
-      yield* registry.markSourcesResolved;
+      // A moved path is a different extension wearing the same name: the old
+      // process is running the wrong folder, so it stops before the new one
+      // is read.
+      if (existing.path !== source.path) {
+        yield* stop(source.name);
+        yield* load(source);
+        continue;
+      }
+      if (existing.enabled === source.enabled) continue;
+      if (source.enabled) {
+        yield* registry.setEnabled({ name: source.name, enabled: true }).pipe(Effect.ignore);
+        yield* load(source);
+      } else {
+        yield* stop(source.name);
+        yield* registry.setEnabled({ name: source.name, enabled: false }).pipe(Effect.ignore);
+        yield* registry.setState({ name: source.name, state: "disabled" });
+      }
+    }
+    // Only now is the list final, so readiness can start resolving. Before
+    // this, an empty registry would look like "nothing to wait for". Safe to
+    // repeat: later reconciles find it already resolved.
+    yield* registry.markSourcesResolved;
+  });
+
+  /**
+   * Reconcile against whatever the settings say right now.
+   *
+   * Launch flags are read from the process config rather than re-derived: they
+   * cannot change while the server runs, and a settings entry still wins by
+   * name (`ExtensionSources.ts`).
+   */
+  const reconcileFromSettings = Effect.gen(function* () {
+    const stored = yield* serverSettings.getSettings.pipe(
+      Effect.map((current) => current.extensions),
+      // A settings file this build cannot read is a reason to run no
+      // extensions, not a reason to tear down the ones already running.
+      Effect.orElseSucceed((): ReadonlyArray<ExtensionSettingsEntry> => []),
+    );
+    yield* reconcile(
+      resolveExtensionSources({
+        settingsEntries: stored,
+        launchFlags: options.launchFlags ?? [],
+      }),
+    );
+  }).pipe(Effect.withSpan("ExtensionSupervisor.reconcileFromSettings"));
+
+  /**
+   * Follow settings for the life of the supervisor, so installing or removing
+   * an extension takes effect without a restart.
+   *
+   * The subscription is acquired before the first reconcile so a change landing
+   * between the two is not lost — that is what `subscribeChanges` exists for.
+   */
+  const watchSettings = Effect.gen(function* () {
+    const changes = yield* serverSettings.subscribeChanges;
+    yield* reconcileFromSettings;
+    yield* Stream.runForEach(changes, () => Effect.scoped(reconcileFromSettings)).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logError("The extension settings watcher stopped.", { cause }),
+      ),
+      Effect.forkIn(supervisorScope),
+    );
+  });
+
+  const install: ExtensionSupervisorShape["install"] = Effect.fn("ExtensionSupervisor.install")(
+    function* (input) {
+      const resolved = absolutePath(input.path.trim());
+      // Read first: the manifest is what supplies the name, and a folder that
+      // is not an extension must not leave a settings entry behind.
+      const loaded = yield* readFolder({ path: resolved });
+      const name = loaded.manifest.name;
+      const entries = (yield* serverSettings.getSettings.pipe(Effect.orDie)).extensions;
+      if (entries.some((entry) => entry.name === name)) {
+        return yield* new ExtensionAlreadyInstalledError({ extensionName: name });
+      }
+      // A launch flag of the same name is not a conflict: a settings entry wins
+      // by name, and overriding a shipped extension with a local build is the
+      // documented way to do it. Reconciling picks the new path up.
+      // A settings write that fails is an internal fault the caller cannot act
+      // on, and the RPC's error union is the admin errors only.
+      yield* serverSettings
+        .updateSettings({ extensions: [...entries, { name, path: resolved, enabled: true }] })
+        .pipe(Effect.orDie);
+      yield* reconcileFromSettings;
+      return name;
+    },
+  );
+
+  const remove: ExtensionSupervisorShape["remove"] = Effect.fn("ExtensionSupervisor.remove")(
+    function* (input) {
+      const status = yield* registry.get(input.name);
+      const settings = yield* serverSettings.getSettings.pipe(Effect.orDie);
+      yield* serverSettings
+        .updateSettings({
+          extensions: settings.extensions.filter((entry) => entry.name !== input.name),
+        })
+        .pipe(Effect.orDie);
+      // Reconciling is what stops and unregisters it; doing it here rather than
+      // waiting for the change stream is what makes the RPC's answer mean the
+      // work is done.
+      yield* Effect.scoped(reconcileFromSettings);
+      if (!input.deleteData) return;
+      // Best effort: the extension is already gone from the user's point of
+      // view, and a directory that will not delete is not worth failing over.
+      yield* fs.remove(path.join(options.dataRoot, status.name), { recursive: true }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not delete the extension's data directory.", {
+            name: status.name,
+            cause,
+          }),
+        ),
+      );
     },
   );
 
@@ -410,7 +595,16 @@ export const make = Effect.fnUntraced(function* (options: ExtensionSupervisorOpt
     yield* Effect.forEach([...current.keys()], stop, { discard: true });
   });
 
-  return ExtensionSupervisor.of({ startAll, deploy, setEnabled, refreshFolderHashes, stopAll });
+  return ExtensionSupervisor.of({
+    reconcile,
+    watchSettings,
+    install,
+    remove,
+    deploy,
+    setEnabled,
+    refreshFolderHashes,
+    stopAll,
+  });
 });
 
 export const layer = (options: ExtensionSupervisorOptions) =>

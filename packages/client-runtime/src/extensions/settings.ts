@@ -173,6 +173,16 @@ export function extensionDeployConfirmation(row: ExtensionSettingsRow): string {
   return `Deploy the new build of ${row.name}?\nIt stops and starts again on the build that is on disk now.`;
 }
 
+export function extensionRemoveConfirmation(input: {
+  readonly row: ExtensionSettingsRow;
+  readonly deleteData: boolean;
+}): string {
+  const base = `Remove ${input.row.name}?\nIt stops now and is no longer installed on this server.`;
+  return input.deleteData
+    ? `${base} Its data directory is deleted too, and that cannot be undone.`
+    : `${base} Its data directory is kept.`;
+}
+
 /** True when nothing is installed anywhere, which is its own empty state. */
 export function extensionSettingsIsEmpty(groups: ReadonlyArray<ExtensionSettingsGroup>): boolean {
   return groups.every((group) => group.rows.length === 0);
