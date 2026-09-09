@@ -38,3 +38,6 @@ node_modules/
 *.log
 .env*
 !.env.example
+
+# Fork: scratch and acceptance-run homes (`.t3` above matches only that exact name).
+.t3-*
