@@ -290,6 +290,10 @@ function AddExtensionForm({ environmentId }: { environmentId: EnvironmentId }) {
         <PlusIcon aria-hidden="true" />
         Add extension
       </Button>
+      <p className="w-full text-xs text-muted-foreground">
+        Extensions run as separate processes and contribute tools, routes and screens. The folder is
+        on the server, so this is a path there rather than on this device.
+      </p>
     </form>
   );
 }
@@ -303,18 +307,16 @@ function ExtensionGroup({
 }) {
   return (
     <SettingsSection
-      description={
-        group.rows.length === 0
-          ? "No extensions are installed on this server."
-          : "Extensions run as separate processes and contribute tools, routes and screens."
-      }
       icon={<PuzzleIcon className="size-3.5" />}
       id={`extensions-${group.environmentId}`}
       title={showLabel ? group.environmentLabel : "Extensions"}
     >
+      {/* Section headings carry no description (`settingsLayout.tsx`); what a
+          reader needs to know goes next to the thing it explains. */}
       {group.rows.length === 0 ? (
         <p className="px-3 py-3 text-xs text-muted-foreground sm:px-4">
-          Point this server at a built extension folder to add one.
+          No extensions are installed on this server. Point it at a built extension folder to add
+          one.
         </p>
       ) : (
         group.rows.map((row) => <ExtensionCard key={row.anchorId} row={row} />)
@@ -335,9 +337,10 @@ export function ExtensionsSettingsPanel() {
           icon={<PuzzleIcon className="size-3.5" />}
           id="extensions"
           title="Extensions"
-          description="Connect to a server to see the extensions installed on it."
         >
-          <p className="px-3 py-3 text-xs text-muted-foreground sm:px-4">No server is connected.</p>
+          <p className="px-3 py-3 text-xs text-muted-foreground sm:px-4">
+            No server is connected. Connect to one to see the extensions installed on it.
+          </p>
         </SettingsSection>
       ) : (
         groups.map((group) => (
