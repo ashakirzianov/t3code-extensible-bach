@@ -13,6 +13,11 @@ turn's own content — the injected line and the tool results in that turn — *
 `inbox` call, which will correctly be empty because the agent already drained. If a result line
 below says "expect empty", that is the point being tested; everywhere else, read the wake turn.
 
+**The busy prompt is the one from `bach-chapters-spec.md` §0**, and it is shell work on purpose:
+a "think about something" turn ends in seconds and the window closes before you can act. Use it
+verbatim wherever a step says to make an agent busy — every later chapter's checklist uses the
+same one.
+
 Item 1 already passed: the six Bach tools appear alongside the host's own `preview_*` — "exactly
 six" in `checklist.md` means the six Bach tools, not the whole list.
 
@@ -48,7 +53,7 @@ Call spawn_agent with work_directory "/Users/devuser/acceptance/bach-clean/src",
 Paste into **B** first, and do not wait for it to finish:
 
 ```
-Count slowly from 1 to 200, one number per line, pausing about a second between lines, then stop.
+Count from 1 to 40. Between each number, run: sleep 2 && date -u +%H:%M:%S
 ```
 
 While B is still counting, paste into **A**:
@@ -68,7 +73,7 @@ Wait for B to finish, then paste the same `list_agents` prompt into **A** again.
 Paste into **B**, and immediately move on without waiting:
 
 ```
-Count slowly from 1 to 200, one number per line, pausing about a second between lines, then stop.
+Count from 1 to 40. Between each number, run: sleep 2 && date -u +%H:%M:%S
 ```
 
 Now, **while B is counting**, paste into **A**:
