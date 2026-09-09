@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 import { Message, sessionBus, type MessageBus, type MessageLike } from "dbus-next";
 import * as Schema from "effect/Schema";
 import type { DesktopCaptureExtensionState } from "@t3tools/contracts";
+import * as ForkIdentity from "@t3tools/shared/forkIdentity";
 
 import { GNOME_CAPTURE_FILES, GNOME_CAPTURE_UUID } from "./gnomeCaptureBundle.ts";
 export { isGnomeCaptureSession } from "./linuxCaptureSession.ts";
@@ -67,7 +68,11 @@ export async function installGnomeCaptureBundle({ bundle, dataHome }: SetupPaths
     }
     await NodeFSP.chmod(staged, 0o755);
     if (existing) {
-      const backupParent = NodePath.join(dataHome, "t3code", "extension-backups");
+      const backupParent = NodePath.join(
+        dataHome,
+        ForkIdentity.FORK_LINUX_HELPER_DIR_NAME,
+        "extension-backups",
+      );
       await NodeFSP.mkdir(backupParent, { recursive: true });
       backup = NodePath.join(
         await NodeFSP.mkdtemp(NodePath.join(backupParent, "capture-")),

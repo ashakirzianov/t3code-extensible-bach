@@ -137,6 +137,12 @@ investigation.
 | `apps/server/src/mcp/McpSessionRegistry.test.ts`                                                                                         | Adds a default-window expiry test; `makeRegistry` takes a `null` opt-out                                                                            | Mirrors the file above.                                                                                                                                                                                                    |
 | `apps/server/src/cloud/bootService.ts`                                                                                                   | `BOOT_SERVICE_NAME` and `BOOT_SERVICE_LAUNCHD_LABEL` derived from `forkIdentity`                                                                    | Boot-service naming is two constants inside upstream's installer.                                                                                                                                                          |
 | `apps/server/src/cloud/bootService.test.ts`                                                                                              | Unit name and launchd label expectations use the fork's values                                                                                      | Mirrors the file above.                                                                                                                                                                                                    |
+| `apps/desktop/src/snapShot/KdeSnapShot.ts`                                                                                               | Helper desktop-entry filename, its marker, and the install directory from `forkIdentity`                                                            | Both apps write into the same `~/.local/share/applications`.                                                                                                                                                               |
+| `apps/desktop/src/snapShot/HyprlandSnapShot.ts`                                                                                          | Helper install directory from `forkIdentity`                                                                                                        | Same shared XDG data home.                                                                                                                                                                                                 |
+| `apps/desktop/src/snapShot/GnomeCaptureSetup.ts`                                                                                         | Extension-backup directory from `forkIdentity`                                                                                                      | Same shared XDG data home.                                                                                                                                                                                                 |
+| `apps/desktop/src/snapShot/GnomeCaptureSetup.test.ts`                                                                                    | Backup path expectation uses the fork's directory                                                                                                   | Mirrors the file above.                                                                                                                                                                                                    |
+| `apps/desktop/src/app/DesktopEarlyElectronStartup.ts`                                                                                    | `linuxWmClass` from `forkIdentity`                                                                                                                  | Upstream sets the class before `DesktopEnvironment` exists.                                                                                                                                                                |
+| `apps/desktop/src/app/DesktopEarlyElectronStartup.test.ts`                                                                               | WM class expectation uses the fork's value                                                                                                          | Mirrors the file above.                                                                                                                                                                                                    |
 | `packages/shared/package.json`                                                                                                           | Adds the `./forkIdentity` subpath export                                                                                                            | Subpath exports are declared in the package manifest.                                                                                                                                                                      |
 | `packages/contracts/src/auth.ts`                                                                                                         | One scope constant, `AuthExtensionScope`, plus its entry in the `AuthEnvironmentScope` union                                                        | The union is the closed set of scopes; a scope outside it cannot be minted or checked                                                                                                                                      |
 | `packages/contracts/src/index.ts`                                                                                                        | One `export * from "./extensions.ts"` line                                                                                                          | The barrel is the package's only entry point                                                                                                                                                                               |
@@ -284,17 +290,18 @@ moving over.** That removes both the scheme race and the two-servers-one-home ha
 
 All values live in `packages/shared/src/forkIdentity.ts`; nothing else hardcodes them.
 
-| Knob                              | Value                                                                             |
-| --------------------------------- | --------------------------------------------------------------------------------- |
-| App id (release / dev)            | `com.ashakirzianov.t3code-extensible` / `com.ashakirzianov.t3code-extensible.dev` |
-| Electron `userData` dir           | `t3code-extensible` / `t3code-extensible-dev`                                     |
-| Legacy `userData` dir (never hit) | `T3 Code Extensible (Alpha)` / `T3 Code Extensible (Dev)`                         |
-| Linux desktop entry / WM class    | `t3code-extensible.desktop` / `t3code-extensible`                                 |
-| Updater publish repo (default)    | `ashakirzianov/t3code-extensible`                                                 |
-| systemd unit / launchd label      | `t3code-extensible.service` / `com.ashakirzianov.t3code-extensible.service`       |
-| URL scheme                        | `t3code://` — **unchanged**, shared with upstream                                 |
-| T3 home                           | `~/.t3` — **unchanged**, shared with upstream                                     |
-| Display / product name            | `T3 Code (Alpha)` — **unchanged** (see below)                                     |
+| Knob                                 | Value                                                                             |
+| ------------------------------------ | --------------------------------------------------------------------------------- |
+| App id (release / dev)               | `com.ashakirzianov.t3code-extensible` / `com.ashakirzianov.t3code-extensible.dev` |
+| Electron `userData` dir              | `t3code-extensible` / `t3code-extensible-dev`                                     |
+| Legacy `userData` dir (never hit)    | `T3 Code Extensible (Alpha)` / `T3 Code Extensible (Dev)`                         |
+| Linux desktop entry / WM class       | `t3code-extensible.desktop` / `t3code-extensible`                                 |
+| Linux capture helper dir / KDE entry | `t3code-extensible` / `com.ashakirzianov.t3code-extensible.KdeCapture.desktop`    |
+| Updater publish repo (default)       | `ashakirzianov/t3code-extensible`                                                 |
+| systemd unit / launchd label         | `t3code-extensible.service` / `com.ashakirzianov.t3code-extensible.service`       |
+| URL scheme                           | `t3code://` — **unchanged**, shared with upstream                                 |
+| T3 home                              | `~/.t3` — **unchanged**, shared with upstream                                     |
+| Display / product name               | `T3 Code (Alpha)` — **unchanged** (see below)                                     |
 
 Three notes on why these values and not others:
 
@@ -327,6 +334,22 @@ inherit upstream's names and collide with its installed service. Both now derive
 `FORK_BOOT_SERVICE_NAME` and `FORK_APP_ID`. This orphans an already-installed upstream unit,
 but only for someone switching over, and the standing guidance above already says to
 **uninstall upstream after moving over** — which removes it.
+
+**The Linux capture identity follows the desktop entry, not the bundle id.** Upstream's
+screen-capture feature derives its runtime app id from the Linux desktop entry name
+(`DesktopSnapShot.ts` strips the `.desktop` suffix), which is the WM-class family — so
+the portal identity, the Hyprland and niri bind strings, and the D-Bus bus name
+(`<appId>.SnapShot`) were already the fork's the moment the desktop entry was renamed.
+The literals that did have to move are the ones upstream spells out: the shared XDG
+directory the KDE, Hyprland, and GNOME helpers install into, and the KDE helper's own
+`NoDisplay` desktop entry, which both apps would otherwise write to the same filename
+in `~/.local/share/applications`.
+
+Left alone on purpose: `NIRI_CAPTURE_PATH` and `NIRI_CAPTURE_INTERFACE`
+(`linuxCaptureSession.ts`) still read `com.t3tools`. A D-Bus object path and interface
+name are scoped to the connection that exports them, and the _bus name_ around them is
+already forked, so two installs do not collide. Renaming them would be churn in a file
+every uptake touches.
 
 **Known collisions deliberately left alone**, each needing a decision rather than a rename:
 

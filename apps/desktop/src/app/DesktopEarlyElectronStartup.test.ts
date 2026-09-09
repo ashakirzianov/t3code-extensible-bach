@@ -82,7 +82,7 @@ describe("DesktopEarlyElectronStartup", () => {
 
     assert.deepEqual(options, {
       isDevelopment: true,
-      linuxWmClass: "t3code-dev",
+      linuxWmClass: "t3code-extensible-dev",
       linuxDesktopEntryName: "t3code-extensible-dev.desktop",
       passwordStore: "gnome-libsecret",
     });

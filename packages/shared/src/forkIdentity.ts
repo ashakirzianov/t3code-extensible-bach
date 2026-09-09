@@ -46,6 +46,30 @@ export const FORK_LINUX_WM_CLASS = "t3code-extensible";
 export const FORK_DEV_LINUX_WM_CLASS = "t3code-extensible-dev";
 
 /**
+ * Linux screen-capture identity.
+ *
+ * The capture feature's runtime app id is **not** the desktop bundle id: it is
+ * derived from the Linux desktop entry name (`DesktopSnapShot.ts` strips the
+ * `.desktop` suffix), which is the WM-class family, and that is already forked
+ * above. What is left here is the things upstream spells out as literals.
+ *
+ * `FORK_LINUX_HELPER_DIR_NAME` is the directory under XDG data home where the
+ * KDE, Hyprland, and GNOME capture helpers install themselves. Upstream uses
+ * `t3code`; sharing it would have the fork write its helper binaries and
+ * extension backups into upstream's directory.
+ *
+ * The KDE helper's desktop entry is a separate `NoDisplay` service file, not
+ * the app's launcher. Nothing resolves it by name, but both apps write it into
+ * the same `~/.local/share/applications`, so the filename has to differ or
+ * whichever installed last owns the other's `Exec=`. The marker is how the
+ * installer recognises an entry as its own before overwriting it, so it has to
+ * move with the filename.
+ */
+export const FORK_LINUX_HELPER_DIR_NAME = "t3code-extensible";
+export const FORK_KDE_CAPTURE_DESKTOP_FILE = `${FORK_APP_ID}.KdeCapture.desktop`;
+export const FORK_KDE_CAPTURE_HELPER_MARKER = "X-T3CodeExtensible-Capture-Helper=true";
+
+/**
  * Boot-service base name: the systemd user unit is `<name>.service`, and the
  * launchd label is the app id plus a `.service` suffix (see
  * `apps/server/src/cloud/bootService.ts`). Distinct from upstream's `t3code` so
