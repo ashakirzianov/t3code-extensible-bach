@@ -6,13 +6,18 @@ import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 
-import { useEnvironmentHttpBaseUrl, useEnvironments } from "../state/environments";
+import {
+  useEnvironmentHttpBaseUrl,
+  useEnvironments,
+  usePrimaryEnvironmentId,
+} from "../state/environments";
 import {
   extensionEnvironment,
   useExtensionHttpPrefixes,
   useExtensionNavEntry,
 } from "../state/extensions";
 import { useAtomCommand } from "../state/use-atom-command";
+import { canLoadExtensionBundle } from "./bundleOrigin";
 import { createExtensionHostApi } from "./hostApi";
 import { ExtensionLoadError, mountExtension, type ExtensionMountHandle } from "./loader";
 
@@ -30,15 +35,6 @@ type LoadState =
   | { readonly status: "loading" }
   | { readonly status: "mounted" }
   | { readonly status: "failed"; readonly message: string };
-
-const isSameOrigin = (httpBaseUrl: string | null): boolean => {
-  if (httpBaseUrl === null) return false;
-  try {
-    return new URL(httpBaseUrl, window.location.href).origin === window.location.origin;
-  } catch {
-    return false;
-  }
-};
 
 export function ExtensionHostView({
   environmentId,
@@ -68,11 +64,21 @@ export function ExtensionHostView({
   const [load, setLoad] = useState<LoadState>({ status: "idle" });
 
   const httpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
   // Cross-origin bundles cannot execute under the desktop CSP and there is no
   // fetch-then-evaluate escape hatch, so a remote environment's extension is
   // not loadable from here yet. Proxying it through the client's own backend is
   // the follow-up; until then the route says so rather than failing obscurely.
-  const sameOrigin = isSameOrigin(httpBaseUrl);
+  // The desktop renderer is the case a bare origin comparison gets wrong — see
+  // `canLoadExtensionBundle`.
+  const loadable = canLoadExtensionBundle({
+    httpBaseUrl,
+    rendererHref: window.location.href,
+    rendererOrigin: window.location.origin,
+    isDesktopRenderer: window.desktopBridge !== undefined,
+    environmentId,
+    primaryEnvironmentId,
+  });
 
   const navigateToThread = useCallback(
     (threadId: ThreadId, targetEnvironmentId: EnvironmentId) => {
@@ -84,7 +90,7 @@ export function ExtensionHostView({
     [navigate],
   );
 
-  const canMount = entry !== null && entry.available && sameOrigin;
+  const canMount = entry !== null && entry.available && loadable;
 
   // One effect owns the whole mount lifetime. It deliberately does not depend on
   // `subPath`: navigating inside the extension re-runs `mount` with the new
@@ -160,7 +166,7 @@ export function ExtensionHostView({
       <ExtensionMessage>No extension named {name} is installed on this server.</ExtensionMessage>
     );
   }
-  if (!sameOrigin) {
+  if (!loadable) {
     return (
       <ExtensionMessage>
         {entry.label} runs on a remote server, and its interface cannot be loaded from here yet.
