@@ -3,20 +3,41 @@ import type {
   ExtensionSettingsRow,
   ExtensionStateTone,
 } from "@t3tools/client-runtime/extensions";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, FilesystemBrowseEntry } from "@t3tools/contracts";
+import { filterFilesystemBrowseEntries } from "@t3tools/client-runtime/state/filesystem";
+import { appendBrowsePathSegment } from "@t3tools/client-runtime/state/projects";
 import { extensionToggleAction } from "@t3tools/client-runtime/extensions";
-import { ChevronRightIcon, PlusIcon, PuzzleIcon, RefreshCwIcon } from "lucide-react";
-import { useCallback, useState } from "react";
+import {
+  ChevronRightIcon,
+  FolderIcon,
+  FolderOpenIcon,
+  PlusIcon,
+  PuzzleIcon,
+  RefreshCwIcon,
+} from "lucide-react";
+import { useCallback, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 
 import { requestConfirmDialog } from "../../confirmDialog";
+import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
+import { useDesktopLocalBootstraps } from "../../connection/useDesktopLocalBootstraps";
+import { readLocalApi } from "../../localApi";
 import { cn } from "../../lib/utils";
+import { useEnvironment, usePrimaryEnvironmentId } from "../../state/environments";
+import { filesystemEnvironment } from "../../state/filesystem";
 import { useEnvironmentQuery } from "../../state/query";
 import { extensionEnvironment, useExtensionSettingsGroups } from "../../state/extensions";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { resolveProjectPickerTarget } from "../../wslPaths";
+import {
+  Autocomplete,
+  AutocompleteInput,
+  AutocompleteItem,
+  AutocompleteList,
+  AutocompletePopup,
+} from "../ui/autocomplete";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import { Input } from "../ui/input";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
 import { ScrollArea } from "../ui/scroll-area";
 import { toastManager } from "../ui/toast";
@@ -24,6 +45,9 @@ import { StartTruncatedPath } from "../StartTruncatedPath";
 import {
   confirmAndDeployExtension,
   confirmAndRemoveExtension,
+  canPickExtensionFolderNatively,
+  extensionBrowsePlatform,
+  extensionFolderBrowseRequest,
   installExtension,
   toggleExtensionEnabled,
   type ExtensionActionOutcome,
@@ -245,20 +269,65 @@ function ExtensionCard({ row }: { row: ExtensionSettingsRow }) {
   );
 }
 
+const EMPTY_BROWSE_ENTRIES: ReadonlyArray<FilesystemBrowseEntry> = [];
+
 /**
- * Adding an extension by path.
+ * Adding an extension by picking its built folder.
  *
- * A path input rather than a folder picker: the folder is on the *server*, which
- * may not be this machine at all, so a native picker would browse the wrong
- * filesystem. The name is not asked for — the manifest supplies it, and the
- * install answers with what it found.
+ * The folder lives on the *server* the extension will run on, which may not be
+ * this device, so the typeahead lists folders through that server's own
+ * `filesystem.browse` — the same mechanism Add project uses, and correct for a
+ * local, desktop-secondary or remote environment alike. The native dialog is
+ * offered only when it would browse that same filesystem (see
+ * `canPickExtensionFolderNatively`). Either way the choice fills the field and
+ * the button installs it: the manifest supplies the name, and the install
+ * answers with what it found.
  */
 function AddExtensionForm({ environmentId }: { environmentId: EnvironmentId }) {
   const [path, setPath] = useState("");
   const [busy, setBusy] = useState(false);
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
   const install = useAtomCommand(extensionEnvironment.install);
+  const environment = useEnvironment(environmentId);
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const desktopLocalBootstraps = useDesktopLocalBootstraps();
 
-  // Not memoized: it is used once, by this form's own submit handler.
+  const platform = extensionBrowsePlatform(environment?.serverConfig?.environment.platform.os);
+  const browseRequest = extensionFolderBrowseRequest(path, platform);
+  const browse = useEnvironmentQuery(
+    browseRequest === null
+      ? null
+      : filesystemEnvironment.browse({
+          environmentId,
+          input: { partialPath: browseRequest.partialPath },
+        }),
+  );
+  const browseEntries = browse.data?.entries ?? EMPTY_BROWSE_ENTRIES;
+  const filterQuery = browseRequest?.filterQuery ?? "";
+  const { visibleEntries } = useMemo(
+    () => filterFilesystemBrowseEntries(browseEntries, filterQuery),
+    [browseEntries, filterQuery],
+  );
+
+  const isDesktopLocal =
+    environment !== null && isDesktopLocalConnectionTarget(environment.entry.target);
+  // The desktop routes its dialog by pool instance id, which only the bootstrap
+  // list knows; match it on backend URL the way the Add project palette does.
+  const desktopInstanceId =
+    isDesktopLocal && environment.displayUrl !== null
+      ? (desktopLocalBootstraps.find(
+          (bootstrap) => bootstrap.httpBaseUrl === environment.displayUrl,
+        )?.id ?? null)
+      : null;
+  const canPickNatively = canPickExtensionFolderNatively({
+    environmentId,
+    primaryEnvironmentId,
+    isDesktopLocal,
+    desktopInstanceId,
+    hasDesktopBridge: typeof window !== "undefined" && window.desktopBridge !== undefined,
+  });
+
+  // Not memoized: used once each, by this form's own handlers.
   const submit = async () => {
     setBusy(true);
     try {
@@ -270,6 +339,32 @@ function AddExtensionForm({ environmentId }: { environmentId: EnvironmentId }) {
     }
   };
 
+  const pickFolder = async () => {
+    const api = readLocalApi();
+    if (!api) return;
+    // A WSL-only primary is still routed to its distro, as in the palette.
+    const wslConfiguration =
+      environmentId === primaryEnvironmentId && platform === "Linux"
+        ? ((await window.desktopBridge?.getWslState().catch(() => null)) ?? null)
+        : null;
+    const targetEnvironmentId = resolveProjectPickerTarget({
+      browseEnvironmentId: environmentId,
+      primaryEnvironmentId,
+      desktopInstanceId,
+      wslConfiguration,
+    });
+    // Start where the typeahead has got to — the server's resolved directory,
+    // so a `~/` the dialog would not expand never reaches it.
+    const initialPath = browse.data?.parentPath ?? null;
+    const picked = await api.dialogs
+      .pickFolder({
+        ...(initialPath === null ? {} : { initialPath }),
+        ...(targetEnvironmentId === null ? {} : { targetEnvironmentId }),
+      })
+      .catch(() => null);
+    if (picked) setPath(picked);
+  };
+
   return (
     <form
       className="flex flex-wrap items-center gap-2 px-3 py-3 sm:px-4"
@@ -278,21 +373,59 @@ function AddExtensionForm({ environmentId }: { environmentId: EnvironmentId }) {
         void submit();
       }}
     >
-      <Input
-        aria-label="Path to a built extension folder"
-        className="min-w-0 flex-1"
-        onChange={(event) => setPath(event.target.value)}
-        placeholder="/path/to/extension/dist"
-        size="sm"
-        value={path}
-      />
+      <div className="min-w-0 flex-1">
+        <Autocomplete
+          items={visibleEntries}
+          itemToStringValue={(entry) => entry.fullPath}
+          mode="none"
+          openOnInputClick
+          open={suggestionsOpen && visibleEntries.length > 0}
+          onOpenChange={setSuggestionsOpen}
+          value={path}
+          onValueChange={(value, eventDetails) => {
+            if (eventDetails.reason === "item-press") {
+              // Choosing a folder descends into it rather than stopping there:
+              // an extension is usually a build folder a level or two down.
+              const entry = visibleEntries.find((candidate) => candidate.fullPath === value);
+              if (entry) {
+                setPath(appendBrowsePathSegment(path, entry.name));
+                return;
+              }
+            }
+            setPath(value);
+          }}
+        >
+          <AutocompleteInput
+            aria-label="Path to a built extension folder on this server"
+            placeholder="~/path/to/extension/dist"
+            size="sm"
+            spellCheck={false}
+          />
+          <AutocompletePopup>
+            <AutocompleteList className="max-h-72">
+              {visibleEntries.map((entry) => (
+                <AutocompleteItem key={entry.fullPath} value={entry} className="gap-2">
+                  <FolderIcon aria-hidden="true" className="size-3.5 shrink-0" />
+                  <span className="min-w-0 truncate">{entry.name}</span>
+                </AutocompleteItem>
+              ))}
+            </AutocompleteList>
+          </AutocompletePopup>
+        </Autocomplete>
+      </div>
+      {canPickNatively ? (
+        <Button onClick={() => void pickFolder()} size="sm" type="button" variant="outline">
+          <FolderOpenIcon aria-hidden="true" />
+          Browse…
+        </Button>
+      ) : null}
       <Button disabled={busy || path.trim().length === 0} size="sm" type="submit" variant="outline">
         <PlusIcon aria-hidden="true" />
         Add extension
       </Button>
       <p className="w-full text-xs text-muted-foreground">
-        Extensions run as separate processes and contribute tools, routes and screens. The folder is
-        on the server, so this is a path there rather than on this device.
+        Extensions run as separate processes and contribute tools, routes and screens. Type a path
+        on this server — suggestions come from its own filesystem.
       </p>
     </form>
   );

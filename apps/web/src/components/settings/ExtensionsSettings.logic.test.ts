@@ -4,7 +4,12 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
-import { confirmAndDeployExtension, toggleExtensionEnabled } from "./ExtensionsSettings.logic";
+import {
+  canPickExtensionFolderNatively,
+  confirmAndDeployExtension,
+  extensionFolderBrowseRequest,
+  toggleExtensionEnabled,
+} from "./ExtensionsSettings.logic";
 
 const row = (overrides: Partial<ExtensionSettingsRow> = {}): ExtensionSettingsRow =>
   ({
@@ -167,5 +172,71 @@ describe("enabling and disabling an extension from Settings", () => {
     });
 
     expect(outcome).toMatchObject({ status: "failed", title: "Could not enable bach" });
+  });
+});
+
+describe("the Add extension folder typeahead", () => {
+  it("lists the typed directory and filters by the partial name after it", () => {
+    expect(extensionFolderBrowseRequest("~/code/ext", "Linux")).toEqual({
+      partialPath: "~/code/",
+      filterQuery: "ext",
+    });
+    expect(extensionFolderBrowseRequest("/opt/extensions/", "Linux")).toEqual({
+      partialPath: "/opt/extensions/",
+      filterQuery: "",
+    });
+  });
+
+  it("asks for nothing until the text is a path", () => {
+    expect(extensionFolderBrowseRequest("", "Linux")).toBeNull();
+    expect(extensionFolderBrowseRequest("dist", "Linux")).toBeNull();
+  });
+
+  it("offers no suggestions for a relative path, which Settings has no directory to resolve", () => {
+    // The palette resolves these against the active project; Settings has none.
+    // Submitting still works — the server resolves it against its own cwd.
+    expect(extensionFolderBrowseRequest("./dist", "Linux")).toBeNull();
+    expect(extensionFolderBrowseRequest("../reference/dist", "Linux")).toBeNull();
+  });
+
+  it("follows the server's path rules, not this device's", () => {
+    // A Windows drive path only browses when the *server* is Windows.
+    expect(extensionFolderBrowseRequest("C:\\Users\\", "Linux")).toBeNull();
+    expect(extensionFolderBrowseRequest("C:\\Users\\", "Win32")).toEqual({
+      partialPath: "C:\\Users\\",
+      filterQuery: "",
+    });
+  });
+});
+
+describe("offering the native folder dialog", () => {
+  const base = {
+    environmentId: "env-1",
+    primaryEnvironmentId: "env-1",
+    isDesktopLocal: false,
+    desktopInstanceId: null,
+    hasDesktopBridge: true,
+  };
+
+  it("offers it for the desktop app's own server", () => {
+    expect(canPickExtensionFolderNatively(base)).toBe(true);
+  });
+
+  it("never offers it in a plain browser, where there is no dialog to open", () => {
+    expect(canPickExtensionFolderNatively({ ...base, hasDesktopBridge: false })).toBe(false);
+  });
+
+  it("never offers it for a remote server, whose folders are on another machine", () => {
+    expect(canPickExtensionFolderNatively({ ...base, environmentId: "remote-env" })).toBe(false);
+  });
+
+  it("offers it for a desktop-local secondary only once its instance id is known", () => {
+    const secondary = { ...base, environmentId: "wsl-env", isDesktopLocal: true };
+    // Without the id the dialog cannot be routed and would browse the primary's
+    // filesystem, then install that path against the wrong server.
+    expect(canPickExtensionFolderNatively(secondary)).toBe(false);
+    expect(canPickExtensionFolderNatively({ ...secondary, desktopInstanceId: "wsl:ubuntu" })).toBe(
+      true,
+    );
   });
 });

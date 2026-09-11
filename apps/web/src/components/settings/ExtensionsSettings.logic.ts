@@ -3,6 +3,8 @@ import {
   extensionRemoveConfirmation,
   type ExtensionSettingsRow,
 } from "@t3tools/client-runtime/extensions";
+import { getFilesystemBrowsePath } from "@t3tools/client-runtime/state/filesystem";
+import { isExplicitRelativeProjectPath } from "@t3tools/client-runtime/state/projects";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -155,4 +157,59 @@ export async function installExtension(input: {
   }
   const result = await input.install({ environmentId: input.environmentId, input: { path } });
   return settle(result, "Could not add the extension", `Adding ${path} failed.`);
+}
+
+/**
+ * The platform string the browse helpers expect, from the environment's
+ * reported OS — the same mapping the Add project palette uses, because the
+ * folder is on that server and its path rules are the server's, not this
+ * device's. Falls back to the local platform when the server has not said.
+ */
+export function extensionBrowsePlatform(os: string | null | undefined): string {
+  if (os === "windows") return "Win32";
+  if (os === "darwin") return "MacIntel";
+  if (os === "linux") return "Linux";
+  return typeof navigator === "undefined" ? "" : navigator.platform;
+}
+
+/**
+ * What the Add extension typeahead asks the server to list for the text typed
+ * so far, or `null` when there is nothing to ask.
+ *
+ * Browsing is server-side (`filesystem.browse`), so it lists the folders on the
+ * machine the extension will actually run on, local or remote. A relative path
+ * gets no suggestions: the palette resolves those against the active project,
+ * and Settings has none — the path can still be typed and submitted, and the
+ * server resolves it against its own working directory.
+ */
+export function extensionFolderBrowseRequest(
+  query: string,
+  platform: string,
+): { readonly partialPath: string; readonly filterQuery: string } | null {
+  if (isExplicitRelativeProjectPath(query.trim())) return null;
+  const browse = getFilesystemBrowsePath(query, platform);
+  if (!browse.isBrowsing || browse.directoryPath.length === 0) return null;
+  return { partialPath: browse.directoryPath, filterQuery: browse.filterQuery };
+}
+
+/**
+ * Whether the native folder dialog may be offered for this environment.
+ *
+ * Only when it would browse the right filesystem: the desktop app's own
+ * primary backend, or a desktop-local secondary (today WSL) whose pool instance
+ * id is known — without that id the dialog cannot be routed and would open the
+ * primary's filesystem, then install that path against the wrong server. Never
+ * in a plain browser, and never for a remote environment: its folder is on
+ * another machine, which is what the server-side typeahead is for.
+ */
+export function canPickExtensionFolderNatively(input: {
+  readonly environmentId: string;
+  readonly primaryEnvironmentId: string | null;
+  readonly isDesktopLocal: boolean;
+  readonly desktopInstanceId: string | null;
+  readonly hasDesktopBridge: boolean;
+}): boolean {
+  if (!input.hasDesktopBridge) return false;
+  if (input.environmentId === input.primaryEnvironmentId) return true;
+  return input.isDesktopLocal && input.desktopInstanceId !== null;
 }
