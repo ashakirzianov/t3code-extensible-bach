@@ -10,7 +10,8 @@ export type ExtensionWsMethod =
   | "extensions.setBadge"
   | "extensions.connect"
   | "extensions.respondTool"
-  | "extensions.respondHttp";
+  | "extensions.respondHttp"
+  | "extensions.projectIcons";
 
 export interface ExtensionMethodErrors {
   "extensions.hello":
@@ -27,6 +28,7 @@ export interface ExtensionMethodErrors {
   "extensions.connect": ExtensionHandshakeRequiredError | EnvironmentAuthorizationError;
   "extensions.respondTool": EnvironmentAuthorizationError;
   "extensions.respondHttp": EnvironmentAuthorizationError;
+  "extensions.projectIcons": EnvironmentAuthorizationError;
 }
 
 export type EnvironmentAuthorizationError = {
@@ -43,6 +45,30 @@ export type EnvironmentAuthorizationError = {
     | "relay:write"
     | "extension";
 };
+
+export type ExtensionAutomaticProjectIconName =
+  | "bot"
+  | "book-open"
+  | "cloud-cog"
+  | "database"
+  | "monitor"
+  | "gamepad-2"
+  | "image"
+  | "smartphone"
+  | "music"
+  | "package"
+  | "shield-check"
+  | "server"
+  | "shopping-bag"
+  | "terminal"
+  | "flask-conical"
+  | "video"
+  | "earth"
+  | "code-xml"
+  | "braces"
+  | "circuit-board"
+  | "folder-code"
+  | "layers";
 
 export type ExtensionBadge =
   | {
@@ -144,6 +170,78 @@ export type ExtensionName = string;
 export type ExtensionNotFoundError = {
   readonly _tag: "ExtensionNotFoundError";
   readonly extensionName: ExtensionName;
+};
+
+export type ExtensionProjectIcon = {
+  readonly override: ExtensionProjectIconOverride | null;
+  readonly faviconUrl: string | null;
+  readonly automatic: {
+    readonly name: ExtensionAutomaticProjectIconName;
+    readonly color: 
+      | "gray"
+      | "red"
+      | "orange"
+      | "amber"
+      | "yellow"
+      | "lime"
+      | "green"
+      | "emerald"
+      | "teal"
+      | "cyan"
+      | "sky"
+      | "blue"
+      | "indigo"
+      | "violet"
+      | "purple"
+      | "fuchsia"
+      | "pink"
+      | "rose";
+    readonly colorCss: ExtensionProjectIconColorCss;
+  };
+};
+
+export type ExtensionProjectIconColorCss = {
+  readonly light: string;
+  readonly dark: string;
+};
+
+export type ExtensionProjectIconOverride =
+  | {
+      readonly kind: "lucide";
+      readonly name: string;
+      readonly color: 
+        | "gray"
+        | "red"
+        | "orange"
+        | "amber"
+        | "yellow"
+        | "lime"
+        | "green"
+        | "emerald"
+        | "teal"
+        | "cyan"
+        | "sky"
+        | "blue"
+        | "indigo"
+        | "violet"
+        | "purple"
+        | "fuchsia"
+        | "pink"
+        | "rose";
+      readonly colorCss: ExtensionProjectIconColorCss;
+    }
+  | {
+      readonly kind: "emoji";
+      readonly emoji: string;
+    };
+
+export type ExtensionProjectIconsInput = Readonly<Record<string, unknown>> | ReadonlyArray<unknown>;
+
+export type ExtensionProjectIconsResult = {
+  readonly projects: ReadonlyArray<{
+    readonly projectId: string;
+    readonly icon: ExtensionProjectIcon;
+  }>;
 };
 
 export type ExtensionProtocolMismatchError = {

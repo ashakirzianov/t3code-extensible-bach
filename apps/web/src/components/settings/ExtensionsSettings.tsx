@@ -238,17 +238,23 @@ function ExtensionCard({ row }: { row: ExtensionSettingsRow }) {
           >
             Change path…
           </Button>
-          <Button onClick={() => void handleRemove(false)} size="xs" variant="ghost-muted">
-            Remove
-          </Button>
-          <Button
-            onClick={() => void handleRemove(true)}
-            size="xs"
-            variant="ghost-muted"
-            title="Remove and delete its data directory"
-          >
-            Remove &amp; delete data
-          </Button>
+          {/* A launch flag would start it again on the next reconcile, so there
+              is nothing to remove; Disable is its way out. */}
+          {row.canRemove ? (
+            <>
+              <Button onClick={() => void handleRemove(false)} size="xs" variant="ghost-muted">
+                Remove
+              </Button>
+              <Button
+                onClick={() => void handleRemove(true)}
+                size="xs"
+                variant="ghost-muted"
+                title="Remove and delete its data directory"
+              >
+                Remove &amp; delete data
+              </Button>
+            </>
+          ) : null}
         </div>
       </div>
 

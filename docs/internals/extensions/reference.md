@@ -90,6 +90,38 @@ with a same-origin `import()` — the only thing that executes under the desktop
 ([spike](docs/internals/extensions/spikes/electron-runtime.md)) — and mounts it in a container the host owns. The host
 draws the nav entry itself from the label, icon, and badge.
 
+## Project icons
+
+An extension that shows projects should draw the icon the host draws, and one part of that
+is not reachable as an ordinary client: the automatic icon the host picks from a project's
+name when it has nothing better. `extensions.projectIcons` answers with every project's icon
+in the three halves the host itself resolves, kept apart rather than flattened into one
+picture:
+
+- `override` — what the user chose in Project settings, an emoji or a Lucide icon and
+  colour. When it is set, draw it and ignore the rest.
+- `faviconUrl` — the project's own favicon as a signed, same-origin path an `<img>` loads as
+  is, the same URL the sidebar uses. `null` when the project has none. It expires in about an
+  hour, so ask again when you render rather than keeping it.
+- `automatic` — a Lucide icon name and a colour. Always present: it is what to draw when
+  there is neither of the others, and what to fall back to if the favicon fails to load.
+
+The automatic name is one of a **closed set** of 22 Lucide names, enumerated in the schema as
+`ExtensionAutomaticProjectIconName`: `bot`, `book-open`, `cloud-cog`, `database`, `monitor`,
+`gamepad-2`, `image`, `smartphone`, `music`, `package`, `shield-check`, `server`,
+`shopping-bag`, `terminal`, `flask-conical`, `video`, `earth`, `code-xml`, `braces`,
+`circuit-board`, `folder-code`, `layers`. A consumer that draws them from its own copies,
+without a Lucide dependency, can rely on that list being complete: a name joins it only
+with a protocol change. An override's Lucide name is the user's choice and is not limited
+to this set.
+
+Colours come twice: `color` is the palette name, and `colorCss` is the CSS value the host
+draws it in — `light` on light themes, `dark` when the host's root element has the `dark`
+class — so a consumer needs no colour table of its own. The `faviconUrl` is root-relative
+(`/api/assets/…`), never an absolute origin, so the packaged desktop's `t3code://` proxy
+re-bases it like any other page path. The answer is keyed by the same project ids
+`subscribeShell` uses; when a project's title, favicon or icon changes there, ask again.
+
 ## Where extensions come from
 
 Two sources, and no third: entries in the environment's settings
@@ -115,8 +147,15 @@ process: anything held only in memory would be undone by the next reconcile.
 build overrides the shipped copy; writing one with `enabled: false` turns it off. That one
 rule is what makes the launch flag safe to hardcode, and Settings acts on it rather than
 asking anyone to know it: changing the folder of, or disabling, a flag-started extension
-writes that overriding entry, and Remove drops it again — after which the flag's folder
-takes over instead of the extension disappearing.
+writes that overriding entry.
+
+**Remove means the settings entry.** For an extension an entry installed, it drops the
+entry — and if a launch flag also names it, the flag's folder takes over again instead of
+the extension disappearing. An extension only a launch flag names has no entry to drop, so
+`extensions.admin.remove` refuses it (`ExtensionNotRemovableError`) and Settings does not
+offer it: the flag would start it again on the next reconcile, and deleting its data would
+pull the directory out from under a running process. Disable, kept as an `enabled: false`
+entry, is how a shipped extension is turned off.
 
 The name in the settings entry, not the manifest's, is the one the host installs under and
 the one it hands the process as `T3_EXT_NAME`. Start order is the order entries are written,
@@ -414,6 +453,15 @@ Answers one proxyHttp event.
 - Success: acknowledgement only
 - Errors: [`EnvironmentAuthorizationError`](#environmentauthorizationerror)
 
+### `extensions.projectIcons`
+
+Every project's icon as the host draws it: override, favicon, automatic fallback.
+
+- Direction: extension-to-host
+- Input: [`ExtensionProjectIconsInput`](#extensionprojecticonsinput)
+- Success: [`ExtensionProjectIconsResult`](#extensionprojecticonsresult)
+- Errors: [`EnvironmentAuthorizationError`](#environmentauthorizationerror)
+
 ## Client API
 
 An extension is an ordinary client, so everything below is callable on the same socket
@@ -656,6 +704,10 @@ stream of the listed element rather than a single result.
 | `message` | string | yes |
 | `requiredScope` | `"orchestration:read"` \| `"orchestration:operate"` \| `"terminal:operate"` \| `"review:write"` \| `"access:read"` \| `"access:write"` \| `"relay:read"` \| `"relay:write"` \| `"extension"` | yes |
 
+### ExtensionAutomaticProjectIconName
+
+`string`. One of: `"bot"`, `"book-open"`, `"cloud-cog"`, `"database"`, `"monitor"`, `"gamepad-2"`, `"image"`, `"smartphone"`, `"music"`, `"package"`, `"shield-check"`, `"server"`, `"shopping-bag"`, `"terminal"`, `"flask-conical"`, `"video"`, `"earth"`, `"code-xml"`, `"braces"`, `"circuit-board"`, `"folder-code"`, `"layers"`.
+
 ### ExtensionBadge
 
 One of 3 shapes.
@@ -813,6 +865,59 @@ No fields.
 | --- | --- | --- |
 | `_tag` | `"ExtensionNotFoundError"` | yes |
 | `extensionName` | [`ExtensionName`](#extensionname) | yes |
+
+### ExtensionProjectIcon
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `override` | [`ExtensionProjectIconOverride`](#extensionprojecticonoverride) \| null | yes |
+| `faviconUrl` | string \| null | yes |
+| `automatic` | object (name, color, colorCss) | yes |
+
+### ExtensionProjectIconColorCss
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `light` | string | yes | min length 1, max length 64 |
+| `dark` | string | yes | min length 1, max length 64 |
+
+### ExtensionProjectIconOverride
+
+One of 2 shapes.
+
+**kind = `"lucide"`**
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `kind` | `"lucide"` | yes |  |
+| `name` | string | yes | min length 1, max length 64, pattern `^[a-z0-9]+(?:-[a-z0-9]+)*$` |
+| `color` | `"gray"` \| `"red"` \| `"orange"` \| `"amber"` \| `"yellow"` \| `"lime"` \| `"green"` \| `"emerald"` \| `"teal"` \| `"cyan"` \| `"sky"` \| `"blue"` \| `"indigo"` \| `"violet"` \| `"purple"` \| `"fuchsia"` \| `"pink"` \| `"rose"` | yes |  |
+| `colorCss` | [`ExtensionProjectIconColorCss`](#extensionprojecticoncolorcss) | yes |  |
+
+**kind = `"emoji"`**
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `kind` | `"emoji"` | yes |  |
+| `emoji` | string | yes | min length 1, max length 32 |
+
+### ExtensionProjectIconsInput
+
+One of 2 shapes.
+
+**variant 1**
+
+No fields.
+
+**variant 2**
+
+No fields.
+
+### ExtensionProjectIconsResult
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `projects` | array of object (projectId, icon) | yes |
 
 ### ExtensionProtocolMismatchError
 

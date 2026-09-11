@@ -976,3 +976,42 @@ describe("the enabled switch is kept in settings", () => {
     ),
   );
 });
+
+describe("removing an extension only a launch flag names", () => {
+  const bach = "bach" as ExtensionName;
+
+  const staysUp = Effect.fn("test.staysUp")(function* () {
+    const never = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+    return () => Effect.succeed(handle({ exit: Deferred.await(never) }));
+  });
+
+  it.effect("is refused, leaving it running and its data where it was", () =>
+    run(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const probe = yield* harness({ spawn: yield* staysUp() });
+          const h = yield* harness({
+            spawn: yield* staysUp(),
+            launchFlags: [{ name: bach, path: probe.folder }],
+          });
+          yield* h.supervisor.watchSettings;
+          yield* Queue.take(h.launched);
+          const dataDir = path.join(h.dataRoot, "bach");
+          yield* fs.makeDirectory(dataDir, { recursive: true });
+          yield* fs.writeFileString(path.join(dataDir, "state.json"), "{}");
+
+          const error = yield* Effect.flip(h.supervisor.remove({ name: bach, deleteData: true }));
+          expect(error._tag).toBe("ExtensionNotRemovableError");
+          // Nothing moved: still installed from its flag, still the one process,
+          // and the data a running process is using is still there.
+          expect(yield* fs.exists(dataDir)).toBe(true);
+          expect((yield* h.registry.get(bach)).source).toBe("launch-flag");
+          expect(yield* Ref.get(h.spawns)).toHaveLength(1);
+          expect((yield* h.settings.getSettings).extensions).toStrictEqual([]);
+        }),
+      ),
+    ),
+  );
+});

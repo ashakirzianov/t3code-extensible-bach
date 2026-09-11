@@ -21,6 +21,7 @@ import {
   ExtensionAlreadyInstalledError,
   ExtensionFolderError,
   ExtensionNotFoundError,
+  ExtensionNotRemovableError,
   type ExtensionName,
   type ExtensionSettingsEntry,
 } from "@t3tools/contracts";
@@ -140,7 +141,7 @@ export interface ExtensionSupervisorShape {
   readonly remove: (input: {
     readonly name: ExtensionName;
     readonly deleteData: boolean;
-  }) => Effect.Effect<void, ExtensionNotFoundError>;
+  }) => Effect.Effect<void, ExtensionNotFoundError | ExtensionNotRemovableError>;
   /**
    * Turn it on or off, and keep it that way.
    *
@@ -561,6 +562,13 @@ export const make = Effect.fnUntraced(function* (options: ExtensionSupervisorOpt
     function* (input) {
       const status = yield* registry.get(input.name);
       const settings = yield* serverSettings.getSettings.pipe(Effect.orDie);
+      // Only a settings entry can be removed. Refused before anything is
+      // touched: with no entry, the launch flag names it again on the next
+      // reconcile, so the data directory would be deleted from under a process
+      // that goes on running.
+      if (!settings.extensions.some((entry) => entry.name === input.name)) {
+        return yield* new ExtensionNotRemovableError({ extensionName: input.name });
+      }
       yield* serverSettings
         .updateSettings({
           extensions: settings.extensions.filter((entry) => entry.name !== input.name),

@@ -23,6 +23,10 @@
       "types": "./src/projectFavicon.ts",
       "import": "./src/projectFavicon.ts"
     },
+    "./projectIcon": {
+      "types": "./src/projectIcon.ts",
+      "import": "./src/projectIcon.ts"
+    },
     "./model": {
       "types": "./src/model.ts",
       "import": "./src/model.ts"

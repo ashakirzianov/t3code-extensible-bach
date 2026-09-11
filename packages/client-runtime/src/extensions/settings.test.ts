@@ -156,3 +156,13 @@ describe("repointing an extension", () => {
     expect(message).toContain("/home/me/bach/dist");
   });
 });
+
+describe("removing an extension from Settings", () => {
+  it("is offered only for what a settings entry installed", () => {
+    const [group] = groupsOf(
+      status({ name: "mine", source: "settings" }),
+      status({ name: "shipped", source: "launch-flag" }),
+    );
+    expect(group?.rows.map((row) => row.canRemove)).toEqual([true, false]);
+  });
+});

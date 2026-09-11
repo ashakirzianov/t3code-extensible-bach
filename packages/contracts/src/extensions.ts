@@ -6,7 +6,8 @@ import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
 } from "./auth.ts";
-import { EnvironmentId, NonNegativeInt, ThreadId } from "./baseSchemas.ts";
+import { EnvironmentId, NonNegativeInt, ProjectId, ThreadId } from "./baseSchemas.ts";
+import { ProjectIconColor } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 /**
@@ -100,6 +101,7 @@ export const EXTENSION_WS_METHODS = {
   connect: "extensions.connect",
   respondTool: "extensions.respondTool",
   respondHttp: "extensions.respondHttp",
+  projectIcons: "extensions.projectIcons",
 } as const;
 
 /**
@@ -356,6 +358,116 @@ export const ExtensionSetBadgeInput = Schema.Struct({
   badge: ExtensionBadge,
 }).annotate({ identifier: "ExtensionSetBadgeInput" });
 export type ExtensionSetBadgeInput = typeof ExtensionSetBadgeInput.Type;
+
+// ---------------------------------------------------------------------------
+// projectIcons
+// ---------------------------------------------------------------------------
+
+/**
+ * A user's own icon for a project, from Project settings: the host's
+ * `ProjectIconOverride`, with bounded strings for the generated schema's sake
+ * and the colour's CSS value added.
+ */
+/**
+ * A palette colour as the host draws it, ready to use as a CSS colour: `light`
+ * on light themes, `dark` when the host's root element has the `dark` class.
+ */
+export const ExtensionProjectIconColorCss = Schema.Struct({
+  light: BoundedString(64),
+  dark: BoundedString(64),
+}).annotate({ identifier: "ExtensionProjectIconColorCss" });
+export type ExtensionProjectIconColorCss = typeof ExtensionProjectIconColorCss.Type;
+
+export const ExtensionProjectIconOverride = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("lucide"),
+    /** A Lucide icon name, kebab case — `rocket`, `book-open`. */
+    name: BoundedString(64).check(Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)),
+    color: ProjectIconColor,
+    colorCss: ExtensionProjectIconColorCss,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("emoji"),
+    emoji: BoundedString(32),
+  }),
+]).annotate({ identifier: "ExtensionProjectIconOverride" });
+export type ExtensionProjectIconOverride = typeof ExtensionProjectIconOverride.Type;
+
+/**
+ * A project's icon, as the host resolves it — kept as its three halves rather
+ * than flattened into one picture, because they are different kinds of thing:
+ *
+ * - `override`: what the user chose. When present, draw it and ignore the rest.
+ * - `faviconUrl`: the project's own favicon, as a signed same-origin path an
+ *   `<img>` loads as is. Valid for about an hour; ask again rather than keep it.
+ *   `null` when the project has none.
+ * - `automatic`: what the host draws when there is neither, and what to fall
+ *   back to if the favicon fails to load. Always present.
+ *
+ * Colours come as the palette name (`color`) and as the CSS value the host
+ * draws it in (`colorCss`), so a reader needs no colour table of its own.
+ */
+/**
+ * Every name `automatic` can carry — a closed set. A consumer that draws these
+ * from its own copies (no Lucide dependency) can rely on having all of them: a
+ * name joins this list only with a protocol change, never silently.
+ */
+export const EXTENSION_AUTOMATIC_PROJECT_ICON_NAMES = [
+  "bot",
+  "book-open",
+  "cloud-cog",
+  "database",
+  "monitor",
+  "gamepad-2",
+  "image",
+  "smartphone",
+  "music",
+  "package",
+  "shield-check",
+  "server",
+  "shopping-bag",
+  "terminal",
+  "flask-conical",
+  "video",
+  "earth",
+  "code-xml",
+  "braces",
+  "circuit-board",
+  "folder-code",
+  "layers",
+] as const;
+export const ExtensionAutomaticProjectIconName = Schema.Literals(
+  EXTENSION_AUTOMATIC_PROJECT_ICON_NAMES,
+).annotate({ identifier: "ExtensionAutomaticProjectIconName" });
+export type ExtensionAutomaticProjectIconName = typeof ExtensionAutomaticProjectIconName.Type;
+
+export const ExtensionProjectIcon = Schema.Struct({
+  override: Schema.NullOr(ExtensionProjectIconOverride),
+  faviconUrl: Schema.NullOr(BoundedString(2048)),
+  automatic: Schema.Struct({
+    /** One of `EXTENSION_AUTOMATIC_PROJECT_ICON_NAMES`, a closed set of Lucide names. */
+    name: ExtensionAutomaticProjectIconName,
+    color: ProjectIconColor,
+    colorCss: ExtensionProjectIconColorCss,
+  }),
+}).annotate({ identifier: "ExtensionProjectIcon" });
+export type ExtensionProjectIcon = typeof ExtensionProjectIcon.Type;
+
+export const ExtensionProjectIconsInput = Schema.Struct({}).annotate({
+  identifier: "ExtensionProjectIconsInput",
+});
+export type ExtensionProjectIconsInput = typeof ExtensionProjectIconsInput.Type;
+
+/** One entry per project in this environment, keyed as `subscribeShell` keys them. */
+export const ExtensionProjectIconsResult = Schema.Struct({
+  projects: Schema.Array(
+    Schema.Struct({
+      projectId: ProjectId,
+      icon: ExtensionProjectIcon,
+    }),
+  ),
+}).annotate({ identifier: "ExtensionProjectIconsResult" });
+export type ExtensionProjectIconsResult = typeof ExtensionProjectIconsResult.Type;
 
 // ---------------------------------------------------------------------------
 // Host to extension: tool invocation
@@ -927,10 +1039,29 @@ export const ExtensionSetPathInput = Schema.Struct({
 }).annotate({ identifier: "ExtensionSetPathInput" });
 export type ExtensionSetPathInput = typeof ExtensionSetPathInput.Type;
 
+/**
+ * Remove asked of an extension that only a launch flag names. There is no
+ * settings entry to drop, so the flag would name it again on the next
+ * reconcile: the click would do nothing, and deleting its data would pull the
+ * directory out from under a process that is still running. Disable — kept as
+ * an `enabled: false` entry — is how a shipped extension is turned off.
+ */
+export class ExtensionNotRemovableError extends Schema.TaggedError<ExtensionNotRemovableError>()(
+  "ExtensionNotRemovableError",
+  {
+    extensionName: ExtensionName,
+  },
+) {
+  override get message(): string {
+    return `${this.extensionName} is started by a launch flag, so there is no settings entry to remove. Disable it instead.`;
+  }
+}
+
 export const ExtensionAdminError = Schema.Union([
   ExtensionNotFoundError,
   ExtensionFolderError,
   ExtensionAlreadyInstalledError,
+  ExtensionNotRemovableError,
 ]).annotate({ identifier: "ExtensionAdminError" });
 export type ExtensionAdminError = typeof ExtensionAdminError.Type;
 

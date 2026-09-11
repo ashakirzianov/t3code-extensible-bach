@@ -83,6 +83,15 @@
       "errors": [
         "EnvironmentAuthorizationError"
       ]
+    },
+    "extensions.projectIcons": {
+      "direction": "extension-to-host",
+      "summary": "Every project's icon as the host draws it: override, favicon, automatic fallback.",
+      "payload": "ExtensionProjectIconsInput",
+      "success": "ExtensionProjectIconsResult",
+      "errors": [
+        "EnvironmentAuthorizationError"
+      ]
     }
   },
   "$defs": {
@@ -119,6 +128,33 @@
         "requiredScope"
       ],
       "additionalProperties": false
+    },
+    "ExtensionAutomaticProjectIconName": {
+      "type": "string",
+      "enum": [
+        "bot",
+        "book-open",
+        "cloud-cog",
+        "database",
+        "monitor",
+        "gamepad-2",
+        "image",
+        "smartphone",
+        "music",
+        "package",
+        "shield-check",
+        "server",
+        "shopping-bag",
+        "terminal",
+        "flask-conical",
+        "video",
+        "earth",
+        "code-xml",
+        "braces",
+        "circuit-board",
+        "folder-code",
+        "layers"
+      ]
     },
     "ExtensionBadge": {
       "anyOf": [
@@ -492,6 +528,212 @@
       "required": [
         "_tag",
         "extensionName"
+      ],
+      "additionalProperties": false
+    },
+    "ExtensionProjectIcon": {
+      "type": "object",
+      "properties": {
+        "override": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExtensionProjectIconOverride"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "faviconUrl": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "automatic": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "$ref": "#/$defs/ExtensionAutomaticProjectIconName"
+            },
+            "color": {
+              "type": "string",
+              "enum": [
+                "gray",
+                "red",
+                "orange",
+                "amber",
+                "yellow",
+                "lime",
+                "green",
+                "emerald",
+                "teal",
+                "cyan",
+                "sky",
+                "blue",
+                "indigo",
+                "violet",
+                "purple",
+                "fuchsia",
+                "pink",
+                "rose"
+              ]
+            },
+            "colorCss": {
+              "$ref": "#/$defs/ExtensionProjectIconColorCss"
+            }
+          },
+          "required": [
+            "name",
+            "color",
+            "colorCss"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "override",
+        "faviconUrl",
+        "automatic"
+      ],
+      "additionalProperties": false
+    },
+    "ExtensionProjectIconColorCss": {
+      "type": "object",
+      "properties": {
+        "light": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "dark": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "light",
+        "dark"
+      ],
+      "additionalProperties": false
+    },
+    "ExtensionProjectIconOverride": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "lucide"
+              ]
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+            },
+            "color": {
+              "type": "string",
+              "enum": [
+                "gray",
+                "red",
+                "orange",
+                "amber",
+                "yellow",
+                "lime",
+                "green",
+                "emerald",
+                "teal",
+                "cyan",
+                "sky",
+                "blue",
+                "indigo",
+                "violet",
+                "purple",
+                "fuchsia",
+                "pink",
+                "rose"
+              ]
+            },
+            "colorCss": {
+              "$ref": "#/$defs/ExtensionProjectIconColorCss"
+            }
+          },
+          "required": [
+            "kind",
+            "name",
+            "color",
+            "colorCss"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "emoji"
+              ]
+            },
+            "emoji": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32
+            }
+          },
+          "required": [
+            "kind",
+            "emoji"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ExtensionProjectIconsInput": {
+      "anyOf": [
+        {
+          "type": "object"
+        },
+        {
+          "type": "array"
+        }
+      ]
+    },
+    "ExtensionProjectIconsResult": {
+      "type": "object",
+      "properties": {
+        "projects": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "projectId": {
+                "type": "string"
+              },
+              "icon": {
+                "$ref": "#/$defs/ExtensionProjectIcon"
+              }
+            },
+            "required": [
+              "projectId",
+              "icon"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "projects"
       ],
       "additionalProperties": false
     },

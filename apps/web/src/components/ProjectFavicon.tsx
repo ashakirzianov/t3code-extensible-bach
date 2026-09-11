@@ -1,4 +1,3 @@
-import type { ProjectIconColor } from "@t3tools/contracts";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
   getProjectFaviconResourceKey,
@@ -34,6 +33,7 @@ import { lazy, Suspense, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import { projectFaviconUrlAtom } from "../state/assets";
 import { selectProjectIcon, type ProjectIconName } from "../projectIconModel";
+import { PROJECT_ICON_COLOR_BY_NAME } from "@t3tools/shared/projectIcon";
 import { projectIconColorClassName } from "../projectIconColors";
 import { cn } from "~/lib/utils";
 
@@ -68,31 +68,6 @@ const PROJECT_ICONS: Record<ProjectIconName, ComponentType<{ className?: string 
   test: FlaskConicalIcon,
   video: VideoIcon,
   web: Globe2Icon,
-};
-
-const PROJECT_ICON_COLOR_BY_NAME: Record<ProjectIconName, ProjectIconColor> = {
-  ai: "violet",
-  book: "amber",
-  braces: "purple",
-  circuit: "teal",
-  cloud: "sky",
-  code: "blue",
-  database: "cyan",
-  desktop: "indigo",
-  "folder-code": "orange",
-  game: "emerald",
-  image: "pink",
-  layers: "fuchsia",
-  mobile: "lime",
-  music: "fuchsia",
-  package: "orange",
-  security: "teal",
-  server: "blue",
-  shopping: "rose",
-  terminal: "green",
-  test: "yellow",
-  video: "red",
-  web: "sky",
 };
 
 // The slice of a project that decides its icon. Every surface must pass the

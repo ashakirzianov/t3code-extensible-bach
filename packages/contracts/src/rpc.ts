@@ -109,6 +109,8 @@ import {
   ExtensionInstallInput,
   ExtensionInstallResult,
   ExtensionRemoveInput,
+  ExtensionProjectIconsInput,
+  ExtensionProjectIconsResult,
   ExtensionSetPathInput,
   ExtensionAssetUrlsResult,
   ExtensionLogsInput,
@@ -1268,6 +1270,16 @@ export const WsExtensionsRespondHttpRpc = Rpc.make(EXTENSION_WS_METHODS.respondH
   error: EnvironmentAuthorizationError,
 });
 
+/**
+ * Every project's icon as the host draws it. A read with no identity in it, so
+ * it needs no handshake — only the extension scope.
+ */
+export const WsExtensionsProjectIconsRpc = Rpc.make(EXTENSION_WS_METHODS.projectIcons, {
+  payload: ExtensionProjectIconsInput,
+  success: ExtensionProjectIconsResult,
+  error: EnvironmentAuthorizationError,
+});
+
 // Extension management, for the Settings screen rather than for extensions.
 export const WsExtensionsAdminListRpc = Rpc.make(EXTENSION_ADMIN_WS_METHODS.list, {
   payload: Schema.Struct({}),
@@ -1460,6 +1472,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsExtensionsConnectRpc,
   WsExtensionsRespondToolRpc,
   WsExtensionsRespondHttpRpc,
+  WsExtensionsProjectIconsRpc,
   WsExtensionsAdminListRpc,
   WsExtensionsAdminSubscribeRpc,
   WsExtensionsAdminDeployRpc,

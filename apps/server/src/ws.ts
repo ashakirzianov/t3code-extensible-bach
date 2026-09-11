@@ -117,6 +117,7 @@ import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { EXTENSION_SUBJECT_PREFIX } from "./extensions/ExtensionIdentity.ts";
+import { resolveExtensionProjectIcons } from "./extensions/ExtensionProjectIcons.ts";
 import * as ExtensionRegistryService from "./extensions/ExtensionRegistry.ts";
 import { mintExtensionAssetUrls } from "./extensions/ExtensionAssetAccess.ts";
 import * as ExtensionSupervisorService from "./extensions/ExtensionSupervisor.ts";
@@ -2759,6 +2760,25 @@ const makeWsRpcLayer = (
           observeRpcEffect(EXTENSION_WS_METHODS.respondTool, extensions.respondTool(input), {
             "rpc.aggregate": "extensions",
           }),
+        [EXTENSION_WS_METHODS.projectIcons]: (_input) =>
+          observeRpcEffect(
+            EXTENSION_WS_METHODS.projectIcons,
+            Effect.gen(function* () {
+              // A projection that cannot be read is an internal fault, and the
+              // RPC's error union is authorization only.
+              const snapshot = yield* projectionSnapshotQuery.getShellSnapshot().pipe(Effect.orDie);
+              return yield* resolveExtensionProjectIcons({
+                projects: snapshot.projects,
+                // The sidebar's own favicon path (see `assetsCreateUrl`).
+                mintFaviconUrl: (project) =>
+                  issueAssetUrl({
+                    resource: { _tag: "project-favicon", cwd: project.workspaceRoot },
+                    ...(project.faviconPath ? { projectFaviconPath: project.faviconPath } : {}),
+                  }).pipe(Effect.map((result) => result.relativeUrl)),
+              });
+            }),
+            { "rpc.aggregate": "extensions" },
+          ),
         [EXTENSION_WS_METHODS.respondHttp]: (input) =>
           observeRpcEffect(EXTENSION_WS_METHODS.respondHttp, extensions.respondHttp(input), {
             "rpc.aggregate": "extensions",

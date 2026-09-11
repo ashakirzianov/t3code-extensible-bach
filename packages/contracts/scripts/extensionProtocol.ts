@@ -13,6 +13,8 @@ import {
   ExtensionHttpRequest,
   ExtensionHttpResponse,
   ExtensionManifest,
+  ExtensionProjectIconsInput,
+  ExtensionProjectIconsResult,
   ExtensionRegisterHttpPrefixInput,
   ExtensionRegisterHttpPrefixResult,
   ExtensionRegisterToolsInput,
@@ -96,6 +98,12 @@ const METHODS: Readonly<Record<string, MethodEntry>> = {
     summary: "Answers one proxyHttp event.",
     payload: "ExtensionHttpResponse",
   },
+  [EXTENSION_WS_METHODS.projectIcons]: {
+    direction: "extension-to-host",
+    summary: "Every project's icon as the host draws it: override, favicon, automatic fallback.",
+    payload: "ExtensionProjectIconsInput",
+    success: "ExtensionProjectIconsResult",
+  },
 };
 
 /** Roots the document is built from. Everything they reference follows. */
@@ -117,6 +125,8 @@ const ROOTS = [
   ExtensionHttpBody,
   ExtensionToolResult,
   ExtensionHttpResponse,
+  ExtensionProjectIconsInput,
+  ExtensionProjectIconsResult,
   ExtensionError,
 ] as const;
 

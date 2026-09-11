@@ -59,6 +59,12 @@ export interface ExtensionSettingsRow {
    * the flag and the switch.
    */
   readonly canDeploy: boolean;
+  /**
+   * Only what a settings entry installed can be removed. An extension a launch
+   * flag names has no entry, so Remove would do nothing but delete its data;
+   * the screen offers Disable for it instead.
+   */
+  readonly canRemove: boolean;
   /** The anchor a deep link from the sidebar or a search result lands on. */
   readonly anchorId: string;
 }
@@ -126,6 +132,7 @@ export function extensionSettingsRow(
     restartCount: status.restartCount,
     hasWebEntry: status.web !== undefined,
     canDeploy: status.changed && status.enabled,
+    canRemove: status.source === "settings",
     anchorId: extensionSettingsAnchorId(environmentId, status.name),
   };
 }
