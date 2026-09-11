@@ -180,8 +180,13 @@ export function ExtensionHostView({
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
       {load.status === "failed" ? <ExtensionMessage>{load.message}</ExtensionMessage> : null}
+      {/* The scroll container. Its box stays bounded (min-h-0 in a viewport-
+          high chain), so a plain-flowing extension page scrolls here by
+          default, while one that sizes its root to 100% and runs its own
+          scroll region never overflows this box and never sees a second
+          scrollbar. Both axes: a wide table should scroll, not be clipped. */}
       <div
-        className="flex min-h-0 flex-1 flex-col"
+        className="flex min-h-0 flex-1 flex-col overflow-auto overscroll-contain"
         data-extension={name}
         data-environment={environmentId}
         hidden={load.status !== "mounted"}
