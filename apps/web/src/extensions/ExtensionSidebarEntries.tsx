@@ -89,7 +89,11 @@ function ExtensionSidebarRow({ entry }: { entry: ExtensionNavEntry }) {
 
   return (
     <SidebarMenuItem className="relative">
+      {/* Starts 8px in rather than a labelled row's usual 10px: these rows
+          stack directly above the footer's icon-only buttons, which centre a
+          16px icon in a 32px square, and the 2px step shows between the two. */}
       <SidebarMenuButton
+        className="ps-2"
         data-active={isActive ? "" : undefined}
         onClick={handleOpen}
         title={entry.environmentLabel === null ? undefined : entry.environmentLabel}
