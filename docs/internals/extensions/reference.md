@@ -117,7 +117,7 @@ to this set.
 
 Colours come twice: `color` is the palette name, and `colorCss` is the CSS value the host
 draws it in — `light` on light themes, `dark` when the host's root element has the `dark`
-class — so a consumer needs no colour table of its own. The `faviconUrl` is root-relative
+class — so a consumer needs no colour table of its own. The rule behind those values, for a consumer that builds its own table: they are Tailwind v4's default palette at shade 600 on light themes and 400 on dark — the shades the host's own classes use — given as Tailwind's `oklch()` values, not hex. The `faviconUrl` is root-relative
 (`/api/assets/…`), never an absolute origin, so the packaged desktop's `t3code://` proxy
 re-bases it like any other page path. The answer is keyed by the same project ids
 `subscribeShell` uses; when a project's title, favicon or icon changes there, ask again.
