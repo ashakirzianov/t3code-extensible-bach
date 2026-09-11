@@ -96,6 +96,15 @@ export function createExtensionEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }) => JSON.stringify([environmentId, input.name]),
       },
     }),
+    setPath: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:extensions:set-path",
+      tag: EXTENSION_ADMIN_WS_METHODS.setPath,
+      scheduler: adminScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.name]),
+      },
+    }),
     setEnabled: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:extensions:set-enabled",
       tag: EXTENSION_ADMIN_WS_METHODS.setEnabled,

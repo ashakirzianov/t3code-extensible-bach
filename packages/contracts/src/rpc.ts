@@ -109,6 +109,7 @@ import {
   ExtensionInstallInput,
   ExtensionInstallResult,
   ExtensionRemoveInput,
+  ExtensionSetPathInput,
   ExtensionAssetUrlsResult,
   ExtensionLogsInput,
   ExtensionLogsResult,
@@ -1312,6 +1313,11 @@ export const WsExtensionsAdminRemoveRpc = Rpc.make(EXTENSION_ADMIN_WS_METHODS.re
   error: Schema.Union([ExtensionAdminError, EnvironmentAuthorizationError]),
 });
 
+export const WsExtensionsAdminSetPathRpc = Rpc.make(EXTENSION_ADMIN_WS_METHODS.setPath, {
+  payload: ExtensionSetPathInput,
+  error: Schema.Union([ExtensionAdminError, EnvironmentAuthorizationError]),
+});
+
 export const WsExtensionsAdminLogsRpc = Rpc.make(EXTENSION_ADMIN_WS_METHODS.logs, {
   payload: ExtensionLogsInput,
   success: ExtensionLogsResult,
@@ -1461,5 +1467,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsExtensionsAdminLogsRpc,
   WsExtensionsAdminInstallRpc,
   WsExtensionsAdminRemoveRpc,
+  WsExtensionsAdminSetPathRpc,
   WsExtensionsAdminAssetUrlsRpc,
 );

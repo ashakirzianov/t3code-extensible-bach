@@ -141,10 +141,31 @@ export interface ExtensionSupervisorShape {
     readonly name: ExtensionName;
     readonly deleteData: boolean;
   }) => Effect.Effect<void, ExtensionNotFoundError>;
+  /**
+   * Turn it on or off, and keep it that way.
+   *
+   * Written to settings rather than only to the running registry: the settings
+   * are what every reconcile — and every restart — reads, so a switch that
+   * lived only in memory would be undone by the next unrelated settings write.
+   * For an extension a launch flag started, this writes the overriding entry
+   * with `enabled: false`, which is the documented way to turn a shipped
+   * extension off.
+   */
   readonly setEnabled: (input: {
     readonly name: ExtensionName;
     readonly enabled: boolean;
   }) => Effect.Effect<void, ExtensionNotFoundError, Scope.Scope>;
+  /**
+   * Point an installed extension at another folder: rewrite its settings entry
+   * (creating the override if a launch flag is what named it) and reconcile,
+   * whose moved-path branch stops the old process and starts the new folder.
+   * The folder is read first, so a path that is not an extension changes
+   * nothing.
+   */
+  readonly setPath: (input: {
+    readonly name: ExtensionName;
+    readonly path: string;
+  }) => Effect.Effect<void, ExtensionNotFoundError | ExtensionFolderError, Scope.Scope>;
   /**
    * Re-read every known folder's hash, so `changed` is right even if a watcher
    * missed an event. Called when Settings reads the list or opens its stream:
@@ -448,13 +469,21 @@ export const make = Effect.fnUntraced(function* (options: ExtensionSupervisorOpt
         yield* load(source);
         continue;
       }
-      if (existing.enabled === source.enabled) continue;
+      if (existing.enabled === source.enabled) {
+        // Same folder, same switch — but which source names it can still have
+        // changed (a settings entry written over a launch flag at the flag's own
+        // folder). That is metadata: record it, restart nothing.
+        if (existing.source !== source.source) yield* registry.upsertSource(source);
+        continue;
+      }
       if (source.enabled) {
         yield* registry.setEnabled({ name: source.name, enabled: true }).pipe(Effect.ignore);
         yield* load(source);
       } else {
         yield* stop(source.name);
-        yield* registry.setEnabled({ name: source.name, enabled: false }).pipe(Effect.ignore);
+        // Carries the source too: disabling a flag-started extension is what
+        // writes its settings entry.
+        yield* registry.upsertSource(source);
         yield* registry.setState({ name: source.name, state: "disabled" });
       }
     }
@@ -577,18 +606,55 @@ export const make = Effect.fnUntraced(function* (options: ExtensionSupervisorOpt
     },
   );
 
+  /**
+   * Rewrite this environment's settings entry for `name` and reconcile.
+   *
+   * When only a launch flag names the extension there is no entry yet, so this
+   * writes the overriding one — carrying the current path unless `update`
+   * changes it. Reconciling is what acts on the change; doing it here rather
+   * than waiting for the settings stream is what makes an RPC's answer mean the
+   * work is done.
+   */
+  const writeEntry = Effect.fn("ExtensionSupervisor.writeEntry")(function* (
+    status: { readonly name: ExtensionName; readonly path: string; readonly enabled: boolean },
+    update: (entry: ExtensionSettingsEntry) => ExtensionSettingsEntry,
+  ) {
+    const entries = (yield* serverSettings.getSettings.pipe(Effect.orDie)).extensions;
+    const existing = entries.find((entry) => entry.name === status.name);
+    const next = update(
+      existing ?? { name: status.name, path: status.path, enabled: status.enabled },
+    );
+    yield* serverSettings
+      .updateSettings({
+        extensions:
+          existing === undefined
+            ? [...entries, next]
+            : entries.map((entry) => (entry.name === status.name ? next : entry)),
+      })
+      .pipe(Effect.orDie);
+    yield* reconcileFromSettings;
+  });
+
   const setEnabled: ExtensionSupervisorShape["setEnabled"] = Effect.fn(
     "ExtensionSupervisor.setEnabled",
   )(function* (input) {
     const status = yield* registry.get(input.name);
-    yield* registry.setEnabled(input);
-    if (input.enabled) {
-      yield* start({ name: input.name, path: status.path });
-    } else {
-      yield* stop(input.name);
-      yield* registry.setState({ name: input.name, state: "disabled" });
-    }
+    yield* writeEntry(status, (entry) => ({ ...entry, enabled: input.enabled }));
   });
+
+  const setPath: ExtensionSupervisorShape["setPath"] = Effect.fn("ExtensionSupervisor.setPath")(
+    function* (input) {
+      const status = yield* registry.get(input.name);
+      const resolved = absolutePath(input.path.trim());
+      // Read first, as install does: a folder that is not an extension must
+      // not replace one that works. The manifest's own name is not compared —
+      // the host's name is authoritative (`ExtensionFolderError`'s note).
+      yield* readFolder({ path: resolved });
+      // The switch the user sees is kept: repointing a disabled extension must
+      // not quietly start it.
+      yield* writeEntry(status, (entry) => ({ ...entry, path: resolved, enabled: status.enabled }));
+    },
+  );
 
   const stopAll: ExtensionSupervisorShape["stopAll"] = Effect.gen(function* () {
     const current = yield* SynchronizedRef.get(running);
@@ -600,6 +666,7 @@ export const make = Effect.fnUntraced(function* (options: ExtensionSupervisorOpt
     watchSettings,
     install,
     remove,
+    setPath,
     deploy,
     setEnabled,
     refreshFolderHashes,

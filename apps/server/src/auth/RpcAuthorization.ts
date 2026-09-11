@@ -163,6 +163,9 @@ export const RPC_REQUIRED_SCOPES = {
   // both are the same "change this environment" privilege as deploy.
   [EXTENSION_ADMIN_WS_METHODS.install]: AuthOrchestrationOperateScope,
   [EXTENSION_ADMIN_WS_METHODS.remove]: AuthOrchestrationOperateScope,
+  // Repointing an extension runs a different folder's code, so it is the same
+  // privilege as installing one.
+  [EXTENSION_ADMIN_WS_METHODS.setPath]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewAutomationConnect]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewAutomationRespond]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewAutomationFocusHost]: AuthOrchestrationOperateScope,

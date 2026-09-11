@@ -183,6 +183,11 @@ export function extensionRemoveConfirmation(input: {
     : `${base} Its data directory is kept.`;
 }
 
+/** Changing the folder restarts the extension, so it asks first, like Deploy. */
+export function extensionChangePathConfirmation(row: ExtensionSettingsRow, path: string): string {
+  return `Run ${row.name} from ${path}?\nIt stops and starts again from that folder.`;
+}
+
 /** True when nothing is installed anywhere, which is its own empty state. */
 export function extensionSettingsIsEmpty(groups: ReadonlyArray<ExtensionSettingsGroup>): boolean {
   return groups.every((group) => group.rows.length === 0);

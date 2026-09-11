@@ -1,4 +1,5 @@
 import {
+  extensionChangePathConfirmation,
   extensionDeployConfirmation,
   extensionRemoveConfirmation,
   type ExtensionSettingsRow,
@@ -157,6 +158,45 @@ export async function installExtension(input: {
   }
   const result = await input.install({ environmentId: input.environmentId, input: { path } });
   return settle(result, "Could not add the extension", `Adding ${path} failed.`);
+}
+
+/**
+ * Pointing an installed extension at another folder.
+ *
+ * It restarts the extension, so it asks first, the way Deploy does — and an
+ * absent confirm host counts as declined. Choosing the folder it already runs
+ * from is not a change, so it neither asks nor dispatches.
+ */
+export async function confirmAndChangeExtensionPath(input: {
+  readonly row: ExtensionSettingsRow;
+  readonly path: string;
+  readonly confirm: ConfirmFn;
+  readonly setPath: (input: {
+    readonly environmentId: ExtensionSettingsRow["environmentId"];
+    readonly input: { readonly name: string; readonly path: string };
+  }) => Promise<AtomCommandResult<unknown, unknown>>;
+}): Promise<ExtensionActionOutcome> {
+  const path = input.path.trim();
+  if (path.length === 0) {
+    return {
+      status: "failed",
+      title: "No folder",
+      description: "Enter the path to a built extension folder.",
+    };
+  }
+  if (path === input.row.path) return { status: "cancelled" };
+  const confirmation = input.confirm(extensionChangePathConfirmation(input.row, path));
+  if (confirmation === undefined) return { status: "cancelled" };
+  if (!(await confirmation)) return { status: "cancelled" };
+  const result = await input.setPath({
+    environmentId: input.row.environmentId,
+    input: { name: input.row.name, path },
+  });
+  return settle(
+    result,
+    `Could not change ${input.row.name}'s folder`,
+    `Pointing ${input.row.name} at ${path} failed.`,
+  );
 }
 
 /**

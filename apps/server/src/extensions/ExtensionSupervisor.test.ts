@@ -88,6 +88,8 @@ const harness = Effect.fn("test.harness")(function* (input: {
     attempt: number,
   ) => Effect.Effect<ChildProcessSpawner.ChildProcessHandle, PlatformError.PlatformError>;
   readonly manifestOverrides?: Partial<typeof manifest>;
+  /** `--extension name=path` flags, as a desktop build passes for what it ships. */
+  readonly launchFlags?: ReadonlyArray<{ readonly name: ExtensionName; readonly path: string }>;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -150,6 +152,7 @@ const harness = Effect.fn("test.harness")(function* (input: {
     minRestartDelay: Duration.millis(10),
     maxRestartDelay: Duration.millis(40),
     folderChangeDebounce: Duration.millis(500),
+    ...(input.launchFlags === undefined ? {} : { launchFlags: input.launchFlags }),
   }).pipe(
     Effect.provideService(ExtensionRegistry.ExtensionRegistry, registry),
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -812,6 +815,162 @@ describe("install and remove", () => {
 
           yield* h.supervisor.remove({ name: "bach" as ExtensionName, deleteData: true });
           expect(yield* fs.exists(dataDir)).toBe(false);
+        }),
+      ),
+    ),
+  );
+});
+
+describe("changing an extension's folder", () => {
+  const bach = "bach" as ExtensionName;
+
+  const staysUp = Effect.fn("test.staysUp")(function* () {
+    const never = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+    return () => Effect.succeed(handle({ exit: Deferred.await(never) }));
+  });
+
+  /** A second build of the same extension somewhere else on disk. */
+  const otherBuild = Effect.fn("test.otherBuild")(function* (prefix: string) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const folder = yield* fs.makeTempDirectoryScoped({ prefix });
+    yield* fs.writeFileString(path.join(folder, "extension.json"), JSON.stringify(manifest));
+    yield* fs.makeDirectory(path.join(folder, "dist"), { recursive: true });
+    yield* fs.writeFileString(path.join(folder, "dist/server.js"), "// another build");
+    return folder;
+  });
+
+  it.effect("repoints a settings-entry extension, restarting it on the new folder", () =>
+    run(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* harness({ spawn: yield* staysUp() });
+          yield* h.supervisor.install({ path: h.folder });
+          yield* Queue.take(h.launched);
+          const other = yield* otherBuild("extension-repointed-");
+
+          yield* h.supervisor.setPath({ name: bach, path: other });
+          expect((yield* Queue.take(h.launched)).cwd).toBe(other);
+          // An edit, not a second install: still one entry, same switch.
+          expect((yield* h.settings.getSettings).extensions).toStrictEqual([
+            { name: "bach", path: other, enabled: true },
+          ]);
+          const status = yield* h.registry.get(bach);
+          expect(status.path).toBe(other);
+        }),
+      ),
+    ),
+  );
+
+  it.effect("repointing a flag-started extension writes the entry that overrides the flag", () =>
+    run(
+      Effect.scoped(
+        Effect.gen(function* () {
+          // A harness only to get a built folder the flag can point at.
+          const probe = yield* harness({ spawn: yield* staysUp() });
+          const flagged = yield* harness({
+            spawn: yield* staysUp(),
+            launchFlags: [{ name: bach, path: probe.folder }],
+          });
+          yield* flagged.supervisor.watchSettings;
+          expect((yield* Queue.take(flagged.launched)).cwd).toBe(probe.folder);
+          expect((yield* flagged.registry.get(bach)).source).toBe("launch-flag");
+          const mine = yield* otherBuild("extension-mine-");
+
+          yield* flagged.supervisor.setPath({ name: bach, path: mine });
+          expect((yield* Queue.take(flagged.launched)).cwd).toBe(mine);
+          // Settings wins by name: the entry is what makes the new folder stick.
+          expect((yield* flagged.settings.getSettings).extensions).toStrictEqual([
+            { name: "bach", path: mine, enabled: true },
+          ]);
+          expect((yield* flagged.registry.get(bach)).source).toBe("settings");
+
+          // The way back is Remove: dropping the entry lets the flag's folder
+          // take over again, rather than the extension disappearing.
+          yield* flagged.supervisor.remove({ name: bach, deleteData: false });
+          expect((yield* Queue.take(flagged.launched)).cwd).toBe(probe.folder);
+          expect((yield* flagged.registry.get(bach)).source).toBe("launch-flag");
+        }),
+      ),
+    ),
+  );
+
+  it.effect("refuses a folder that is not an extension, changing nothing", () =>
+    run(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* harness({ spawn: yield* staysUp() });
+          const fs = yield* FileSystem.FileSystem;
+          yield* h.supervisor.install({ path: h.folder });
+          yield* Queue.take(h.launched);
+          const empty = yield* fs.makeTempDirectoryScoped({ prefix: "extension-empty-" });
+
+          const exit = yield* Effect.exit(h.supervisor.setPath({ name: bach, path: empty }));
+          expect(exit._tag).toBe("Failure");
+          expect((yield* h.settings.getSettings).extensions).toStrictEqual([
+            { name: "bach", path: h.folder, enabled: true },
+          ]);
+          expect(yield* Ref.get(h.spawns)).toHaveLength(1);
+        }),
+      ),
+    ),
+  );
+});
+
+describe("the enabled switch is kept in settings", () => {
+  const bach = "bach" as ExtensionName;
+
+  const staysUp = Effect.fn("test.staysUp")(function* () {
+    const never = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+    return () => Effect.succeed(handle({ exit: Deferred.await(never) }));
+  });
+
+  it.effect("a disable survives the next reconcile rather than being undone by it", () =>
+    run(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* harness({ spawn: yield* staysUp() });
+          yield* h.supervisor.install({ path: h.folder });
+          yield* Queue.take(h.launched);
+
+          yield* h.supervisor.setEnabled({ name: bach, enabled: false });
+          expect((yield* h.settings.getSettings).extensions).toStrictEqual([
+            { name: "bach", path: h.folder, enabled: false },
+          ]);
+          // Every settings write reconciles. Before the switch was persisted,
+          // this re-read `enabled: true` and quietly started it again.
+          yield* h.supervisor.watchSettings;
+          expect((yield* h.registry.get(bach)).state).toBe("disabled");
+          expect(yield* Ref.get(h.spawns)).toHaveLength(1);
+        }),
+      ),
+    ),
+  );
+
+  it.effect("disabling a flag-started extension writes an entry that keeps it off", () =>
+    run(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const probe = yield* harness({ spawn: yield* staysUp() });
+          const h = yield* harness({
+            spawn: yield* staysUp(),
+            launchFlags: [{ name: bach, path: probe.folder }],
+          });
+          yield* h.supervisor.watchSettings;
+          yield* Queue.take(h.launched);
+
+          yield* h.supervisor.setEnabled({ name: bach, enabled: false });
+          // The launch flag alone cannot say "off"; the settings entry can.
+          expect((yield* h.settings.getSettings).extensions).toStrictEqual([
+            { name: "bach", path: probe.folder, enabled: false },
+          ]);
+          yield* h.supervisor.watchSettings;
+          expect((yield* h.registry.get(bach)).state).toBe("disabled");
+          expect(yield* Ref.get(h.spawns)).toHaveLength(1);
+
+          yield* h.supervisor.setEnabled({ name: bach, enabled: true });
+          yield* Queue.take(h.launched);
+          expect((yield* h.registry.get(bach)).enabled).toBe(true);
         }),
       ),
     ),

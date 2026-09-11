@@ -2,6 +2,7 @@ import type { EnvironmentId, ExtensionStatus } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  extensionChangePathConfirmation,
   extensionDeployConfirmation,
   extensionSettingsAnchorId,
   extensionSettingsGroups,
@@ -143,5 +144,15 @@ describe("extension settings rows", () => {
   it("distinguishes no extensions anywhere from an environment with none", () => {
     expect(extensionSettingsIsEmpty(groupsOf())).toBe(true);
     expect(extensionSettingsIsEmpty(groupsOf(status({ name: "bach" })))).toBe(false);
+  });
+});
+
+describe("repointing an extension", () => {
+  it("asks before restarting it, naming the extension and the new folder", () => {
+    const [group] = groupsOf(status({ name: "bach", source: "launch-flag" }));
+
+    const message = extensionChangePathConfirmation(group!.rows[0]!, "/home/me/bach/dist");
+    expect(message).toContain("bach");
+    expect(message).toContain("/home/me/bach/dist");
   });
 });

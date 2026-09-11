@@ -46,6 +46,7 @@ import {
   confirmAndDeployExtension,
   confirmAndRemoveExtension,
   canPickExtensionFolderNatively,
+  confirmAndChangeExtensionPath,
   extensionBrowsePlatform,
   extensionFolderBrowseRequest,
   installExtension,
@@ -160,6 +161,8 @@ function ExtensionCard({ row }: { row: ExtensionSettingsRow }) {
     [remove, row],
   );
 
+  const [editingPath, setEditingPath] = useState(false);
+
   const handleDeploy = useCallback(async () => {
     reportOutcome(await confirmAndDeployExtension({ row, confirm: requestConfirmDialog, deploy }));
   }, [deploy, row]);
@@ -202,6 +205,7 @@ function ExtensionCard({ row }: { row: ExtensionSettingsRow }) {
             <span>{row.sourceLabel}</span>
             <span aria-hidden="true">·</span>
             <StartTruncatedPath className="max-w-full" path={row.path} />
+
             {row.restartCount > 0 ? (
               <>
                 <span aria-hidden="true">·</span>
@@ -226,6 +230,14 @@ function ExtensionCard({ row }: { row: ExtensionSettingsRow }) {
           >
             {toggle.label}
           </Button>
+          <Button
+            aria-expanded={editingPath}
+            onClick={() => setEditingPath((current) => !current)}
+            size="xs"
+            variant="ghost-muted"
+          >
+            Change path…
+          </Button>
           <Button onClick={() => void handleRemove(false)} size="xs" variant="ghost-muted">
             Remove
           </Button>
@@ -239,6 +251,10 @@ function ExtensionCard({ row }: { row: ExtensionSettingsRow }) {
           </Button>
         </div>
       </div>
+
+      {editingPath ? (
+        <ChangeExtensionPathForm onClose={() => setEditingPath(false)} row={row} />
+      ) : null}
 
       {row.tools.length > 0 ? (
         <div className="flex flex-wrap items-center gap-1.5">
@@ -272,28 +288,37 @@ function ExtensionCard({ row }: { row: ExtensionSettingsRow }) {
 const EMPTY_BROWSE_ENTRIES: ReadonlyArray<FilesystemBrowseEntry> = [];
 
 /**
- * Adding an extension by picking its built folder.
+ * Choosing a built extension folder on a server.
  *
  * The folder lives on the *server* the extension will run on, which may not be
  * this device, so the typeahead lists folders through that server's own
  * `filesystem.browse` — the same mechanism Add project uses, and correct for a
  * local, desktop-secondary or remote environment alike. The native dialog is
  * offered only when it would browse that same filesystem (see
- * `canPickExtensionFolderNatively`). Either way the choice fills the field and
- * the button installs it: the manifest supplies the name, and the install
- * answers with what it found.
+ * `canPickExtensionFolderNatively`). Either way the choice lands in `value`;
+ * what to do with it is the caller's.
+ *
+ * Renders as siblings (the field, then "Browse…") so it slots into the
+ * caller's own flex row next to its buttons.
  */
-function AddExtensionForm({ environmentId }: { environmentId: EnvironmentId }) {
-  const [path, setPath] = useState("");
-  const [busy, setBusy] = useState(false);
+function ExtensionFolderPicker({
+  environmentId,
+  value,
+  onValueChange,
+  ariaLabel,
+}: {
+  environmentId: EnvironmentId;
+  value: string;
+  onValueChange: (value: string) => void;
+  ariaLabel: string;
+}) {
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
-  const install = useAtomCommand(extensionEnvironment.install);
   const environment = useEnvironment(environmentId);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
 
   const platform = extensionBrowsePlatform(environment?.serverConfig?.environment.platform.os);
-  const browseRequest = extensionFolderBrowseRequest(path, platform);
+  const browseRequest = extensionFolderBrowseRequest(value, platform);
   const browse = useEnvironmentQuery(
     browseRequest === null
       ? null
@@ -327,18 +352,7 @@ function AddExtensionForm({ environmentId }: { environmentId: EnvironmentId }) {
     hasDesktopBridge: typeof window !== "undefined" && window.desktopBridge !== undefined,
   });
 
-  // Not memoized: used once each, by this form's own handlers.
-  const submit = async () => {
-    setBusy(true);
-    try {
-      const outcome = await installExtension({ environmentId, path, install });
-      reportOutcome(outcome);
-      if (outcome.status === "done") setPath("");
-    } finally {
-      setBusy(false);
-    }
-  };
-
+  // Not memoized: used once, by this picker's own button.
   const pickFolder = async () => {
     const api = readLocalApi();
     if (!api) return;
@@ -362,17 +376,11 @@ function AddExtensionForm({ environmentId }: { environmentId: EnvironmentId }) {
         ...(targetEnvironmentId === null ? {} : { targetEnvironmentId }),
       })
       .catch(() => null);
-    if (picked) setPath(picked);
+    if (picked) onValueChange(picked);
   };
 
   return (
-    <form
-      className="flex flex-wrap items-center gap-2 px-3 py-3 sm:px-4"
-      onSubmit={(event) => {
-        event.preventDefault();
-        void submit();
-      }}
-    >
+    <>
       <div className="min-w-0 flex-1">
         <Autocomplete
           items={visibleEntries}
@@ -381,22 +389,22 @@ function AddExtensionForm({ environmentId }: { environmentId: EnvironmentId }) {
           openOnInputClick
           open={suggestionsOpen && visibleEntries.length > 0}
           onOpenChange={setSuggestionsOpen}
-          value={path}
-          onValueChange={(value, eventDetails) => {
+          value={value}
+          onValueChange={(next, eventDetails) => {
             if (eventDetails.reason === "item-press") {
               // Choosing a folder descends into it rather than stopping there:
               // an extension is usually a build folder a level or two down.
-              const entry = visibleEntries.find((candidate) => candidate.fullPath === value);
+              const entry = visibleEntries.find((candidate) => candidate.fullPath === next);
               if (entry) {
-                setPath(appendBrowsePathSegment(path, entry.name));
+                onValueChange(appendBrowsePathSegment(value, entry.name));
                 return;
               }
             }
-            setPath(value);
+            onValueChange(next);
           }}
         >
           <AutocompleteInput
-            aria-label="Path to a built extension folder on this server"
+            aria-label={ariaLabel}
             placeholder="~/path/to/extension/dist"
             size="sm"
             spellCheck={false}
@@ -419,6 +427,45 @@ function AddExtensionForm({ environmentId }: { environmentId: EnvironmentId }) {
           Browse…
         </Button>
       ) : null}
+    </>
+  );
+}
+
+/**
+ * Adding an extension by picking its built folder. The manifest supplies the
+ * name, and the install answers with what it found.
+ */
+function AddExtensionForm({ environmentId }: { environmentId: EnvironmentId }) {
+  const [path, setPath] = useState("");
+  const [busy, setBusy] = useState(false);
+  const install = useAtomCommand(extensionEnvironment.install);
+
+  // Not memoized: it is used once, by this form's own submit handler.
+  const submit = async () => {
+    setBusy(true);
+    try {
+      const outcome = await installExtension({ environmentId, path, install });
+      reportOutcome(outcome);
+      if (outcome.status === "done") setPath("");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form
+      className="flex flex-wrap items-center gap-2 px-3 py-3 sm:px-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void submit();
+      }}
+    >
+      <ExtensionFolderPicker
+        ariaLabel="Path to a built extension folder on this server"
+        environmentId={environmentId}
+        onValueChange={setPath}
+        value={path}
+      />
       <Button disabled={busy || path.trim().length === 0} size="sm" type="submit" variant="outline">
         <PlusIcon aria-hidden="true" />
         Add extension
@@ -427,6 +474,63 @@ function AddExtensionForm({ environmentId }: { environmentId: EnvironmentId }) {
         Extensions run as separate processes and contribute tools, routes and screens. Type a path
         on this server — suggestions come from its own filesystem.
       </p>
+    </form>
+  );
+}
+
+/**
+ * Repointing an installed extension: the same picker, starting from the folder
+ * it runs from now. For a flag-started extension, saving writes the override.
+ */
+function ChangeExtensionPathForm({
+  row,
+  onClose,
+}: {
+  row: ExtensionSettingsRow;
+  onClose: () => void;
+}) {
+  const [path, setPath] = useState(row.path);
+  const [busy, setBusy] = useState(false);
+  const setPathCommand = useAtomCommand(extensionEnvironment.setPath);
+
+  // Not memoized: it is used once, by this form's own submit handler.
+  const submit = async () => {
+    setBusy(true);
+    try {
+      const outcome = await confirmAndChangeExtensionPath({
+        row,
+        path,
+        confirm: requestConfirmDialog,
+        setPath: setPathCommand,
+      });
+      reportOutcome(outcome);
+      if (outcome.status === "done") onClose();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const unchanged = path.trim().length === 0 || path.trim() === row.path;
+  return (
+    <form
+      className="flex flex-wrap items-center gap-2"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void submit();
+      }}
+    >
+      <ExtensionFolderPicker
+        ariaLabel={`New folder for ${row.name}`}
+        environmentId={row.environmentId}
+        onValueChange={setPath}
+        value={path}
+      />
+      <Button disabled={busy || unchanged} size="sm" type="submit" variant="outline">
+        Save
+      </Button>
+      <Button onClick={onClose} size="sm" type="button" variant="ghost-muted">
+        Cancel
+      </Button>
     </form>
   );
 }

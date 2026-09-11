@@ -105,12 +105,18 @@ its tool names and HTTP prefix — one whose path moved restarts on the new fold
 and `enabled` is followed either way. `extensions.admin.install` takes a path,
 reads the folder's manifest for the name, refuses one already installed, and
 writes the entry; `extensions.admin.remove` drops it, and deletes the data
-directory only when asked. Reconciling is idempotent, so a settings write that
-has nothing to do with extensions costs nothing.
+directory only when asked; `extensions.admin.setPath` repoints an installed one at
+another folder, keeping its name, data and switch. Reconciling is idempotent, so a
+settings write that has nothing to do with extensions costs nothing — which is also
+why Enable/Disable writes the entry's `enabled` rather than only stopping the
+process: anything held only in memory would be undone by the next reconcile.
 
 **A settings entry wins by name.** Writing an entry for `bach` pointing at your checkout's
 build overrides the shipped copy; writing one with `enabled: false` turns it off. That one
-rule is what makes the launch flag safe to hardcode.
+rule is what makes the launch flag safe to hardcode, and Settings acts on it rather than
+asking anyone to know it: changing the folder of, or disabling, a flag-started extension
+writes that overriding entry, and Remove drops it again — after which the flag's folder
+takes over instead of the extension disappearing.
 
 The name in the settings entry, not the manifest's, is the one the host installs under and
 the one it hands the process as `T3_EXT_NAME`. Start order is the order entries are written,

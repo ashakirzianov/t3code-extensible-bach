@@ -6,6 +6,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   canPickExtensionFolderNatively,
+  confirmAndChangeExtensionPath,
   confirmAndDeployExtension,
   extensionFolderBrowseRequest,
   toggleExtensionEnabled,
@@ -238,5 +239,69 @@ describe("offering the native folder dialog", () => {
     expect(canPickExtensionFolderNatively({ ...secondary, desktopInstanceId: "wsl:ubuntu" })).toBe(
       true,
     );
+  });
+});
+
+describe("changing an installed extension's folder", () => {
+  it("asks first, then sends the trimmed path under the extension's own name", async () => {
+    const setPath = recorder();
+    const asked: string[] = [];
+    const outcome = await confirmAndChangeExtensionPath({
+      row: row(),
+      path: "  /home/me/bach/dist  ",
+      confirm: (message) => {
+        asked.push(message);
+        return Promise.resolve(true);
+      },
+      setPath: setPath.of(succeeded),
+    });
+
+    expect(outcome).toEqual({ status: "done" });
+    expect(asked[0]).toContain("/home/me/bach/dist");
+    expect(setPath.calls).toEqual([
+      { environmentId: "env-1", input: { name: "bach", path: "/home/me/bach/dist" } },
+    ]);
+  });
+
+  it("leaves the running extension alone when the restart is declined", async () => {
+    const setPath = recorder();
+    const outcome = await confirmAndChangeExtensionPath({
+      row: row(),
+      path: "/home/me/bach/dist",
+      confirm: () => Promise.resolve(false),
+      setPath: setPath.of(succeeded),
+    });
+
+    expect(outcome).toEqual({ status: "cancelled" });
+    expect(setPath.calls).toEqual([]);
+  });
+
+  it("does not restart anything for the folder it already runs from", async () => {
+    const setPath = recorder();
+    let asked = false;
+    const outcome = await confirmAndChangeExtensionPath({
+      row: row({ path: "/opt/bach" }),
+      path: "/opt/bach",
+      confirm: () => {
+        asked = true;
+        return Promise.resolve(true);
+      },
+      setPath: setPath.of(succeeded),
+    });
+
+    expect(outcome).toEqual({ status: "cancelled" });
+    expect(asked).toBe(false);
+    expect(setPath.calls).toEqual([]);
+  });
+
+  it("names the extension and the folder when the server refuses it", async () => {
+    const outcome = await confirmAndChangeExtensionPath({
+      row: row(),
+      path: "/tmp/not-an-extension",
+      confirm: () => Promise.resolve(true),
+      setPath: recorder().of(failed),
+    });
+
+    expect(outcome).toMatchObject({ status: "failed", title: "Could not change bach's folder" });
   });
 });

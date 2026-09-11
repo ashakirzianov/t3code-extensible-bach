@@ -2811,6 +2811,12 @@ const makeWsRpcLayer = (
           observeRpcEffect(EXTENSION_ADMIN_WS_METHODS.remove, extensionSupervisor.remove(input), {
             "rpc.aggregate": "extensions",
           }),
+        [EXTENSION_ADMIN_WS_METHODS.setPath]: (input) =>
+          observeRpcEffect(
+            EXTENSION_ADMIN_WS_METHODS.setPath,
+            Effect.scoped(extensionSupervisor.setPath(input)),
+            { "rpc.aggregate": "extensions" },
+          ),
         [EXTENSION_ADMIN_WS_METHODS.setEnabled]: (input) =>
           observeRpcEffect(
             EXTENSION_ADMIN_WS_METHODS.setEnabled,

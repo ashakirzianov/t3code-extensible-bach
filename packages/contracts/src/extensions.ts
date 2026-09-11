@@ -823,6 +823,7 @@ export const EXTENSION_ADMIN_WS_METHODS = {
   logs: "extensions.admin.logs",
   install: "extensions.admin.install",
   remove: "extensions.admin.remove",
+  setPath: "extensions.admin.setPath",
   assetUrls: "extensions.admin.assetUrls",
 } as const;
 
@@ -910,6 +911,21 @@ export const ExtensionRemoveInput = Schema.Struct({
   deleteData: Schema.Boolean,
 }).annotate({ identifier: "ExtensionRemoveInput" });
 export type ExtensionRemoveInput = typeof ExtensionRemoveInput.Type;
+
+/**
+ * Point an installed extension at another folder.
+ *
+ * An edit, not an install: the name stays, and so do its data directory and
+ * settings. For an extension a launch flag started, this writes the settings
+ * entry that overrides the flag — the documented way to run your own build of
+ * a shipped extension, surfaced as an action instead of a rule to discover.
+ */
+export const ExtensionSetPathInput = Schema.Struct({
+  name: ExtensionName,
+  /** A folder on the host. Relative paths resolve against the server's cwd. */
+  path: BoundedString(1024),
+}).annotate({ identifier: "ExtensionSetPathInput" });
+export type ExtensionSetPathInput = typeof ExtensionSetPathInput.Type;
 
 export const ExtensionAdminError = Schema.Union([
   ExtensionNotFoundError,
