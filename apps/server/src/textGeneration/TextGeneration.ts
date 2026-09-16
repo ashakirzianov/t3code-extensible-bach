@@ -74,6 +74,31 @@ export interface ThreadTitleGenerationResult {
 }
 
 /**
+ * The one generation the host does not shape: the caller owns the prompt and
+ * reads the answer back verbatim. Added for the extension seam's
+ * `extensions.generateText`, which hands an extension the environment's
+ * configured Text generation model without giving it a thread.
+ */
+export interface TextGenerationInput {
+  /** What to answer. Passed through to the model as the caller wrote it. */
+  prompt: string;
+  /** Standing instructions for the request, above the prompt itself. */
+  system?: string | undefined;
+  /**
+   * Where the CLI runs. Free-form generation has no checkout to reason about,
+   * so callers pass a scratch directory rather than a project — a repository
+   * would pull its own agent configuration into an unrelated answer.
+   */
+  cwd: string;
+  /** What model and provider to use for generation. */
+  modelSelection: ModelSelection;
+}
+
+export interface TextGenerationResult {
+  text: string;
+}
+
+/**
  * TextGeneration - Service tag for commit and change request text generation.
  */
 export class TextGeneration extends Context.Service<
@@ -104,6 +129,11 @@ export class TextGeneration extends Context.Service<
     readonly generateThreadTitle: (
       input: ThreadTitleGenerationInput,
     ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
+
+    /** Answer a caller-supplied prompt with plain text. */
+    readonly generateText: (
+      input: TextGenerationInput,
+    ) => Effect.Effect<TextGenerationResult, TextGenerationError>;
   }
 >()("t3/textGeneration/TextGeneration") {}
 
@@ -111,7 +141,8 @@ type TextGenerationOp =
   | "generateCommitMessage"
   | "generatePrContent"
   | "generateBranchName"
-  | "generateThreadTitle";
+  | "generateThreadTitle"
+  | "generateText";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -150,6 +181,10 @@ export const makeTextGenerationFromRegistry = (
     generateThreadTitle: (input) =>
       resolveInstance(registry, "generateThreadTitle", input.modelSelection.instanceId).pipe(
         Effect.flatMap((textGeneration) => textGeneration.generateThreadTitle(input)),
+      ),
+    generateText: (input) =>
+      resolveInstance(registry, "generateText", input.modelSelection.instanceId).pipe(
+        Effect.flatMap((textGeneration) => textGeneration.generateText(input)),
       ),
   });
 

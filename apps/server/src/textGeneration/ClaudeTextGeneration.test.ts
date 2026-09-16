@@ -579,4 +579,33 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
         }),
     ),
   );
+
+  it.effect("answers a caller's own prompt with the model's text", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            text: "  Two spelling fixes, no factual changes.  ",
+          },
+        }),
+        // The caller's instructions and prompt both reach the model, and the
+        // free-form path is the one generation the host does not shape.
+        stdinMustContain: "Proofread this paragraph",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateText({
+            cwd: process.cwd(),
+            system: "You are a careful proofreader.",
+            prompt: "Proofread this paragraph.",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+            },
+          });
+
+          expect(generated.text).toBe("Two spelling fixes, no factual changes.");
+        }),
+    ),
+  );
 });

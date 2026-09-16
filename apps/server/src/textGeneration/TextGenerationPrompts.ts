@@ -320,3 +320,43 @@ export function buildThreadTitlePrompt(input: ThreadTitlePromptInput) {
 
   return { prompt, outputSchema };
 }
+
+// ---------------------------------------------------------------------------
+// Free-form text
+// ---------------------------------------------------------------------------
+
+/** Ceilings, so one caller cannot hand a CLI an unbounded argument. */
+export const FREE_FORM_PROMPT_MAX_CHARS = 100_000;
+export const FREE_FORM_SYSTEM_MAX_CHARS = 10_000;
+
+export interface TextPromptInput {
+  prompt: string;
+  /** Standing instructions for the whole request, above the prompt itself. */
+  system?: string | undefined;
+}
+
+/**
+ * The prompt behind the one generation the host does not shape itself: a
+ * caller supplies both the instructions and the input, and gets the answer
+ * back verbatim. The wrapper exists only to route the answer through the same
+ * structured-output path every other operation uses, so it says as little as
+ * possible about what a good answer looks like — that is the caller's job.
+ */
+export function buildTextPrompt(input: TextPromptInput) {
+  const system = input.system?.trim();
+  const prompt = [
+    "You answer the request below.",
+    'Return a JSON object with one key, "text", holding your answer and nothing else.',
+    "Do not add commentary, preamble, or markdown fences around it.",
+    ...(system ? ["", "Instructions:", limitSection(system, FREE_FORM_SYSTEM_MAX_CHARS)] : []),
+    "",
+    "Request:",
+    limitSection(input.prompt, FREE_FORM_PROMPT_MAX_CHARS),
+  ].join("\n");
+
+  const outputSchema = Schema.Struct({
+    text: Schema.String,
+  });
+
+  return { prompt, outputSchema };
+}

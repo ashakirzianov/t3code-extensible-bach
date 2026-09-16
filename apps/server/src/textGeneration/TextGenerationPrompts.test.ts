@@ -4,7 +4,9 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
+  buildTextPrompt,
   buildThreadTitlePrompt,
+  FREE_FORM_PROMPT_MAX_CHARS,
 } from "./TextGenerationPrompts.ts";
 import { normalizeCliError, sanitizeThreadTitle } from "./TextGenerationUtils.ts";
 import { TextGenerationError } from "@t3tools/contracts";
@@ -309,5 +311,32 @@ describe("normalizeCliError", () => {
 
     expect(result.detail).toBe("Failed to generate a commit message");
     expect(result.message).not.toContain("secret-token");
+  });
+});
+
+describe("buildTextPrompt", () => {
+  it("carries the caller's instructions above their request", () => {
+    const result = buildTextPrompt({
+      system: "  You are a careful proofreader.  ",
+      prompt: "Proofread this paragraph.",
+    });
+
+    expect(result.prompt).toContain("Instructions:\nYou are a careful proofreader.");
+    expect(result.prompt).toContain("Request:\nProofread this paragraph.");
+    expect(result.prompt.indexOf("Instructions:")).toBeLessThan(result.prompt.indexOf("Request:"));
+  });
+
+  it("omits the instructions section when there are none", () => {
+    const result = buildTextPrompt({ prompt: "Say hello." });
+
+    expect(result.prompt).not.toContain("Instructions:");
+    expect(result.prompt).toContain("Request:\nSay hello.");
+  });
+
+  it("truncates a request that would otherwise be unbounded", () => {
+    const result = buildTextPrompt({ prompt: "a".repeat(FREE_FORM_PROMPT_MAX_CHARS + 10) });
+
+    expect(result.prompt).toContain("[truncated]");
+    expect(result.prompt.length).toBeLessThan(FREE_FORM_PROMPT_MAX_CHARS + 500);
   });
 });
