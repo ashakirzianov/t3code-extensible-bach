@@ -126,6 +126,7 @@ import {
   ExtensionSetEnabledInput,
   ExtensionStreamEvent,
   ExtensionToolResult,
+  ExtensionToolsForThreadResult,
   ExtensionGenerateTextInput,
   ExtensionGenerateTextResult,
   ExtensionTextGenerationFailedError,
@@ -1274,6 +1275,14 @@ export const WsExtensionsRespondHttpRpc = Rpc.make(EXTENSION_WS_METHODS.respondH
   error: EnvironmentAuthorizationError,
 });
 
+export const WsExtensionsRespondToolsForThreadRpc = Rpc.make(
+  EXTENSION_WS_METHODS.respondToolsForThread,
+  {
+    payload: ExtensionToolsForThreadResult,
+    error: EnvironmentAuthorizationError,
+  },
+);
+
 /**
  * Every project's icon as the host draws it. A read with no identity in it, so
  * it needs no handshake — only the extension scope.
@@ -1493,6 +1502,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsExtensionsRespondHttpRpc,
   WsExtensionsProjectIconsRpc,
   WsExtensionsGenerateTextRpc,
+  WsExtensionsRespondToolsForThreadRpc,
   WsExtensionsAdminListRpc,
   WsExtensionsAdminSubscribeRpc,
   WsExtensionsAdminDeployRpc,

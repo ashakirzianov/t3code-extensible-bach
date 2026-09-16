@@ -560,3 +560,78 @@ describe("ExtensionRegistry rejections", () => {
     }),
   );
 });
+
+describe("per-thread tool sets", () => {
+  const reviewTool = { ...spawnTool, name: "review_task", description: "Team lead only." };
+
+  it.effect("asks only the extensions that opted in, and reports what they answer", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeRegistry();
+        yield* withHandshake(registry);
+        yield* registry.registerTools({
+          name: "bach",
+          tools: [spawnTool, reviewTool],
+          filterToolsPerThread: true,
+        });
+        const asked: Array<string> = [];
+        const events = attach(yield* registry.connect({ name: "bach" }), () => undefined);
+        yield* Stream.runForEach(events, (event) => {
+          if (event.type !== "toolsForThread") return Effect.void;
+          asked.push(event.request.threadId);
+          return registry.respondToolsForThread({
+            connectionId: event.connectionId,
+            requestId: event.request.requestId,
+            tools: ["spawn_agent"],
+          });
+        }).pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
+
+        const answers = yield* registry.toolsForThread(caller.threadId);
+
+        expect(asked).toStrictEqual([caller.threadId]);
+        expect([...(answers.get("bach") ?? [])]).toStrictEqual(["spawn_agent"]);
+      }),
+    ),
+  );
+
+  it.effect("says nothing about an extension that never opted in", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeRegistry();
+        yield* withHandshake(registry);
+        yield* registry.registerTools({ name: "bach", tools: [spawnTool] });
+        const events = attach(yield* registry.connect({ name: "bach" }), () => undefined);
+        const asked: Array<string> = [];
+        yield* Stream.runForEach(events, (event) => {
+          if (event.type === "toolsForThread") asked.push(event.request.threadId);
+          return Effect.void;
+        }).pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
+
+        const answers = yield* registry.toolsForThread(caller.threadId);
+
+        expect(asked).toStrictEqual([]);
+        expect(answers.size).toBe(0);
+      }),
+    ),
+  );
+
+  it.effect("leaves a thread unrestricted when the extension is not there to answer", () =>
+    Effect.gen(function* () {
+      const registry = yield* makeRegistry();
+      yield* withHandshake(registry);
+      yield* registry.registerTools({
+        name: "bach",
+        tools: [spawnTool, reviewTool],
+        filterToolsPerThread: true,
+      });
+
+      // No connection: an extension that cannot answer must not be read as
+      // "this thread sees none of my tools".
+      const answers = yield* registry.toolsForThread(caller.threadId);
+
+      expect(answers.size).toBe(0);
+    }),
+  );
+});

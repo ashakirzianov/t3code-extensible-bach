@@ -42,9 +42,10 @@ import { ProviderInstanceId } from "./providerInstance.ts";
  *    because MCP clients cache the tool catalogue at connect
  *    (`docs/internals/extensions/spikes/mcp-client-behaviour.md`), so the host
  *    holds MCP session issuance until enabled extensions are ready.
- * 4. `extensions.respondTool` / `.respondHttp` — answers, correlated by the
- *    invocation or request id plus the `connectionId` the stream handed out,
- *    so an answer from a stale connection is rejected rather than applied.
+ * 4. `extensions.respondTool` / `.respondHttp` / `.respondToolsForThread` —
+ *    answers, correlated by the invocation or request id plus the
+ *    `connectionId` the stream handed out, so an answer from a stale
+ *    connection is rejected rather than applied.
  *
  * ## Availability is expressed in results, not in the catalogue
  *
@@ -101,6 +102,7 @@ export const EXTENSION_WS_METHODS = {
   connect: "extensions.connect",
   respondTool: "extensions.respondTool",
   respondHttp: "extensions.respondHttp",
+  respondToolsForThread: "extensions.respondToolsForThread",
   projectIcons: "extensions.projectIcons",
   generateText: "extensions.generateText",
 } as const;
@@ -201,6 +203,11 @@ export const ExtensionHttpRequestId = BoundedString(128).annotate({
 });
 export type ExtensionHttpRequestId = typeof ExtensionHttpRequestId.Type;
 
+export const ExtensionToolsRequestId = BoundedString(128).annotate({
+  identifier: "ExtensionToolsRequestId",
+});
+export type ExtensionToolsRequestId = typeof ExtensionToolsRequestId.Type;
+
 // ---------------------------------------------------------------------------
 // Manifest
 // ---------------------------------------------------------------------------
@@ -282,6 +289,14 @@ export type ExtensionToolDefinition = typeof ExtensionToolDefinition.Type;
 export const ExtensionRegisterToolsInput = Schema.Struct({
   /** The complete tool surface. Re-sending replaces the previous set. */
   tools: Schema.Array(ExtensionToolDefinition).check(Schema.isMaxLength(EXTENSION_TOOLS_MAX)),
+  /**
+   * Opt in to per-thread tool visibility. The host then asks this extension
+   * `toolsForThread` before each thread's agent connects, and hides from that
+   * thread every registered tool the answer leaves out. Absent or false means
+   * every thread sees every tool, which is what every extension got before
+   * this existed.
+   */
+  filterToolsPerThread: Schema.optionalKey(Schema.Boolean),
 }).annotate({ identifier: "ExtensionRegisterToolsInput" });
 export type ExtensionRegisterToolsInput = typeof ExtensionRegisterToolsInput.Type;
 
@@ -536,6 +551,24 @@ export const ExtensionToolInvocation = Schema.Struct({
 export type ExtensionToolInvocation = typeof ExtensionToolInvocation.Type;
 
 // ---------------------------------------------------------------------------
+// Host to extension: which tools a thread may see
+// ---------------------------------------------------------------------------
+
+/**
+ * Asked of an extension that registered with `filterToolsPerThread`, once per
+ * thread, just before that thread's agent process connects to MCP.
+ *
+ * The thread id is the same one `ExtensionToolCaller` carries, so an extension
+ * that keeps per-thread state (a role, a team) answers from what it already
+ * knows.
+ */
+export const ExtensionToolsForThreadRequest = Schema.Struct({
+  requestId: ExtensionToolsRequestId,
+  threadId: ThreadId,
+}).annotate({ identifier: "ExtensionToolsForThreadRequest" });
+export type ExtensionToolsForThreadRequest = typeof ExtensionToolsForThreadRequest.Type;
+
+// ---------------------------------------------------------------------------
 // Host to extension: proxied HTTP
 // ---------------------------------------------------------------------------
 
@@ -612,6 +645,11 @@ export const ExtensionStreamEvent = Schema.Union([
     connectionId: ExtensionConnectionId,
     request: ExtensionHttpRequest,
   }),
+  Schema.Struct({
+    type: Schema.Literal("toolsForThread"),
+    connectionId: ExtensionConnectionId,
+    request: ExtensionToolsForThreadRequest,
+  }),
 ]).annotate({ identifier: "ExtensionStreamEvent" });
 export type ExtensionStreamEvent = typeof ExtensionStreamEvent.Type;
 
@@ -648,6 +686,19 @@ export const ExtensionToolResult = Schema.Struct({
   structuredContent: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
 }).annotate({ identifier: "ExtensionToolResult" });
 export type ExtensionToolResult = typeof ExtensionToolResult.Type;
+
+/**
+ * The answer to one `toolsForThread`: the registered tools this thread may
+ * list and call. A name the extension never registered is ignored, and an
+ * empty array is a real answer — that thread sees none of this extension's
+ * tools.
+ */
+export const ExtensionToolsForThreadResult = Schema.Struct({
+  connectionId: ExtensionConnectionId,
+  requestId: ExtensionToolsRequestId,
+  tools: Schema.Array(ExtensionToolName).check(Schema.isMaxLength(EXTENSION_TOOLS_MAX)),
+}).annotate({ identifier: "ExtensionToolsForThreadResult" });
+export type ExtensionToolsForThreadResult = typeof ExtensionToolsForThreadResult.Type;
 
 export const ExtensionHttpResponse = Schema.Struct({
   connectionId: ExtensionConnectionId,

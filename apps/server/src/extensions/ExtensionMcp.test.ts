@@ -16,11 +16,21 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import type * as Types from "effect/Types";
 import * as TestClock from "effect/testing/TestClock";
-import type { McpSchema, McpServer } from "effect/unstable/ai";
+import { McpProtocol, McpServer, type McpSchema } from "effect/unstable/ai";
+import { NodeHttpServer } from "@effect/platform-node";
+import {
+  HttpBody,
+  HttpClient,
+  HttpRouter,
+  HttpServerRequest,
+  type HttpServerResponse,
+} from "effect/unstable/http";
 
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import {
+  ExtensionMcp,
   EXTENSION_GUIDE_URI,
   EXTENSION_INSTALLED_URI,
   EXTENSION_MCP_INSTRUCTIONS,
@@ -31,6 +41,7 @@ import {
   make,
   toCallToolResult,
   toErrorResult,
+  toolsLayer,
 } from "./ExtensionMcp.ts";
 import { EXTENSION_SUBJECT_PREFIX } from "./ExtensionIdentity.ts";
 import * as ExtensionRegistry from "./ExtensionRegistry.ts";
@@ -140,6 +151,8 @@ describe("brokered tool", () => {
         yield* addExtensionTool({
           addTool: captureAddTool(captured),
           registry,
+          extensionName: "bach",
+          isToolVisible: () => true,
           name: "spawn_agent",
           description: spawnTool.description,
           inputSchema: spawnTool.inputSchema,
@@ -182,6 +195,8 @@ describe("brokered tool", () => {
       yield* addExtensionTool({
         addTool: captureAddTool(captured),
         registry,
+        extensionName: "bach",
+        isToolVisible: () => true,
         name: "spawn_agent",
         description: spawnTool.description,
         inputSchema: spawnTool.inputSchema,
@@ -322,7 +337,9 @@ describe("the readiness gate", () => {
 
         yield* withTool(registry);
         yield* registry.markSourcesResolved;
-        const waiting = yield* Effect.forkChild(bridge.prepareForSession);
+        const waiting = yield* Effect.forkChild(
+          bridge.prepareForSession({ threadId: invocation.threadId }),
+        );
         yield* Effect.yieldNow;
         expect(yield* Ref.get(synced)).toBe(0);
 
@@ -345,7 +362,9 @@ describe("the readiness gate", () => {
 
         yield* withTool(registry);
         yield* registry.markSourcesResolved;
-        const waiting = yield* Effect.forkChild(bridge.prepareForSession);
+        const waiting = yield* Effect.forkChild(
+          bridge.prepareForSession({ threadId: invocation.threadId }),
+        );
         yield* Effect.yieldNow;
         expect(yield* Ref.get(synced)).toBe(0);
 
@@ -371,7 +390,7 @@ describe("the readiness gate", () => {
         yield* registry.setState({ name: "bach", state: "crashed", lastError: "exit 1" });
         yield* registry.markSourcesResolved;
         // No clock movement: readiness resolves on state, not on a timeout.
-        yield* bridge.prepareForSession;
+        yield* bridge.prepareForSession({ threadId: invocation.threadId });
       }),
     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, TestClock.layer()))),
   );
@@ -404,5 +423,210 @@ describe("host tool names", () => {
         "spawn_agent",
       ]);
     }),
+  );
+});
+
+describe("per-thread tool visibility", () => {
+  const leadThread = ThreadId.make("thread-lead");
+  const builderThread = ThreadId.make("thread-builder");
+  const reviewTool = { ...spawnTool, name: "review_task", description: "Team lead only." };
+
+  /** `bach` with two tools, answering `toolsForThread` per thread. */
+  const withFilteringExtension = Effect.fn("test.withFilteringExtension")(function* (
+    registry: ExtensionRegistry.ExtensionRegistryShape,
+    visible: (threadId: string) => ReadonlyArray<string>,
+  ) {
+    yield* registry.upsertSource({
+      name: "bach",
+      path: "/opt/bach",
+      enabled: true,
+      source: "settings",
+    });
+    yield* registry.hello({
+      protocolVersion: EXTENSION_PROTOCOL_VERSION,
+      manifest,
+      name: "bach",
+      subject: `${EXTENSION_SUBJECT_PREFIX}bach`,
+    });
+    yield* registry.registerTools({
+      name: "bach",
+      tools: [spawnTool, reviewTool],
+      filterToolsPerThread: true,
+    });
+    const events = yield* registry.connect({ name: "bach" });
+    yield* Stream.runForEach(events, (event) =>
+      event.type === "toolsForThread"
+        ? registry.respondToolsForThread({
+            connectionId: event.connectionId,
+            requestId: event.request.requestId,
+            tools: visible(event.request.threadId),
+          })
+        : Effect.void,
+    ).pipe(Effect.forkScoped);
+    // The stream attaches when it is first run, so let the fork reach it
+    // before anything asks the registry to push an event onto it.
+    yield* Effect.yieldNow;
+    yield* registry.markSourcesResolved;
+  });
+
+  const gate = (registry: ExtensionRegistry.ExtensionRegistryShape) =>
+    make().pipe(Effect.provideService(ExtensionRegistry.ExtensionRegistry, registry));
+
+  it.effect("answers the gate from what the extension said for that thread", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeRegistry();
+        const bridge = yield* gate(registry);
+        yield* withFilteringExtension(registry, (threadId) =>
+          threadId === leadThread ? ["spawn_agent", "review_task"] : ["spawn_agent"],
+        );
+
+        yield* bridge.prepareForSession({ threadId: leadThread });
+        yield* bridge.prepareForSession({ threadId: builderThread });
+
+        const visible = (threadId: ThreadId, toolName: string) =>
+          bridge.isToolVisible({ extensionName: "bach", toolName, threadId });
+        expect(visible(leadThread, "review_task")).toBe(true);
+        expect(visible(builderThread, "review_task")).toBe(false);
+        expect(visible(builderThread, "spawn_agent")).toBe(true);
+        // A thread the host never asked about keeps every tool: visibility is
+        // not authorization, and an unasked thread must not lose its tools.
+        expect(visible(ThreadId.make("thread-unknown"), "review_task")).toBe(true);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("leaves an extension that does not filter alone", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeRegistry();
+        const bridge = yield* gate(registry);
+        yield* withTool(registry);
+        const events = yield* registry.connect({ name: "bach" });
+        const asked = yield* Ref.make(0);
+        yield* Stream.runForEach(events, (event) =>
+          event.type === "toolsForThread" ? Ref.update(asked, (count) => count + 1) : Effect.void,
+        ).pipe(Effect.forkScoped);
+        yield* registry.markSourcesResolved;
+
+        yield* bridge.prepareForSession({ threadId: builderThread });
+
+        expect(yield* Ref.get(asked)).toBe(0);
+        expect(
+          bridge.isToolVisible({
+            extensionName: "bach",
+            toolName: "spawn_agent",
+            threadId: builderThread,
+          }),
+        ).toBe(true);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("filters both tools/list and tools/call over the real MCP transport", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeRegistry();
+        const bridge = yield* gate(registry);
+        yield* withFilteringExtension(registry, (threadId) =>
+          threadId === leadThread ? ["spawn_agent", "review_task"] : ["spawn_agent"],
+        );
+
+        // The transport's own middleware resolves a bearer token to a caller;
+        // this one does the same from a fixed table, so the test exercises the
+        // registration and the catalogue rather than the credential store.
+        const authMiddleware = HttpRouter.middleware<{
+          provides: McpInvocationContext.McpInvocationContext;
+        }>()(
+          Effect.succeed(
+            (
+              httpEffect: Effect.Effect<
+                HttpServerResponse.HttpServerResponse,
+                Types.unhandled,
+                McpInvocationContext.McpInvocationContext
+              >,
+            ) =>
+              Effect.gen(function* () {
+                const request = yield* HttpServerRequest.HttpServerRequest;
+                return yield* httpEffect.pipe(
+                  Effect.provideService(McpInvocationContext.McpInvocationContext, {
+                    ...invocation,
+                    threadId: ThreadId.make(request.headers.authorization ?? "thread-unknown"),
+                  }),
+                );
+              }),
+          ),
+        ).layer;
+
+        yield* HttpRouter.serve(
+          toolsLayer.pipe(
+            Layer.provideMerge(
+              McpServer.layerHttp({
+                name: "T3 Code",
+                version: "0.0.38",
+                path: "/mcp",
+                protocols: [McpProtocol.v2025_06_18],
+              }).pipe(Layer.provide(authMiddleware)),
+            ),
+            Layer.provide(
+              Layer.mergeAll(
+                Layer.succeed(ExtensionRegistry.ExtensionRegistry, registry),
+                Layer.succeed(ExtensionMcp, bridge),
+              ),
+            ),
+          ),
+          { disableListenLog: true, disableLogger: true },
+        ).pipe(Layer.build);
+
+        // Issuing a credential is what fills the catalogue and the thread's set.
+        yield* bridge.prepareForSession({ threadId: leadThread });
+        yield* bridge.prepareForSession({ threadId: builderThread });
+
+        const httpClient = yield* HttpClient.HttpClient;
+        const session = Effect.fn("test.session")(function* (threadId: ThreadId) {
+          const initialize = yield* httpClient.post("/mcp", {
+            headers: { accept: "application/json, text/event-stream", authorization: threadId },
+            body: HttpBody.text(
+              '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t3-test","version":"1.0.0"}}}',
+              "application/json",
+            ),
+          });
+          const sessionId = initialize.headers["mcp-session-id"] ?? "";
+          const send = (body: string) =>
+            httpClient
+              .post("/mcp", {
+                headers: {
+                  accept: "application/json, text/event-stream",
+                  authorization: threadId,
+                  "mcp-session-id": sessionId,
+                  "mcp-protocol-version": "2025-06-18",
+                },
+                body: HttpBody.text(body, "application/json"),
+              })
+              .pipe(Effect.flatMap((response) => response.text));
+          yield* send('{"jsonrpc":"2.0","method":"notifications/initialized"}');
+          return send;
+        });
+
+        const leadSend = yield* session(leadThread);
+        const builderSend = yield* session(builderThread);
+        const listed = '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}';
+        const called =
+          '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"review_task","arguments":{}}}';
+
+        const leadTools = yield* leadSend(listed);
+        const builderTools = yield* builderSend(listed);
+        expect(leadTools).toContain("review_task");
+        expect(leadTools).toContain("spawn_agent");
+        expect(builderTools).not.toContain("review_task");
+        expect(builderTools).toContain("spawn_agent");
+
+        // A hidden tool is not merely absent from the list: calling it by name
+        // is refused too, which is what stops an agent that cached the
+        // catalogue before the filter changed.
+        const builderCall = yield* builderSend(called);
+        expect(builderCall).toContain("not found");
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpServer.layerTest))),
   );
 });

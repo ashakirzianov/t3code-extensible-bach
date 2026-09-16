@@ -67,6 +67,32 @@ the whole tool surface is registered before agent sessions start, and **availabi
 expressed in results, not in the catalogue**. A tool whose extension is down does not vanish;
 it answers with `ExtensionUnavailableError`, whose message reaches the agent verbatim.
 
+## Per-thread tool sets
+
+By default every thread sees every registered tool. An extension that registers with
+`filterToolsPerThread: true` is asked instead: the host sends a `toolsForThread` stream event
+naming one thread, and the extension answers `extensions.respondToolsForThread` with the
+tools that thread may use. Tools left out are hidden from `tools/list` **and** refused by
+`tools/call`, so a name an agent already knows is no way around the filter. The thread id is
+the one `ExtensionToolCaller` carries, so an extension that keeps a role per thread answers
+from what it already knows.
+
+The host asks once per thread, immediately before that thread's agent process is given its
+MCP credential — the same moment the tool catalogue is completed, and for the same reason:
+**an MCP client caches the catalogue at connect** ([spike](spikes/mcp-client-behaviour.md)).
+So a set that changes mid-session — an agent promoted to team lead — reaches that agent's
+_next_ provider process, not the running one. A call it makes in the meantime is still
+checked against the set it was given at connect, which is the older, narrower one. Design a
+role change to take effect on the next session rather than to revoke a tool mid-turn.
+
+The filter is **visibility, not authorization**. An extension that must refuse an action
+still checks inside the tool: a thread the host never asked about, and an extension that was
+down or silent when asked, keep every tool. The host fails open on purpose — a restarting
+extension must not silently strip tools from an agent that is mid-task — so the filter tidies
+what an agent sees rather than guarding what it can do.
+
+An extension that never sets the flag is never asked, and behaves exactly as before.
+
 ## HTTP and web
 
 A registered prefix is served under the host's own origin and auth, so remote, relay, and

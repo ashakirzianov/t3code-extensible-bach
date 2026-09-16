@@ -26,6 +26,8 @@ import {
   ExtensionStreamEvent,
   ExtensionToolInvocation,
   ExtensionToolResult,
+  ExtensionToolsForThreadRequest,
+  ExtensionToolsForThreadResult,
 } from "../src/extensions.ts";
 import * as RpcSchema from "effect/unstable/rpc/RpcSchema";
 import { WsRpcGroup } from "../src/rpc.ts";
@@ -100,6 +102,11 @@ const METHODS: Readonly<Record<string, MethodEntry>> = {
     summary: "Answers one proxyHttp event.",
     payload: "ExtensionHttpResponse",
   },
+  [EXTENSION_WS_METHODS.respondToolsForThread]: {
+    direction: "extension-to-host",
+    summary: "Answers one toolsForThread event with the tools that thread may see.",
+    payload: "ExtensionToolsForThreadResult",
+  },
   [EXTENSION_WS_METHODS.projectIcons]: {
     direction: "extension-to-host",
     summary: "Every project's icon as the host draws it: override, favicon, automatic fallback.",
@@ -129,6 +136,8 @@ const ROOTS = [
   ExtensionConnectInput,
   ExtensionStreamEvent,
   ExtensionToolInvocation,
+  ExtensionToolsForThreadRequest,
+  ExtensionToolsForThreadResult,
   ExtensionHttpRequest,
   ExtensionHttpBody,
   ExtensionToolResult,

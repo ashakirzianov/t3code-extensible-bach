@@ -56,12 +56,13 @@ export interface McpSessionRegistryOptions {
   readonly livenessWindowMs?: number;
   readonly now?: () => number;
   /**
-   * Run before a credential is minted. A provider process caches the MCP
-   * catalogue when it connects, so this is the last moment anything can be
-   * added for it — the extension seam uses it to wait for its extensions and
-   * to register their tools.
+   * Run before a credential is minted, with the request it is minted for. A
+   * provider process caches the MCP catalogue when it connects, so this is the
+   * last moment anything can be added for it — the extension seam uses it to
+   * wait for its extensions, register their tools, and ask which of them this
+   * thread may see.
    */
-  readonly beforeIssue?: Effect.Effect<void>;
+  readonly beforeIssue?: (request: McpCredentialRequest) => Effect.Effect<void>;
 }
 
 /**
@@ -131,7 +132,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
 
   const issue: McpSessionRegistryShape["issue"] = Effect.fn("McpSessionRegistry.issue")(
     function* (request) {
-      if (options.beforeIssue) yield* options.beforeIssue;
+      if (options.beforeIssue) yield* options.beforeIssue(request);
       const issuedAt = yield* currentTimeMillis;
       const providerSessionId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
       const rawToken = yield* crypto.randomBytes(32).pipe(Effect.map(tokenFromBytes), Effect.orDie);
@@ -237,7 +238,12 @@ const make = (options: McpSessionRegistryOptions = {}) =>
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
     const extensions = yield* ExtensionMcp.ExtensionMcp;
-    return Layer.effect(McpSessionRegistry, make({ beforeIssue: extensions.prepareForSession }));
+    return Layer.effect(
+      McpSessionRegistry,
+      make({
+        beforeIssue: (request) => extensions.prepareForSession({ threadId: request.threadId }),
+      }),
+    );
   }),
 );
 

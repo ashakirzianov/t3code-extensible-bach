@@ -84,6 +84,14 @@
         "EnvironmentAuthorizationError"
       ]
     },
+    "extensions.respondToolsForThread": {
+      "direction": "extension-to-host",
+      "summary": "Answers one toolsForThread event with the tools that thread may see.",
+      "payload": "ExtensionToolsForThreadResult",
+      "errors": [
+        "EnvironmentAuthorizationError"
+      ]
+    },
     "extensions.projectIcons": {
       "direction": "extension-to-host",
       "summary": "Every project's icon as the host draws it: override, favicon, automatic fallback.",
@@ -858,6 +866,9 @@
             "$ref": "#/$defs/ExtensionToolDefinition"
           },
           "maxItems": 64
+        },
+        "filterToolsPerThread": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -980,6 +991,29 @@
             },
             "request": {
               "$ref": "#/$defs/ExtensionHttpRequest"
+            }
+          },
+          "required": [
+            "type",
+            "connectionId",
+            "request"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "toolsForThread"
+              ]
+            },
+            "connectionId": {
+              "$ref": "#/$defs/ExtensionConnectionId"
+            },
+            "request": {
+              "$ref": "#/$defs/ExtensionToolsForThreadRequest"
             }
           },
           "required": [
@@ -1265,6 +1299,51 @@
         "content"
       ],
       "additionalProperties": false
+    },
+    "ExtensionToolsForThreadRequest": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "$ref": "#/$defs/ExtensionToolsRequestId"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "requestId",
+        "threadId"
+      ],
+      "additionalProperties": false
+    },
+    "ExtensionToolsForThreadResult": {
+      "type": "object",
+      "properties": {
+        "connectionId": {
+          "$ref": "#/$defs/ExtensionConnectionId"
+        },
+        "requestId": {
+          "$ref": "#/$defs/ExtensionToolsRequestId"
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ExtensionToolName"
+          },
+          "maxItems": 64
+        }
+      },
+      "required": [
+        "connectionId",
+        "requestId",
+        "tools"
+      ],
+      "additionalProperties": false
+    },
+    "ExtensionToolsRequestId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
     },
     "ExtensionUnavailableError": {
       "type": "object",

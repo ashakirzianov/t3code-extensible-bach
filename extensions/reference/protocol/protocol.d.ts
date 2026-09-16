@@ -11,6 +11,7 @@ export type ExtensionWsMethod =
   | "extensions.connect"
   | "extensions.respondTool"
   | "extensions.respondHttp"
+  | "extensions.respondToolsForThread"
   | "extensions.projectIcons"
   | "extensions.generateText";
 
@@ -29,6 +30,7 @@ export interface ExtensionMethodErrors {
   "extensions.connect": ExtensionHandshakeRequiredError | EnvironmentAuthorizationError;
   "extensions.respondTool": EnvironmentAuthorizationError;
   "extensions.respondHttp": EnvironmentAuthorizationError;
+  "extensions.respondToolsForThread": EnvironmentAuthorizationError;
   "extensions.projectIcons": EnvironmentAuthorizationError;
   "extensions.generateText":
     | ExtensionTextGenerationUnavailableError
@@ -280,6 +282,7 @@ export type ExtensionRegisterHttpPrefixResult = {
 
 export type ExtensionRegisterToolsInput = {
   readonly tools: ReadonlyArray<ExtensionToolDefinition>;
+  readonly filterToolsPerThread?: boolean;
 };
 
 export type ExtensionRegisterToolsResult = {
@@ -314,6 +317,11 @@ export type ExtensionStreamEvent =
       readonly type: "proxyHttp";
       readonly connectionId: ExtensionConnectionId;
       readonly request: ExtensionHttpRequest;
+    }
+  | {
+      readonly type: "toolsForThread";
+      readonly connectionId: ExtensionConnectionId;
+      readonly request: ExtensionToolsForThreadRequest;
     };
 
 export type ExtensionTextGenerationFailedError = {
@@ -388,6 +396,19 @@ export type ExtensionToolResult = {
   readonly isError?: boolean;
   readonly structuredContent?: Readonly<Record<string, unknown>>;
 };
+
+export type ExtensionToolsForThreadRequest = {
+  readonly requestId: ExtensionToolsRequestId;
+  readonly threadId: string;
+};
+
+export type ExtensionToolsForThreadResult = {
+  readonly connectionId: ExtensionConnectionId;
+  readonly requestId: ExtensionToolsRequestId;
+  readonly tools: ReadonlyArray<ExtensionToolName>;
+};
+
+export type ExtensionToolsRequestId = string;
 
 export type ExtensionUnavailableError = {
   readonly _tag: "ExtensionUnavailableError";

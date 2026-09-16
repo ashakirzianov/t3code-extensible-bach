@@ -62,7 +62,9 @@ import {
   type ExtensionToolName,
   type ExtensionToolRegistration,
   type ExtensionToolResult,
+  type ExtensionToolsForThreadResult,
   type ExtensionWebEntry,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -115,6 +117,14 @@ type PendingCall =
       readonly kind: "http";
       readonly connectionId: string;
       readonly deferred: Deferred.Deferred<ExtensionHttpResponse, ExtensionUnavailableError>;
+    }
+  | {
+      readonly kind: "tools";
+      readonly connectionId: string;
+      readonly deferred: Deferred.Deferred<
+        ExtensionToolsForThreadResult,
+        ExtensionUnavailableError
+      >;
     };
 
 interface ExtensionRecord {
@@ -130,6 +140,8 @@ interface ExtensionRecord {
   readonly restartCount: number;
   readonly logs: ReadonlyArray<ExtensionLogEntry>;
   readonly tools: ReadonlyArray<ExtensionToolDefinition>;
+  /** This registration asked to answer `toolsForThread` for every thread. */
+  readonly filterToolsPerThread: boolean;
   /** What this registration asked for and did not get. Cleared on restart. */
   readonly rejections: ReadonlyArray<ExtensionRejection>;
   readonly httpPrefix?: ExtensionHttpPrefix;
@@ -189,6 +201,7 @@ export interface ExtensionRegistryShape {
   ) => Effect.Effect<Stream.Stream<ExtensionStreamEvent>, ExtensionHandshakeRequiredError>;
   readonly respondTool: (response: ExtensionToolResult) => Effect.Effect<void>;
   readonly respondHttp: (response: ExtensionHttpResponse) => Effect.Effect<void>;
+  readonly respondToolsForThread: (response: ExtensionToolsForThreadResult) => Effect.Effect<void>;
 
   // --- broker, host to extension -------------------------------------------
   readonly invokeTool: (input: {
@@ -202,6 +215,18 @@ export interface ExtensionRegistryShape {
   }) => Effect.Effect<ExtensionHttpResponse, ExtensionUnavailableError | ExtensionNotFoundError>;
   /** Every tool the host should register with MCP, in start order. */
   readonly listTools: Effect.Effect<ReadonlyArray<ExtensionToolOwner>>;
+  /**
+   * What each extension that filters per thread says this thread may see.
+   *
+   * One entry per extension that registered with `filterToolsPerThread` *and*
+   * answered; an extension that is down, silent, or does not filter is absent,
+   * which means "no restriction". Failing open is deliberate: visibility is a
+   * smaller promise than authorization, and a silent extension must not take
+   * away tools a running agent already has.
+   */
+  readonly toolsForThread: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ReadonlyMap<ExtensionName, ReadonlySet<ExtensionToolName>>>;
   /**
    * Completes once every enabled extension has either connected or reached a
    * terminal state — the condition the MCP catalogue has to be complete under,
@@ -293,6 +318,7 @@ const emptyRecord = (source: ResolvedExtensionSource): ExtensionRecord => ({
   restartCount: 0,
   logs: [],
   tools: [],
+  filterToolsPerThread: false,
   rejections: [],
   helloAcked: false,
 });
@@ -405,10 +431,16 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
   // `Deferred` is invariant in its value type, so the two branches cannot be
   // collapsed even though their bodies are identical: narrowing on `kind` is
   // what gives each call a concrete deferred to fail.
-  const abortPending = (entry: PendingCall, error: ExtensionUnavailableError) =>
-    entry.kind === "tool"
-      ? Deferred.fail(entry.deferred, error)
-      : Deferred.fail(entry.deferred, error);
+  const abortPending = (entry: PendingCall, error: ExtensionUnavailableError) => {
+    switch (entry.kind) {
+      case "tool":
+        return Deferred.fail(entry.deferred, error);
+      case "http":
+        return Deferred.fail(entry.deferred, error);
+      case "tools":
+        return Deferred.fail(entry.deferred, error);
+    }
+  };
 
   const failPending = Effect.fn("ExtensionRegistry.failPending")(function* (
     entries: ReadonlyArray<PendingCall>,
@@ -535,6 +567,7 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
         withRecord(current, input.name, (record) => ({
           ...record,
           tools: accepted,
+          filterToolsPerThread: input.filterToolsPerThread === true,
           rejections: [
             ...record.rejections.filter((rejection) => rejection.kind !== "tool"),
             ...rejections,
@@ -658,6 +691,14 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
   )(function* (response) {
     const entry = yield* takePending(response.requestId, response.connectionId, "http");
     if (entry?.kind !== "http") return;
+    yield* Deferred.succeed(entry.deferred, response);
+  });
+
+  const respondToolsForThread: ExtensionRegistryShape["respondToolsForThread"] = Effect.fn(
+    "ExtensionRegistry.respondToolsForThread",
+  )(function* (response) {
+    const entry = yield* takePending(response.requestId, response.connectionId, "tools");
+    if (entry?.kind !== "tools") return;
     yield* Deferred.succeed(entry.deferred, response);
   });
 
@@ -797,6 +838,55 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
       ),
     ),
   );
+
+  const toolsForThread: ExtensionRegistryShape["toolsForThread"] = Effect.fn(
+    "ExtensionRegistry.toolsForThread",
+  )(function* (threadId) {
+    const current = yield* SynchronizedRef.get(state);
+    const filtering = [...current.records.values()].filter(
+      (record) => record.filterToolsPerThread && record.connection !== undefined,
+    );
+    if (filtering.length === 0) {
+      return new Map<ExtensionName, ReadonlySet<ExtensionToolName>>();
+    }
+    // Every extension is asked at once: this sits in front of a provider
+    // process starting, and asking them in turn would add one timeout per
+    // extension to the wait.
+    const answers = yield* Effect.forEach(
+      filtering,
+      (record) =>
+        Effect.gen(function* () {
+          const connection = record.connection;
+          if (!connection) return undefined;
+          const requestId = yield* nextCallId("tools");
+          const answer = yield* call<ExtensionToolsForThreadResult>({
+            callId: requestId,
+            connection,
+            toPending: (deferred) => ({
+              kind: "tools",
+              connectionId: connection.connectionId,
+              deferred,
+            }),
+            event: {
+              type: "toolsForThread",
+              connectionId: connection.connectionId,
+              request: { requestId, threadId },
+            },
+            unavailable: (reason) =>
+              new ExtensionUnavailableError({ extensionName: record.name, reason }),
+          }).pipe(Effect.option);
+          return answer._tag === "None"
+            ? undefined
+            : ([record.name, new Set(answer.value.tools)] as const);
+        }),
+      { concurrency: "unbounded" },
+    );
+    return new Map(
+      answers.filter(
+        (entry): entry is readonly [ExtensionName, Set<ExtensionToolName>] => entry !== undefined,
+      ),
+    );
+  });
 
   const upsertSource: ExtensionRegistryShape["upsertSource"] = Effect.fn(
     "ExtensionRegistry.upsertSource",
@@ -962,10 +1052,12 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
     setBadge,
     connect,
     respondTool,
+    respondToolsForThread,
     respondHttp,
     invokeTool,
     proxyHttp,
     listTools,
+    toolsForThread,
     awaitReady: Deferred.await(ready),
     markSourcesResolved,
     upsertSource,

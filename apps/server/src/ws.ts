@@ -2802,6 +2802,12 @@ const makeWsRpcLayer = (
             }),
             { "rpc.aggregate": "extensions" },
           ),
+        [EXTENSION_WS_METHODS.respondToolsForThread]: (input) =>
+          observeRpcEffect(
+            EXTENSION_WS_METHODS.respondToolsForThread,
+            extensions.respondToolsForThread(input),
+            { "rpc.aggregate": "extensions" },
+          ),
         [EXTENSION_WS_METHODS.respondHttp]: (input) =>
           observeRpcEffect(EXTENSION_WS_METHODS.respondHttp, extensions.respondHttp(input), {
             "rpc.aggregate": "extensions",

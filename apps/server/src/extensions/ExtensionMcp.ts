@@ -24,15 +24,18 @@
  */
 import {
   type ExtensionListResult,
+  type ExtensionName,
   type ExtensionToolContent,
   type ExtensionToolName,
   type ExtensionToolResult,
   type ExtensionUnavailableError,
   type ExtensionUnknownToolError,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import { McpSchema, McpServer } from "effect/unstable/ai";
@@ -50,6 +53,14 @@ import {
  * extension costs one turn rather than blocking the app.
  */
 export const EXTENSION_READY_TIMEOUT = Duration.seconds(10);
+
+/**
+ * How many threads' answers to `toolsForThread` are kept. One entry per thread
+ * that started an agent since the server did, so this is a bound on a long
+ * uptime rather than a working set: the answer for a thread that fell out is
+ * asked for again the next time that thread starts a session.
+ */
+export const EXTENSION_VISIBILITY_CACHE_THREADS = 512;
 
 export const EXTENSION_GUIDE_URI = "t3code://extensions/guide";
 export const EXTENSION_SCAFFOLD_URI = "t3code://extensions/scaffold";
@@ -142,9 +153,16 @@ const readResource = (
 export const addExtensionTool = Effect.fn("ExtensionMcp.addExtensionTool")(function* (input: {
   readonly addTool: McpServer.McpServer["Service"]["addTool"];
   readonly registry: ExtensionRegistryShape;
+  readonly extensionName: ExtensionName;
   readonly name: ExtensionToolName;
   readonly description: string;
   readonly inputSchema: Readonly<Record<string, unknown>>;
+  /**
+   * Whether this tool is in the calling thread's set. Consulted by MCP for
+   * `tools/list` *and* `tools/call`, both synchronously, which is why the
+   * answer is a cached one and not a round trip to the extension.
+   */
+  readonly isToolVisible: ExtensionMcpShape["isToolVisible"];
 }) {
   yield* input.addTool({
     tool: new McpSchema.Tool({
@@ -152,7 +170,24 @@ export const addExtensionTool = Effect.fn("ExtensionMcp.addExtensionTool")(funct
       description: input.description,
       inputSchema: input.inputSchema,
     }),
-    annotations: Context.empty(),
+    // MCP decides visibility from the negotiated client profile, which says
+    // nothing about who is calling — so the caller is read from the fiber the
+    // MCP request is running on, where the transport's auth middleware put it.
+    // A request with no resolved caller sees everything, which is what every
+    // tool did before per-thread filtering existed.
+    annotations: Context.make(McpSchema.EnabledWhen, () => {
+      const fiber = Fiber.getCurrent();
+      const invocation =
+        fiber === undefined
+          ? undefined
+          : Context.getOption(fiber.context, McpInvocationContext.McpInvocationContext);
+      if (invocation === undefined || invocation._tag === "None") return true;
+      return input.isToolVisible({
+        extensionName: input.extensionName,
+        toolName: input.name,
+        threadId: invocation.value.threadId,
+      });
+    }),
     handle: (payload: unknown) =>
       Effect.withFiber((fiber) => {
         const invocation = Context.getOption(
@@ -199,9 +234,22 @@ export const addExtensionTool = Effect.fn("ExtensionMcp.addExtensionTool")(funct
 export interface ExtensionMcpShape {
   /**
    * Everything a provider process about to connect must see: wait for the
-   * extensions, then make sure every tool they registered is in the catalogue.
+   * extensions, make sure every tool they registered is in the catalogue, and
+   * ask the extensions that filter per thread what this thread may see.
    */
-  readonly prepareForSession: Effect.Effect<void>;
+  readonly prepareForSession: (input: { readonly threadId: ThreadId }) => Effect.Effect<void>;
+  /**
+   * Whether one extension tool is in one thread's set, answered from what the
+   * extensions said at `prepareForSession`. A thread the host never asked
+   * about, and an extension that did not answer, are unrestricted: visibility
+   * is a smaller promise than authorization, and a silent extension must not
+   * take tools away from an agent that is already running.
+   */
+  readonly isToolVisible: (input: {
+    readonly extensionName: ExtensionName;
+    readonly toolName: ExtensionToolName;
+    readonly threadId: ThreadId;
+  }) => boolean;
   /**
    * Called once by the MCP layer with an effect that adds any newly registered
    * tools. Run on every issue rather than on a change signal: a tool only ever
@@ -220,15 +268,42 @@ export const make = Effect.fnUntraced(function* (
 ) {
   const registry = yield* ExtensionRegistry;
   const toolSync = yield* SynchronizedRef.make<Effect.Effect<void>>(Effect.void);
+  // A plain Map rather than a ref: `isToolVisible` is called from MCP's own
+  // synchronous visibility check, which cannot run an effect. Insertion order
+  // is the eviction order, so a re-answered thread is re-inserted.
+  const visibleTools = new Map<ThreadId, ReadonlyMap<ExtensionName, ReadonlySet<string>>>();
 
-  const prepareForSession = registry.awaitReady.pipe(
-    Effect.timeoutOption(options.readyTimeout ?? EXTENSION_READY_TIMEOUT),
-    Effect.andThen(SynchronizedRef.get(toolSync)),
-    Effect.flatMap((sync) => sync),
-  );
+  const rememberVisibleTools = (
+    threadId: ThreadId,
+    answers: ReadonlyMap<ExtensionName, ReadonlySet<ExtensionToolName>>,
+  ) =>
+    Effect.sync(() => {
+      visibleTools.delete(threadId);
+      visibleTools.set(threadId, answers);
+      while (visibleTools.size > EXTENSION_VISIBILITY_CACHE_THREADS) {
+        const oldest = visibleTools.keys().next();
+        if (oldest.done === true) break;
+        visibleTools.delete(oldest.value);
+      }
+    });
+
+  const prepareForSession = (input: { readonly threadId: ThreadId }) =>
+    registry.awaitReady.pipe(
+      Effect.timeoutOption(options.readyTimeout ?? EXTENSION_READY_TIMEOUT),
+      Effect.andThen(SynchronizedRef.get(toolSync)),
+      Effect.flatMap((sync) => sync),
+      // After the sync, so the names an extension answers with are names the
+      // catalogue already carries.
+      Effect.andThen(registry.toolsForThread(input.threadId)),
+      Effect.flatMap((answers) => rememberVisibleTools(input.threadId, answers)),
+    );
 
   return ExtensionMcp.of({
     prepareForSession,
+    isToolVisible: (input) => {
+      const allowed = visibleTools.get(input.threadId)?.get(input.extensionName);
+      return allowed === undefined || allowed.has(input.toolName);
+    },
     installToolSync: (sync) => SynchronizedRef.set(toolSync, sync),
   });
 });
@@ -255,9 +330,11 @@ export const toolsLayer = Layer.effectDiscard(
           addExtensionTool({
             addTool: server.addTool,
             registry,
+            extensionName: tool.extensionName,
             name: tool.definition.name,
             description: tool.definition.description,
             inputSchema: tool.definition.inputSchema,
+            isToolVisible: gate.isToolVisible,
           }),
         { discard: true },
       );
