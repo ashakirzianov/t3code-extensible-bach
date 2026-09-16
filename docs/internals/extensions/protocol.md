@@ -85,6 +85,29 @@ with a same-origin `import()` — the only thing that executes under the desktop
 ([spike](spikes/electron-runtime.md)) — and mounts it in a container the host owns. The host
 draws the nav entry itself from the label, icon, and badge.
 
+## Text generation
+
+`extensions.generateText` asks the environment's configured Text generation model one
+question: a `prompt`, an optional `system`, and a `text` back. It is the same small model the
+host uses for commit messages and thread titles, chosen under Settings → Text generation.
+
+An extension is an ordinary client, so it could start a thread and read its output instead —
+but a thread is a working agent with a checkout, a provider session and a history the user
+sees, which is more than rewriting a paragraph needs. Use a thread for work; use this for a
+sentence.
+
+Three things it deliberately does not do. There is **no token budget**: the host drives
+provider CLIs to completion with structured output, so a budget could not be honoured — say
+how long the answer should be in the prompt. There is **no streaming**: the answer arrives
+whole or not at all. And there is **no checkout**: the model runs in an empty scratch
+directory the host removes afterwards, so a project's own agent configuration cannot reach
+into an unrelated answer. Nothing the extension sends is attached to a thread.
+
+An environment with no enabled provider answers `ExtensionTextGenerationUnavailableError`
+rather than quietly picking something; a provider that failed answers
+`ExtensionTextGenerationFailedError` with its own reason. Both are refusals to show a user,
+not conditions to retry blindly.
+
 ## Project icons
 
 An extension that shows projects should draw the icon the host draws, and one part of that

@@ -7,6 +7,7 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -120,6 +121,8 @@ import { EXTENSION_SUBJECT_PREFIX } from "./extensions/ExtensionIdentity.ts";
 import { resolveExtensionProjectIcons } from "./extensions/ExtensionProjectIcons.ts";
 import * as ExtensionRegistryService from "./extensions/ExtensionRegistry.ts";
 import { mintExtensionAssetUrls } from "./extensions/ExtensionAssetAccess.ts";
+import { generateExtensionText } from "./extensions/ExtensionTextGeneration.ts";
+import { makeTextGenerationFromRegistry } from "./textGeneration/TextGeneration.ts";
 import * as ExtensionSupervisorService from "./extensions/ExtensionSupervisor.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -563,6 +566,7 @@ const makeWsRpcLayer = (
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
+      const fileSystem = yield* FileSystem.FileSystem;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
       const canReplayPersistedRange = Effect.fnUntraced(function* (
@@ -2775,6 +2779,25 @@ const makeWsRpcLayer = (
                     resource: { _tag: "project-favicon", cwd: project.workspaceRoot },
                     ...(project.faviconPath ? { projectFaviconPath: project.faviconPath } : {}),
                   }).pipe(Effect.map((result) => result.relativeUrl)),
+              });
+            }),
+            { "rpc.aggregate": "extensions" },
+          ),
+        [EXTENSION_WS_METHODS.generateText]: (input) =>
+          observeRpcEffect(
+            EXTENSION_WS_METHODS.generateText,
+            // Built from the instance registry rather than taken as a service:
+            // the same construction `TextGeneration.layer` performs, without
+            // adding a layer to the socket's stack for one method.
+            Effect.gen(function* () {
+              // Settings that cannot be read are an internal fault, and this
+              // RPC's error union is about the model, not the host's own state.
+              const settings = yield* serverSettings.getSettings.pipe(Effect.orDie);
+              return yield* generateExtensionText({
+                request: input,
+                settings,
+                textGeneration: makeTextGenerationFromRegistry(providerInstances),
+                fileSystem,
               });
             }),
             { "rpc.aggregate": "extensions" },

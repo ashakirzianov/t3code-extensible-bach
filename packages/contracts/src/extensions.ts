@@ -102,6 +102,7 @@ export const EXTENSION_WS_METHODS = {
   respondTool: "extensions.respondTool",
   respondHttp: "extensions.respondHttp",
   projectIcons: "extensions.projectIcons",
+  generateText: "extensions.generateText",
 } as const;
 
 /**
@@ -470,6 +471,44 @@ export const ExtensionProjectIconsResult = Schema.Struct({
 export type ExtensionProjectIconsResult = typeof ExtensionProjectIconsResult.Type;
 
 // ---------------------------------------------------------------------------
+// generateText
+// ---------------------------------------------------------------------------
+
+/**
+ * The environment's configured Text generation model, as a single question and
+ * answer.
+ *
+ * An extension is an ordinary client, so it can start a thread and read its
+ * output — but a thread is a working agent with a checkout, a provider session
+ * and a visible history, which is far more than a one-shot rewrite of a
+ * paragraph needs. This is the small model the host already resolves for its
+ * own commit messages and thread titles (Settings, Text generation), reachable
+ * without any of that.
+ *
+ * It is deliberately one prompt in and one string out. There is no token
+ * budget and no streaming: the host's providers are CLIs it drives to
+ * completion with structured output, so a budget could not be honoured and a
+ * partial answer has nowhere to go. Length guidance belongs in the prompt.
+ */
+export const EXTENSION_GENERATE_TEXT_PROMPT_MAX_CHARS = 100_000;
+export const EXTENSION_GENERATE_TEXT_SYSTEM_MAX_CHARS = 10_000;
+export const EXTENSION_GENERATE_TEXT_RESULT_MAX_CHARS = 1024 * 1024;
+
+export const ExtensionGenerateTextInput = Schema.Struct({
+  /** What to answer, as the extension wrote it. */
+  prompt: BoundedString(EXTENSION_GENERATE_TEXT_PROMPT_MAX_CHARS),
+  /** Standing instructions for the request, above the prompt itself. */
+  system: Schema.optionalKey(BoundedString(EXTENSION_GENERATE_TEXT_SYSTEM_MAX_CHARS)),
+}).annotate({ identifier: "ExtensionGenerateTextInput" });
+export type ExtensionGenerateTextInput = typeof ExtensionGenerateTextInput.Type;
+
+export const ExtensionGenerateTextResult = Schema.Struct({
+  /** The model's answer, trimmed. Never partial: the host waits for the whole of it. */
+  text: Schema.String.check(Schema.isMaxLength(EXTENSION_GENERATE_TEXT_RESULT_MAX_CHARS)),
+}).annotate({ identifier: "ExtensionGenerateTextResult" });
+export type ExtensionGenerateTextResult = typeof ExtensionGenerateTextResult.Type;
+
+// ---------------------------------------------------------------------------
 // Host to extension: tool invocation
 // ---------------------------------------------------------------------------
 
@@ -727,6 +766,33 @@ export class ExtensionHttpPrefixCollisionError extends Schema.TaggedError<Extens
   }
 }
 
+/**
+ * `extensions.generateText` was asked of an environment with no usable Text
+ * generation provider — none enabled, or the configured one no longer
+ * installed. A refusal rather than a silent fallback: the answer would come
+ * from a model the user did not choose.
+ */
+export class ExtensionTextGenerationUnavailableError extends Schema.TaggedError<ExtensionTextGenerationUnavailableError>()(
+  "ExtensionTextGenerationUnavailableError",
+  {},
+) {
+  override get message(): string {
+    return "No text generation provider is configured in this environment. Choose one under Settings, Text generation.";
+  }
+}
+
+/** The provider was there and the generation failed. `detail` is the provider's own reason. */
+export class ExtensionTextGenerationFailedError extends Schema.TaggedError<ExtensionTextGenerationFailedError>()(
+  "ExtensionTextGenerationFailedError",
+  {
+    detail: BoundedString(1024),
+  },
+) {
+  override get message(): string {
+    return `Text generation failed: ${this.detail}`;
+  }
+}
+
 export const ExtensionError = Schema.Union([
   ExtensionProtocolMismatchError,
   ExtensionHandshakeRequiredError,
@@ -734,6 +800,8 @@ export const ExtensionError = Schema.Union([
   ExtensionUnknownToolError,
   ExtensionUnavailableError,
   ExtensionHttpPrefixCollisionError,
+  ExtensionTextGenerationUnavailableError,
+  ExtensionTextGenerationFailedError,
 ]).annotate({ identifier: "ExtensionError" });
 export type ExtensionError = typeof ExtensionError.Type;
 

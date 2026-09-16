@@ -151,6 +151,7 @@ export const RPC_REQUIRED_SCOPES = {
   [EXTENSION_WS_METHODS.respondTool]: AuthExtensionScope,
   [EXTENSION_WS_METHODS.respondHttp]: AuthExtensionScope,
   [EXTENSION_WS_METHODS.projectIcons]: AuthExtensionScope,
+  [EXTENSION_WS_METHODS.generateText]: AuthExtensionScope,
   // Management is Settings talking, so it takes the ordinary client scopes.
   [EXTENSION_ADMIN_WS_METHODS.list]: AuthOrchestrationReadScope,
   [EXTENSION_ADMIN_WS_METHODS.subscribe]: AuthOrchestrationReadScope,

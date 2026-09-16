@@ -126,6 +126,10 @@ import {
   ExtensionSetEnabledInput,
   ExtensionStreamEvent,
   ExtensionToolResult,
+  ExtensionGenerateTextInput,
+  ExtensionGenerateTextResult,
+  ExtensionTextGenerationFailedError,
+  ExtensionTextGenerationUnavailableError,
 } from "./extensions.ts";
 import {
   ProviderUploadFeedbackError,
@@ -1280,6 +1284,21 @@ export const WsExtensionsProjectIconsRpc = Rpc.make(EXTENSION_WS_METHODS.project
   error: EnvironmentAuthorizationError,
 });
 
+/**
+ * The environment's configured Text generation model, asked one question.
+ * Like `projectIcons` it carries no identity, so it needs no handshake — only
+ * the extension scope.
+ */
+export const WsExtensionsGenerateTextRpc = Rpc.make(EXTENSION_WS_METHODS.generateText, {
+  payload: ExtensionGenerateTextInput,
+  success: ExtensionGenerateTextResult,
+  error: Schema.Union([
+    ExtensionTextGenerationUnavailableError,
+    ExtensionTextGenerationFailedError,
+    EnvironmentAuthorizationError,
+  ]),
+});
+
 // Extension management, for the Settings screen rather than for extensions.
 export const WsExtensionsAdminListRpc = Rpc.make(EXTENSION_ADMIN_WS_METHODS.list, {
   payload: Schema.Struct({}),
@@ -1473,6 +1492,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsExtensionsRespondToolRpc,
   WsExtensionsRespondHttpRpc,
   WsExtensionsProjectIconsRpc,
+  WsExtensionsGenerateTextRpc,
   WsExtensionsAdminListRpc,
   WsExtensionsAdminSubscribeRpc,
   WsExtensionsAdminDeployRpc,

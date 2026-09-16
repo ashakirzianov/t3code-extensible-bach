@@ -92,6 +92,17 @@
       "errors": [
         "EnvironmentAuthorizationError"
       ]
+    },
+    "extensions.generateText": {
+      "direction": "extension-to-host",
+      "summary": "One question for the environment's configured Text generation model.",
+      "payload": "ExtensionGenerateTextInput",
+      "success": "ExtensionGenerateTextResult",
+      "errors": [
+        "ExtensionTextGenerationUnavailableError",
+        "ExtensionTextGenerationFailedError",
+        "EnvironmentAuthorizationError"
+      ]
     }
   },
   "$defs": {
@@ -247,8 +258,46 @@
         },
         {
           "$ref": "#/$defs/ExtensionHttpPrefixCollisionError"
+        },
+        {
+          "$ref": "#/$defs/ExtensionTextGenerationUnavailableError"
+        },
+        {
+          "$ref": "#/$defs/ExtensionTextGenerationFailedError"
         }
       ]
+    },
+    "ExtensionGenerateTextInput": {
+      "type": "object",
+      "properties": {
+        "prompt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100000
+        },
+        "system": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 10000
+        }
+      },
+      "required": [
+        "prompt"
+      ],
+      "additionalProperties": false
+    },
+    "ExtensionGenerateTextResult": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "maxLength": 1048576
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "additionalProperties": false
     },
     "ExtensionHandshakeRequiredError": {
       "type": "object",
@@ -941,6 +990,42 @@
           "additionalProperties": false
         }
       ]
+    },
+    "ExtensionTextGenerationFailedError": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": [
+            "ExtensionTextGenerationFailedError"
+          ]
+        },
+        "detail": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        }
+      },
+      "required": [
+        "_tag",
+        "detail"
+      ],
+      "additionalProperties": false
+    },
+    "ExtensionTextGenerationUnavailableError": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": [
+            "ExtensionTextGenerationUnavailableError"
+          ]
+        }
+      },
+      "required": [
+        "_tag"
+      ],
+      "additionalProperties": false
     },
     "ExtensionToolCaller": {
       "type": "object",

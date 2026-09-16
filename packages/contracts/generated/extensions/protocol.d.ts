@@ -11,7 +11,8 @@ export type ExtensionWsMethod =
   | "extensions.connect"
   | "extensions.respondTool"
   | "extensions.respondHttp"
-  | "extensions.projectIcons";
+  | "extensions.projectIcons"
+  | "extensions.generateText";
 
 export interface ExtensionMethodErrors {
   "extensions.hello":
@@ -29,6 +30,10 @@ export interface ExtensionMethodErrors {
   "extensions.respondTool": EnvironmentAuthorizationError;
   "extensions.respondHttp": EnvironmentAuthorizationError;
   "extensions.projectIcons": EnvironmentAuthorizationError;
+  "extensions.generateText":
+    | ExtensionTextGenerationUnavailableError
+    | ExtensionTextGenerationFailedError
+    | EnvironmentAuthorizationError;
 }
 
 export type EnvironmentAuthorizationError = {
@@ -94,7 +99,18 @@ export type ExtensionError =
   | ExtensionToolNameCollisionError
   | ExtensionUnknownToolError
   | ExtensionUnavailableError
-  | ExtensionHttpPrefixCollisionError;
+  | ExtensionHttpPrefixCollisionError
+  | ExtensionTextGenerationUnavailableError
+  | ExtensionTextGenerationFailedError;
+
+export type ExtensionGenerateTextInput = {
+  readonly prompt: string;
+  readonly system?: string;
+};
+
+export type ExtensionGenerateTextResult = {
+  readonly text: string;
+};
 
 export type ExtensionHandshakeRequiredError = {
   readonly _tag: "ExtensionHandshakeRequiredError";
@@ -299,6 +315,15 @@ export type ExtensionStreamEvent =
       readonly connectionId: ExtensionConnectionId;
       readonly request: ExtensionHttpRequest;
     };
+
+export type ExtensionTextGenerationFailedError = {
+  readonly _tag: "ExtensionTextGenerationFailedError";
+  readonly detail: string;
+};
+
+export type ExtensionTextGenerationUnavailableError = {
+  readonly _tag: "ExtensionTextGenerationUnavailableError";
+};
 
 export type ExtensionToolCaller = {
   readonly environmentId: string;

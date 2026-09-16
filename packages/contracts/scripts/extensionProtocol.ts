@@ -7,6 +7,8 @@ import {
   ExtensionBadge,
   ExtensionConnectInput,
   ExtensionError,
+  ExtensionGenerateTextInput,
+  ExtensionGenerateTextResult,
   ExtensionHelloAck,
   ExtensionHelloInput,
   ExtensionHttpBody,
@@ -104,6 +106,12 @@ const METHODS: Readonly<Record<string, MethodEntry>> = {
     payload: "ExtensionProjectIconsInput",
     success: "ExtensionProjectIconsResult",
   },
+  [EXTENSION_WS_METHODS.generateText]: {
+    direction: "extension-to-host",
+    summary: "One question for the environment's configured Text generation model.",
+    payload: "ExtensionGenerateTextInput",
+    success: "ExtensionGenerateTextResult",
+  },
 };
 
 /** Roots the document is built from. Everything they reference follows. */
@@ -127,6 +135,8 @@ const ROOTS = [
   ExtensionHttpResponse,
   ExtensionProjectIconsInput,
   ExtensionProjectIconsResult,
+  ExtensionGenerateTextInput,
+  ExtensionGenerateTextResult,
   ExtensionError,
 ] as const;
 
