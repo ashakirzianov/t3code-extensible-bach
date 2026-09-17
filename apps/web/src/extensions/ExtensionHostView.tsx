@@ -1,3 +1,4 @@
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   extensionUnavailableMessage,
   type ExtensionNavEntry,
@@ -11,6 +12,7 @@ import {
   useEnvironments,
   usePrimaryEnvironmentId,
 } from "../state/environments";
+import { waitForThreadShell } from "../state/entities";
 import {
   extensionEnvironment,
   useExtensionHttpPrefixes,
@@ -82,10 +84,19 @@ export function ExtensionHostView({
 
   const navigateToThread = useCallback(
     (threadId: ThreadId, targetEnvironmentId: EnvironmentId) => {
-      void navigate({
-        to: "/$environmentId/$threadId",
-        params: { environmentId: targetEnvironmentId, threadId },
-      });
+      void (async () => {
+        // An extension usually asks for this right after the server created the
+        // thread, and the sync event carrying it may still be in flight. The
+        // thread route reads a thread the client store does not hold yet as
+        // missing and bounces to the new-thread page, so wait for the shell to
+        // land first. On timeout navigate anyway: a thread that genuinely is
+        // not there should reach the route and be handled as missing.
+        await waitForThreadShell(scopeThreadRef(targetEnvironmentId, threadId));
+        void navigate({
+          to: "/$environmentId/$threadId",
+          params: { environmentId: targetEnvironmentId, threadId },
+        });
+      })();
     },
     [navigate],
   );

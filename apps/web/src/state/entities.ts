@@ -183,6 +183,36 @@ export function readThreadShell(ref: ScopedThreadRef): EnvironmentThreadShell | 
   return appAtomRegistry.get(environmentThreadShells.threadShellAtom(ref));
 }
 
+/**
+ * Resolves once the thread's shell row reaches the live client store, or with
+ * `null` when it has not arrived within `timeoutMs`. A thread created on the
+ * server a moment ago — by an extension, say — is only known here once its sync
+ * event lands, and a route that looks for it before then reads it as missing.
+ */
+export function waitForThreadShell(
+  ref: ScopedThreadRef,
+  timeoutMs = 5_000,
+): Promise<EnvironmentThreadShell | null> {
+  const current = readThreadShell(ref);
+  if (current !== null) return Promise.resolve(current);
+
+  return new Promise((resolve) => {
+    let unsubscribe: (() => void) | null = null;
+    const timeout = setTimeout(() => {
+      unsubscribe?.();
+      resolve(null);
+    }, timeoutMs);
+    const finish = (shell: EnvironmentThreadShell | null) => {
+      if (shell === null) return;
+      clearTimeout(timeout);
+      unsubscribe?.();
+      resolve(shell);
+    };
+    unsubscribe = appAtomRegistry.subscribe(environmentThreadShells.threadShellAtom(ref), finish);
+    finish(readThreadShell(ref));
+  });
+}
+
 /** Whether the environment's server understands thread.settle/unsettle.
     False for pre-settlement servers (capability defaults false on decode),
     so clients under version skew fall back instead of erroring. */
