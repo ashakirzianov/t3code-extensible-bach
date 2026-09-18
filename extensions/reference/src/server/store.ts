@@ -10,8 +10,8 @@
  * The extension owns this schema outright. The host adds no tables and runs no
  * migrations here — which is what lets the fork share a T3 home with upstream.
  */
-import { DatabaseSync } from "node:sqlite";
-import * as NodeFs from "node:fs";
+import * as NodeSqlite from "node:sqlite";
+import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 export interface EchoRecord {
@@ -22,11 +22,13 @@ export interface EchoRecord {
 }
 
 export class EchoStore {
-  #db: DatabaseSync;
+  #db: NodeSqlite.DatabaseSync;
 
   constructor(dataDirectory: string) {
-    NodeFs.mkdirSync(dataDirectory, { recursive: true });
-    this.#db = new DatabaseSync(NodePath.join(dataDirectory, "reference-extension.sqlite"));
+    NodeFS.mkdirSync(dataDirectory, { recursive: true });
+    this.#db = new NodeSqlite.DatabaseSync(
+      NodePath.join(dataDirectory, "reference-extension.sqlite"),
+    );
     // Migrations are the extension's job, run at its own cadence on startup.
     this.#db.exec(`
       CREATE TABLE IF NOT EXISTS echoes (

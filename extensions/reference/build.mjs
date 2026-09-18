@@ -13,21 +13,21 @@
  */
 import * as esbuild from "esbuild";
 import * as NodeChildProcess from "node:child_process";
-import { builtinModules } from "node:module";
-import * as NodeFs from "node:fs/promises";
+import * as NodeModule from "node:module";
+import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import { fileURLToPath } from "node:url";
+import * as NodeURL from "node:url";
 
-const here = NodePath.dirname(fileURLToPath(import.meta.url));
+const here = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const dist = NodePath.join(here, "dist");
 
-await NodeFs.rm(dist, { recursive: true, force: true });
-await NodeFs.mkdir(NodePath.join(dist, "web"), { recursive: true });
+await NodeFSP.rm(dist, { recursive: true, force: true });
+await NodeFSP.mkdir(NodePath.join(dist, "web"), { recursive: true });
 
 // The manifest is generated from the same module the server sends in
 // `extensions.hello`, so dist/extension.json and the handshake cannot disagree.
 const { MANIFEST } = await import("./src/server/manifest.ts");
-await NodeFs.writeFile(
+await NodeFSP.writeFile(
   NodePath.join(dist, "extension.json"),
   `${JSON.stringify(MANIFEST, null, 2)}\n`,
 );
@@ -36,7 +36,10 @@ await NodeFs.writeFile(
 // not enough: a CommonJS dependency (ws) requires bare "events" and "http", and
 // in ESM output esbuild turns an un-externalised require into a shim that
 // throws "Dynamic require of \"events\" is not supported" at startup.
-const nodeBuiltins = [...builtinModules, ...builtinModules.map((name) => `node:${name}`)];
+const nodeBuiltins = [
+  ...NodeModule.builtinModules,
+  ...NodeModule.builtinModules.map((name) => `node:${name}`),
+];
 
 await esbuild.build({
   entryPoints: [NodePath.join(here, "src/server/main.ts")],
@@ -82,7 +85,7 @@ await esbuild.build({
 // The bundle is useless if it cannot run under the desktop CSP, and that
 // failure would only show up at mount time in a packaged app. Fail the build
 // instead.
-const bundled = await NodeFs.readFile(NodePath.join(dist, "web/entry.js"), "utf8");
+const bundled = await NodeFSP.readFile(NodePath.join(dist, "web/entry.js"), "utf8");
 const evalUse = /(?:^|[^.\w])eval\s*\(|new\s+Function\s*\(/.exec(bundled);
 if (evalUse) {
   throw new Error(
