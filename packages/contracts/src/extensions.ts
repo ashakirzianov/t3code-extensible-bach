@@ -72,13 +72,41 @@ import { ProviderInstanceId } from "./providerInstance.ts";
  * the exception, and are opaque to extensions anyway.
  */
 
-/** The protocol version this build of the host and its contracts implement. */
+/**
+ * The protocol version this build of the host and its contracts implement.
+ *
+ * **Version 1 is not frozen, and before 1.0 it is deliberately not.** While
+ * Bach is the only extension there is, a shape inside v1 may change without
+ * this number moving — the negotiation exists so a host and an extension can
+ * disagree about the *protocol*, not so every field is settled before a second
+ * consumer exists to be broken by it.
+ *
+ * What replaces the promise is an obligation on the consumer: **tolerate the
+ * previous shape across a deploy skew.** Host and extension are deployed
+ * separately, so between one Deploy and the next an extension built against the
+ * older shape talks to the newer host, or the reverse, and
+ * `ExtensionProtocolMismatchError` will not fire because the number did not
+ * move.
+ *
+ * Applied once: `ExtensionProjectIcon.automatic` became
+ * `{ text, color, colorCss }`, and on 2026-09-18 Anton decided not to bump for
+ * it; Bach reads both shapes. This ends at 1.0 or at the second independent
+ * extension, whichever comes first — from then a shape change is a version
+ * change. See `docs/internals/extensions/protocol.md`, "What a version number
+ * promises, before 1.0".
+ */
 export const EXTENSION_PROTOCOL_VERSION = 1;
 
 /**
  * Every protocol version this host still speaks. A host may support more than
- * one so an extension built against an older version keeps running across a
- * host update; the list is what `hello` reports back on a mismatch.
+ * one so an extension built against an older *protocol version* keeps running
+ * across a host update; the list is what `hello` reports back on a mismatch.
+ *
+ * Note what that does and does not cover, given the paragraph above: it carries
+ * an older bundle across changes that moved this number, and before 1.0 not
+ * every change does. An extension whose shape assumptions are older than the
+ * host's, within one version, is the consumer's business to tolerate — not
+ * something a negotiated version can rescue.
  */
 export const EXTENSION_SUPPORTED_PROTOCOL_VERSIONS: ReadonlyArray<number> = [
   EXTENSION_PROTOCOL_VERSION,

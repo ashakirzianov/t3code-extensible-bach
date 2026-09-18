@@ -47,6 +47,27 @@ ways that document explains.
    request id together with the `connectionId`. A reconnect mints a new id, which is how an
    answer from a dead process gets dropped instead of applied.
 
+### What a version number promises, before 1.0
+
+**Version 1 is not frozen.** While Bach is the only extension there is, a shape inside v1 may
+change without the number moving: the negotiation exists so a host and an extension can
+disagree about the _protocol_, not so every field is nailed down years before anyone else
+depends on one. The alternative — a bump for each shape that moves during the build-out —
+would spend the version space on a single consumer that is rebuilt in the same afternoon.
+
+The obligation that replaces it falls on the consumer: **tolerate the previous shape across a
+deploy skew.** The host and the extension are two processes deployed separately, so for the
+minutes between one Deploy and the next an extension built against the older shape is talking
+to the newer host, or the reverse. Read defensively over that window and you are fine;
+`ExtensionProtocolMismatchError` will not save you, because the number did not move.
+
+Applied once so far: `ExtensionProjectIcon.automatic` became `{ text, color, colorCss }`
+(it was `{ name, color, colorCss }`), and on **2026-09-18 Anton decided not to bump the
+protocol version for it**. Bach tolerates both shapes across the skew.
+
+This ends at 1.0, or at the second independent extension — whichever comes first. From then a
+shape change is a version change, and the paragraph above is the thing to delete.
+
 ## Why the host's calls are stream events
 
 The client protocol is Effect RPC over a WebSocket: clients issue requests, and the only
