@@ -48,23 +48,49 @@ devtools.
 4. **A Deploy mid-session loads new bytes.** Change something visible in the remote Bach
    build, Deploy it there, and reopen the entry. The token in the asset URL is different and
    the new text is on screen — the old URL is not re-used from the module registry.
-5. **After a disconnect the old URL is dead.** Note the `/__ext-remote/<port>/ext-assets/…`
+5. **Only the asset route travels, on a live port.** With the environment still connected,
+   fetch these from the devtools console — the port is a real, open, forwarded one, so this
+   is the allow-list being exercised by the real handler rather than by a unit test:
+
+   ```js
+   for (const path of [
+     "/__ext-remote/<port>/api/environment",
+     "/__ext-remote/<port>/ext-api/<environmentId>/bach/agents",
+   ]) {
+     console.log(path, (await fetch(path)).status);
+   }
+   ```
+
+   Both must be **404**. Fetching `http://127.0.0.1:<port>/api/environment` directly still
+   answers — the environment is up and the renderer may talk to it — which is the point: the
+   proxy refuses it, not the network.
+
+6. **A write is refused.** `await fetch("/__ext-remote/<port>/ext-assets/…", { method: "POST" })`
+   on the same live URL that answers a `GET`: **404**. An asset is read, never written.
+
+7. **A port this app did not open is refused, even with something listening.** Start any local
+   server on a free port (`python3 -m http.server 8931`), then fetch
+   `/__ext-remote/8931/ext-assets/anything.js`: **404**, and nothing appears in that server's
+   log. This is the one that proves the port table is an allow-list and not just a lookup that
+   falls back to "try it".
+
+8. **After a disconnect the old URL is dead.** Note the `/__ext-remote/<port>/ext-assets/…`
    URL, disconnect the SSH environment, then paste that URL into the renderer's address bar
    or fetch it from the devtools console. It must answer **404, not index.html** — an SPA
    fallback here would answer an `import()` with HTML and turn a refusal into a syntax error.
    Reconnecting and reopening the entry must work again.
-6. **Its tunnel dying is the same as disconnecting.** Kill the `ssh -N` process for that
+9. **Its tunnel dying is the same as disconnecting.** Kill the `ssh -N` process for that
    environment from a terminal (find it by the forwarded port, not by name), then repeat
-   step 5's fetch: still 404. This is the case where a port could otherwise stay claimed and
+   step 8's fetch: still 404. This is the case where a port could otherwise stay claimed and
    be answered for after an unrelated local service bound it.
-7. **LAN and relay still refuse.** Add the same remote machine again as a plain URL
-   (Tailscale/LAN address) and open its Bach entry: the message, not the interface. Same for
-   a relay-managed environment.
-8. **The browser still refuses.** Open the app at `app.t3.codes` (or a page served by a T3
-   server) with the same environments connected: the remote one shows the message, and the
-   same-origin one still mounts.
-9. **The local environment is unchanged.** The primary environment's Bach entry mounts
-   exactly as before, from `/ext-assets/…` with no `__ext-remote` prefix.
+10. **LAN and relay still refuse.** Add the same remote machine again as a plain URL
+    (Tailscale/LAN address) and open its Bach entry: the message, not the interface. Same for
+    a relay-managed environment.
+11. **The browser still refuses.** Open the app at `app.t3.codes` (or a page served by a T3
+    server) with the same environments connected: the remote one shows the message, and the
+    same-origin one still mounts.
+12. **The local environment is unchanged.** The primary environment's Bach entry mounts
+    exactly as before, from `/ext-assets/…` with no `__ext-remote` prefix.
 
 A bundle that imports an **absolute** `/ext-assets/...` path rather than a relative chunk
 would not be re-based and would miss the proxy; Vite-built bundles emit relative chunks, so

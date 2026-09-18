@@ -170,6 +170,14 @@ async function proxyRemoteExtensionAsset(
       : null;
   if (target === null)
     return withContentSecurityPolicy(new Response(null, { status: 404 }), contentSecurityPolicy);
+  // `Electron.net.fetch` directly, and deliberately *not*
+  // `fetchWithTransientRetry`: that retry exists for the renderer's own backend
+  // coming up during startup, where a connection refused is a race worth
+  // waiting out. Here a connection refused means the forwarded port is gone —
+  // retrying would only re-ask a port that an unrelated local service may be in
+  // the middle of binding — and a refused redirect would be retried three times
+  // to reach the same refusal.
+  //
   // A refused redirect throws here, and so does a port nothing is listening on
   // any more. Both answer 404: the asset route answers 404 for every failure
   // too, and distinguishing them only helps a prober.
