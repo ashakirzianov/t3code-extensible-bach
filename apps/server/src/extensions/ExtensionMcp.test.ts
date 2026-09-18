@@ -39,6 +39,7 @@ import {
   extensionResourceDefinitions,
   installedResourceJson,
   make,
+  makeToolSync,
   toCallToolResult,
   toErrorResult,
   toolsLayer,
@@ -423,6 +424,339 @@ describe("host tool names", () => {
         "spawn_agent",
       ]);
     }),
+  );
+});
+
+describe("the catalogue after a redeploy", () => {
+  const reviewTool = {
+    name: "review_task",
+    description: "Review a task.",
+    inputSchema: { type: "object" },
+  };
+
+  /** Captures name and description, which is what a redeploy can move. */
+  const captureAdds = (
+    captured: Ref.Ref<ReadonlyArray<{ readonly name: string; readonly description: string }>>,
+  ): McpServer.McpServer["Service"]["addTool"] =>
+    ((options: { readonly tool: { readonly name: string; readonly description: string } }) =>
+      Ref.update(captured, (current) => [
+        ...current,
+        { name: options.tool.name, description: options.tool.description },
+      ])) as unknown as McpServer.McpServer["Service"]["addTool"];
+
+  const gate = (registry: ExtensionRegistry.ExtensionRegistryShape) =>
+    make().pipe(Effect.provideService(ExtensionRegistry.ExtensionRegistry, registry));
+
+  /** `bach`, handshaken, with whatever tool set the caller passes. */
+  const deploy = Effect.fn("test.deploy")(function* (
+    registry: ExtensionRegistry.ExtensionRegistryShape,
+    tools: ReadonlyArray<{
+      readonly name: string;
+      readonly description: string;
+      readonly inputSchema: Readonly<Record<string, unknown>>;
+    }>,
+  ) {
+    yield* registry.registerTools({ name: "bach", tools });
+  });
+
+  const handshake = Effect.fn("test.handshake")(function* (
+    registry: ExtensionRegistry.ExtensionRegistryShape,
+  ) {
+    yield* registry.upsertSource({
+      name: "bach",
+      path: "/opt/bach",
+      enabled: true,
+      source: "settings",
+    });
+    yield* registry.hello({
+      protocolVersion: EXTENSION_PROTOCOL_VERSION,
+      manifest,
+      name: "bach",
+      subject: `${EXTENSION_SUBJECT_PREFIX}bach`,
+    });
+  });
+
+  it.effect("re-adds a tool whose description moved and leaves an unchanged one alone", () =>
+    Effect.gen(function* () {
+      const registry = yield* makeRegistry();
+      const bridge = yield* gate(registry);
+      yield* handshake(registry);
+      yield* deploy(registry, [spawnTool, reviewTool]);
+      const captured = yield* Ref.make<
+        ReadonlyArray<{ readonly name: string; readonly description: string }>
+      >([]);
+      const sync = yield* makeToolSync({
+        addTool: captureAdds(captured),
+        registry,
+        gate: bridge,
+      });
+
+      yield* sync;
+      expect((yield* Ref.get(captured)).length).toBe(2);
+
+      // An unchanged redeploy costs the catalogue nothing: re-adding would only
+      // churn a `tools/list_changed` for an identical entry.
+      yield* deploy(registry, [spawnTool, reviewTool]);
+      yield* sync;
+      expect((yield* Ref.get(captured)).length).toBe(2);
+
+      // A schema that only reordered its keys is the same schema.
+      yield* deploy(registry, [
+        { ...spawnTool, inputSchema: { type: "object", properties: {} } },
+        reviewTool,
+      ]);
+      yield* sync;
+      expect((yield* Ref.get(captured)).length).toBe(3);
+      yield* deploy(registry, [
+        { ...spawnTool, inputSchema: { properties: {}, type: "object" } },
+        reviewTool,
+      ]);
+      yield* sync;
+      expect((yield* Ref.get(captured)).length).toBe(3);
+
+      yield* deploy(registry, [
+        {
+          ...spawnTool,
+          inputSchema: { type: "object", properties: {} },
+          description: "Now with a room.",
+        },
+        reviewTool,
+      ]);
+      yield* sync;
+      const adds = yield* Ref.get(captured);
+      expect(adds.length).toBe(4);
+      expect(adds.at(-1)).toStrictEqual({ name: "spawn_agent", description: "Now with a room." });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("retires a tool the extension stopped registering, and only that one", () =>
+    Effect.gen(function* () {
+      const registry = yield* makeRegistry();
+      const bridge = yield* gate(registry);
+      yield* handshake(registry);
+      yield* deploy(registry, [spawnTool, reviewTool]);
+      const captured = yield* Ref.make<
+        ReadonlyArray<{ readonly name: string; readonly description: string }>
+      >([]);
+      const sync = yield* makeToolSync({
+        addTool: captureAdds(captured),
+        registry,
+        gate: bridge,
+      });
+      const visible = (toolName: string) =>
+        bridge.isToolVisible({
+          extensionName: "bach",
+          toolName,
+          threadId: invocation.threadId,
+        });
+
+      // Nothing is retired before the first sync: not knowing yet must not
+      // take a tool away.
+      expect(visible("review_task")).toBe(true);
+      yield* sync;
+      expect(visible("review_task")).toBe(true);
+
+      yield* deploy(registry, [spawnTool]);
+      yield* sync;
+      expect(visible("review_task")).toBe(false);
+      expect(visible("spawn_agent")).toBe(true);
+      // Retirement is visibility, not removal: the entry is still in the MCP
+      // server, so nothing was re-added for the tool that stayed.
+      expect((yield* Ref.get(captured)).length).toBe(2);
+
+      // A tool that comes back is not retired any more, and needs no re-add.
+      yield* deploy(registry, [spawnTool, reviewTool]);
+      yield* sync;
+      expect(visible("review_task")).toBe(true);
+      expect((yield* Ref.get(captured)).length).toBe(2);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not retire the tools of an extension that merely stopped", () =>
+    Effect.gen(function* () {
+      const registry = yield* makeRegistry();
+      const bridge = yield* gate(registry);
+      yield* handshake(registry);
+      yield* deploy(registry, [spawnTool]);
+      const captured = yield* Ref.make<
+        ReadonlyArray<{ readonly name: string; readonly description: string }>
+      >([]);
+      const sync = yield* makeToolSync({
+        addTool: captureAdds(captured),
+        registry,
+        gate: bridge,
+      });
+      yield* sync;
+
+      yield* registry.setState({ name: "bach", state: "stopped" });
+      yield* registry.setEnabled({ name: "bach", enabled: false });
+      yield* sync;
+
+      // Availability is a result, not a catalogue entry: the tool stays listed
+      // and answers `ExtensionUnavailableError`.
+      expect(
+        bridge.isToolVisible({
+          extensionName: "bach",
+          toolName: "spawn_agent",
+          threadId: invocation.threadId,
+        }),
+      ).toBe(true);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps two extensions from retiring each other's tools", () =>
+    Effect.gen(function* () {
+      const registry = yield* makeRegistry();
+      const bridge = yield* gate(registry);
+      yield* handshake(registry);
+      yield* deploy(registry, [spawnTool]);
+      yield* registry.upsertSource({
+        name: "notes",
+        path: "/opt/notes",
+        enabled: true,
+        source: "settings",
+      });
+      yield* registry.hello({
+        protocolVersion: EXTENSION_PROTOCOL_VERSION,
+        manifest: { ...manifest, name: "notes" },
+        name: "notes",
+        subject: `${EXTENSION_SUBJECT_PREFIX}notes`,
+      });
+      yield* registry.registerTools({ name: "notes", tools: [reviewTool] });
+      const captured = yield* Ref.make<
+        ReadonlyArray<{ readonly name: string; readonly description: string }>
+      >([]);
+      const sync = yield* makeToolSync({
+        addTool: captureAdds(captured),
+        registry,
+        gate: bridge,
+      });
+      yield* sync;
+
+      yield* deploy(registry, []);
+      yield* sync;
+
+      const visible = (extensionName: string, toolName: string) =>
+        bridge.isToolVisible({
+          extensionName,
+          toolName,
+          threadId: invocation.threadId,
+        });
+      expect(visible("bach", "spawn_agent")).toBe(false);
+      expect(visible("notes", "review_task")).toBe(true);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("shows the next agent the redeployed catalogue over the real transport", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeRegistry();
+        const bridge = yield* make().pipe(
+          Effect.provideService(ExtensionRegistry.ExtensionRegistry, registry),
+        );
+        yield* handshake(registry);
+        yield* deploy(registry, [spawnTool, reviewTool]);
+        const events = yield* registry.connect({ name: "bach" });
+        yield* Stream.runForEach(events, () => Effect.void).pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
+        yield* registry.markSourcesResolved;
+
+        const authMiddleware = HttpRouter.middleware<{
+          provides: McpInvocationContext.McpInvocationContext;
+        }>()(
+          Effect.succeed(
+            (
+              httpEffect: Effect.Effect<
+                HttpServerResponse.HttpServerResponse,
+                Types.unhandled,
+                McpInvocationContext.McpInvocationContext
+              >,
+            ) =>
+              Effect.gen(function* () {
+                const request = yield* HttpServerRequest.HttpServerRequest;
+                return yield* httpEffect.pipe(
+                  Effect.provideService(McpInvocationContext.McpInvocationContext, {
+                    ...invocation,
+                    threadId: ThreadId.make(request.headers.authorization ?? "thread-unknown"),
+                  }),
+                );
+              }),
+          ),
+        ).layer;
+
+        yield* HttpRouter.serve(
+          toolsLayer.pipe(
+            Layer.provideMerge(
+              McpServer.layerHttp({
+                name: "T3 Code",
+                version: "0.0.38",
+                path: "/mcp",
+                protocols: [McpProtocol.v2025_06_18],
+              }).pipe(Layer.provide(authMiddleware)),
+            ),
+            Layer.provide(
+              Layer.mergeAll(
+                Layer.succeed(ExtensionRegistry.ExtensionRegistry, registry),
+                Layer.succeed(ExtensionMcp, bridge),
+              ),
+            ),
+          ),
+          { disableListenLog: true, disableLogger: true },
+        ).pipe(Layer.build);
+
+        const httpClient = yield* HttpClient.HttpClient;
+        const session = Effect.fn("test.session")(function* (threadId: ThreadId) {
+          const initialize = yield* httpClient.post("/mcp", {
+            headers: { accept: "application/json, text/event-stream", authorization: threadId },
+            body: HttpBody.text(
+              '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t3-test","version":"1.0.0"}}}',
+              "application/json",
+            ),
+          });
+          const sessionId = initialize.headers["mcp-session-id"] ?? "";
+          const send = (body: string) =>
+            httpClient
+              .post("/mcp", {
+                headers: {
+                  accept: "application/json, text/event-stream",
+                  authorization: threadId,
+                  "mcp-session-id": sessionId,
+                  "mcp-protocol-version": "2025-06-18",
+                },
+                body: HttpBody.text(body, "application/json"),
+              })
+              .pipe(Effect.flatMap((response) => response.text));
+          yield* send('{"jsonrpc":"2.0","method":"notifications/initialized"}');
+          return send;
+        });
+        const listed = '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}';
+        const callReview =
+          '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"review_task","arguments":{}}}';
+
+        const firstThread = ThreadId.make("thread-before");
+        yield* bridge.prepareForSession({ threadId: firstThread });
+        const before = yield* (yield* session(firstThread))(listed);
+        expect(before).toContain("Review a task.");
+        expect(before).toContain("spawn_agent");
+
+        // The Deploy: one tool's description moved, the other was dropped.
+        yield* deploy(registry, [
+          { ...spawnTool, description: "Spawn a Bach agent, with a role." },
+        ]);
+
+        const nextThread = ThreadId.make("thread-after");
+        yield* bridge.prepareForSession({ threadId: nextThread });
+        const nextSend = yield* session(nextThread);
+        const after = yield* nextSend(listed);
+        expect(after).toContain("Spawn a Bach agent, with a role.");
+        expect(after).not.toContain("Spawn a Bach agent.");
+        expect(after).not.toContain("review_task");
+
+        // The retired tool is still refused legibly rather than silently
+        // answering with a stale result.
+        expect(yield* nextSend(callReview)).toContain("not found");
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpServer.layerTest))),
   );
 });
 

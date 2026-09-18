@@ -11,12 +11,18 @@
  *   given up, bounded by `EXTENSION_READY_TIMEOUT`, and the tool set is synced
  *   into the MCP server immediately before each credential is handed out. A
  *   tool that appears later — a Deploy that added one — reaches the next
- *   provider process rather than the running one.
+ *   provider process rather than the running one. The sync follows a redeploy
+ *   in all three directions: a new tool is added, a tool whose description or
+ *   schema moved is re-added over the old entry, and a tool the extension
+ *   stopped registering is retired from what the next process is shown.
  * - **Availability is a result, not a catalogue entry.** A tool whose
  *   extension is stopped, restarting, or gone stays registered and answers
  *   `isError` with a sentence saying so. Removing it would be invisible to a
  *   live agent; an error is legible, and the spike showed agents relay it
- *   without treating it as a harness fault.
+ *   without treating it as a harness fault. Retirement is the narrower case
+ *   and it is done by visibility, never by removal: the entry stays in the MCP
+ *   server for the agents already holding it, and only leaves the catalogue a
+ *   process that connects *next* is shown.
  * - **At least one resource is registered before the server starts serving**,
  *   or the `resources` capability is never advertised and clients never look.
  *   The three here are registered as a layer, which is why they are static
@@ -41,7 +47,11 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 import { McpSchema, McpServer } from "effect/unstable/ai";
 
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
-import { ExtensionRegistry, type ExtensionRegistryShape } from "./ExtensionRegistry.ts";
+import {
+  ExtensionRegistry,
+  type ExtensionRegistryShape,
+  type ExtensionToolOwner,
+} from "./ExtensionRegistry.ts";
 import {
   EXTENSION_GUIDE_MARKDOWN,
   EXTENSION_SCAFFOLD_MARKDOWN,
@@ -257,6 +267,24 @@ export interface ExtensionMcpShape {
    * one is about to connect.
    */
   readonly installToolSync: (sync: Effect.Effect<void>) => Effect.Effect<void>;
+  /**
+   * What the extensions are registering *now*, told to the gate by the tool
+   * sync on every run.
+   *
+   * MCP has no way to withdraw a tool from its server, so a tool an extension
+   * stopped registering — a redeploy that dropped it, an extension that was
+   * removed — is retired by visibility instead: it leaves the `tools/list` a
+   * *new* provider process sees, while the registration stays behind to answer
+   * a call from an agent that is already running. Until the first sync there is
+   * no answer, and nothing is retired: this is a smaller promise than
+   * authorization, and it must never take tools away by not knowing yet.
+   *
+   * A stopped, crashed, or disabled extension keeps its registrations in the
+   * registry, so this does not retire its tools — they stay listed and answer
+   * `ExtensionUnavailableError`, which is the legible outcome the spike asked
+   * for.
+   */
+  readonly noteRegisteredTools: (tools: ReadonlyArray<ExtensionToolOwner>) => Effect.Effect<void>;
 }
 
 export class ExtensionMcp extends Context.Service<ExtensionMcp, ExtensionMcpShape>()(
@@ -272,6 +300,10 @@ export const make = Effect.fnUntraced(function* (
   // synchronous visibility check, which cannot run an effect. Insertion order
   // is the eviction order, so a re-answered thread is re-inserted.
   const visibleTools = new Map<ThreadId, ReadonlyMap<ExtensionName, ReadonlySet<string>>>();
+  // What the last tool sync saw the extensions registering, per extension so
+  // two extensions cannot retire each other's names. `undefined` until the
+  // first sync, which reads as "not known yet" and retires nothing.
+  let registeredTools: ReadonlyMap<ExtensionName, ReadonlySet<string>> | undefined;
 
   const rememberVisibleTools = (
     threadId: ThreadId,
@@ -301,12 +333,111 @@ export const make = Effect.fnUntraced(function* (
   return ExtensionMcp.of({
     prepareForSession,
     isToolVisible: (input) => {
+      // Retired first: a tool nobody registers any more is out of every
+      // thread's set, whatever that thread's extension said about it.
+      if (registeredTools !== undefined) {
+        const live = registeredTools.get(input.extensionName);
+        if (live === undefined || !live.has(input.toolName)) return false;
+      }
       const allowed = visibleTools.get(input.threadId)?.get(input.extensionName);
       return allowed === undefined || allowed.has(input.toolName);
     },
     installToolSync: (sync) => SynchronizedRef.set(toolSync, sync),
+    noteRegisteredTools: (tools) =>
+      Effect.sync(() => {
+        const next = new Map<ExtensionName, Set<string>>();
+        for (const tool of tools) {
+          const names = next.get(tool.extensionName) ?? new Set<string>();
+          names.add(tool.definition.name);
+          next.set(tool.extensionName, names);
+        }
+        registeredTools = next;
+      }),
   });
 });
+
+/**
+ * A stable rendering of everything about a tool that the MCP catalogue carries:
+ * who answers it, what it is called, what it says, and what it takes. Two
+ * registrations with the same fingerprint are the same catalogue entry, so
+ * re-adding one would only churn a `tools/list_changed` notification; two with
+ * different fingerprints are not, and the newer one has to replace the older.
+ *
+ * Object keys are sorted, because a redeploy that only reordered the JSON it
+ * sends has not changed the schema.
+ */
+const stableJson = (value: unknown): string => {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, entry]) => entry !== undefined)
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${stableJson(entry)}`);
+    return `{${entries.join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+};
+
+export const extensionToolFingerprint = (tool: ExtensionToolOwner): string =>
+  stableJson([
+    tool.extensionName,
+    tool.definition.name,
+    tool.definition.description,
+    tool.definition.inputSchema,
+  ]);
+
+/**
+ * The catalogue sync, over any `addTool`: read what the extensions register
+ * now, tell the gate so retirement follows, and add or re-add whatever the MCP
+ * server does not already carry in that exact shape.
+ */
+export const makeToolSync = (input: {
+  readonly addTool: McpServer.McpServer["Service"]["addTool"];
+  readonly registry: ExtensionRegistryShape;
+  readonly gate: ExtensionMcpShape;
+}): Effect.Effect<Effect.Effect<void>> => {
+  const { addTool, registry, gate } = input;
+  // Name to fingerprint, so a redeploy that rebound a name to a new
+  // description or schema is a difference and not a match. It never shrinks:
+  // a retired name's registration stays in the MCP server to answer a live
+  // agent, and if the same tool comes back unchanged there is nothing to add.
+  return SynchronizedRef.make<ReadonlyMap<string, string>>(new Map()).pipe(
+    Effect.map((registered) =>
+      Effect.gen(function* () {
+        const tools = yield* registry.listTools;
+        // Before the early return: a redeploy that only *dropped* a tool adds
+        // nothing, and retiring it is the whole of what that sync has to do.
+        yield* gate.noteRegisteredTools(tools);
+        const already = yield* SynchronizedRef.get(registered);
+        const stale = tools.filter(
+          (tool) => already.get(tool.definition.name) !== extensionToolFingerprint(tool),
+        );
+        if (stale.length === 0) return;
+        yield* Effect.forEach(
+          stale,
+          (tool) =>
+            addExtensionTool({
+              addTool,
+              registry,
+              extensionName: tool.extensionName,
+              name: tool.definition.name,
+              description: tool.definition.description,
+              inputSchema: tool.definition.inputSchema,
+              isToolVisible: gate.isToolVisible,
+            }),
+          { discard: true },
+        );
+        yield* SynchronizedRef.update(registered, (current) => {
+          const next = new Map(current);
+          for (const tool of stale) {
+            next.set(tool.definition.name, extensionToolFingerprint(tool));
+          }
+          return next;
+        });
+      }),
+    ),
+  );
+};
 
 /**
  * Builds the tool sync and hands it to the gate. Lives where `McpServer`
@@ -317,35 +448,7 @@ export const toolsLayer = Layer.effectDiscard(
     const registry = yield* ExtensionRegistry;
     const server = yield* McpServer.McpServer;
     const gate = yield* ExtensionMcp;
-    const registered = yield* SynchronizedRef.make<ReadonlySet<string>>(new Set());
-
-    const syncTools = Effect.gen(function* () {
-      const tools = yield* registry.listTools;
-      const already = yield* SynchronizedRef.get(registered);
-      const missing = tools.filter((tool) => !already.has(tool.definition.name));
-      if (missing.length === 0) return;
-      yield* Effect.forEach(
-        missing,
-        (tool) =>
-          addExtensionTool({
-            addTool: server.addTool,
-            registry,
-            extensionName: tool.extensionName,
-            name: tool.definition.name,
-            description: tool.definition.description,
-            inputSchema: tool.definition.inputSchema,
-            isToolVisible: gate.isToolVisible,
-          }),
-        { discard: true },
-      );
-      yield* SynchronizedRef.update(registered, (current) => {
-        const next = new Set(current);
-        for (const tool of missing) next.add(tool.definition.name);
-        return next;
-      });
-    });
-
-    yield* gate.installToolSync(syncTools);
+    yield* gate.installToolSync(yield* makeToolSync({ addTool: server.addTool, registry, gate }));
   }),
 );
 
