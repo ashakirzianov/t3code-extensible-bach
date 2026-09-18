@@ -14,6 +14,18 @@
  * failing import is, a second reload inside a minute is not a stale deploy, it
  * is a loop, and the error is better surfaced than papered over.
  *
+ * **What that costs, stated plainly.** Two *genuine* stale-deploy failures
+ * inside the same minute — a deploy that lands twice in quick succession, or a
+ * second route's chunk going stale just after the first reload — get one reload
+ * between them. The second lands on the route's error boundary instead, and
+ * navigating again after the minute is up recovers. That is a real narrowing of
+ * upstream's recovery path, accepted because the failure it replaces is a
+ * renderer that reloads several times a second and cannot be read or closed.
+ *
+ * The timestamp is aged out rather than removed, so the last chunk reload's
+ * time stays in sessionStorage for the rest of the session. Nothing reads it but
+ * this module, and nothing depends on it being cleared.
+ *
  * Fork-owned rather than an edit to the guard, so an uptake that rewrites
  * upstream's file does not have to reconcile this.
  */

@@ -227,6 +227,13 @@ that answers them), and `apps/web/src/lib/chunkReloadCooldown.ts` with its test 
 pair sits in an upstream directory but is a new file, deliberately, so upstream can rewrite
 `chunkReloadGuard.ts` without an uptake having to reconcile the fork's floor under it.
 
+That floor narrows upstream's recovery path by a known amount, and the next uptake should
+decide again rather than inherit it: **two genuine stale-deploy chunk failures inside the
+same minute now get one reload between them**, and the second lands on the route's error
+boundary until the minute is up. Accepted because the failure it replaces — a renderer
+reloading five times a second, unreadable and unclosable — is worse than a delayed recovery.
+If upstream ever gives its own guard a floor, drop this one.
+
 The workflow sits beside upstream's `ci.yml` rather than inside it, so an uptake never has to
 reconcile fork jobs with upstream's. Its runner, Node, and install lines are copied from
 `ci.yml` on purpose: if upstream changes how it sets up, change this file to match.
