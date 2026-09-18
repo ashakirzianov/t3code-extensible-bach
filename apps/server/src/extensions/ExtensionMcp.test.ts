@@ -529,6 +529,63 @@ describe("the catalogue after a redeploy", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("retires a tool the thread's own remembered answer still names", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeRegistry();
+        const bridge = yield* gate(registry);
+        yield* handshake(registry);
+        yield* registry.registerTools({
+          name: "bach",
+          tools: [spawnTool, reviewTool],
+          filterToolsPerThread: true,
+        });
+        const events = yield* registry.connect({ name: "bach" });
+        yield* Stream.runForEach(events, (event) =>
+          event.type === "toolsForThread"
+            ? registry.respondToolsForThread({
+                connectionId: event.connectionId,
+                requestId: event.request.requestId,
+                tools: ["spawn_agent", "review_task"],
+              })
+            : Effect.void,
+        ).pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
+        yield* registry.markSourcesResolved;
+        const captured = yield* Ref.make<
+          ReadonlyArray<{ readonly name: string; readonly description: string }>
+        >([]);
+        yield* bridge.installToolSync(
+          yield* makeToolSync({ addTool: captureAdds(captured), registry, gate: bridge }),
+        );
+
+        // The extension said this thread may see both, and that answer is
+        // remembered for the life of the session.
+        yield* bridge.prepareForSession({ threadId: invocation.threadId });
+        const visible = (toolName: string) =>
+          bridge.isToolVisible({
+            extensionName: "bach",
+            toolName,
+            threadId: invocation.threadId,
+          });
+        expect(visible("review_task")).toBe(true);
+
+        // A later sync drops it. The remembered answer still names it, so the
+        // live set has to be consulted first or the thread keeps a tool nobody
+        // registers any more.
+        yield* registry.registerTools({
+          name: "bach",
+          tools: [spawnTool],
+          filterToolsPerThread: true,
+        });
+        yield* bridge.prepareForSession({ threadId: ThreadId.make("thread-other") });
+
+        expect(visible("review_task")).toBe(false);
+        expect(visible("spawn_agent")).toBe(true);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("retires a tool the extension stopped registering, and only that one", () =>
     Effect.gen(function* () {
       const registry = yield* makeRegistry();
@@ -735,7 +792,8 @@ describe("the catalogue after a redeploy", () => {
 
         const firstThread = ThreadId.make("thread-before");
         yield* bridge.prepareForSession({ threadId: firstThread });
-        const before = yield* (yield* session(firstThread))(listed);
+        const firstSend = yield* session(firstThread);
+        const before = yield* firstSend(listed);
         expect(before).toContain("Review a task.");
         expect(before).toContain("spawn_agent");
 
@@ -755,6 +813,16 @@ describe("the catalogue after a redeploy", () => {
         // The retired tool is still refused legibly rather than silently
         // answering with a stale result.
         expect(yield* nextSend(callReview)).toContain("not found");
+
+        // And refused for the thread prepared *before* the retirement, which is
+        // the agent actually holding the name. Its remembered set was recorded
+        // while the tool was still registered — here it is the unrestricted
+        // answer, so nothing but the retirement refuses the call, and for a
+        // filtering extension it would be an answer that named the tool. Either
+        // way the live set is consulted first, which is what stops a session
+        // that predates the Deploy from keeping a tool nobody registers.
+        expect(yield* firstSend(callReview)).toContain("not found");
+        expect(yield* firstSend(listed)).not.toContain("review_task");
       }),
     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpServer.layerTest))),
   );

@@ -15,14 +15,31 @@
  *   in all three directions: a new tool is added, a tool whose description or
  *   schema moved is re-added over the old entry, and a tool the extension
  *   stopped registering is retired from what the next process is shown.
+ *
+ *   "Next" is exact, and it is the reason a Deploy can look like it did
+ *   nothing. `prepareForSession` runs once per session, at issuance, and
+ *   `awaitReady` is one-shot — so a spawn that races a Deploy syncs against
+ *   whatever the registry held at that instant, which may still be the
+ *   pre-Deploy record. The redeploy then lands for the agent after it. Nothing
+ *   re-syncs a session that is already running.
  * - **Availability is a result, not a catalogue entry.** A tool whose
  *   extension is stopped, restarting, or gone stays registered and answers
  *   `isError` with a sentence saying so. Removing it would be invisible to a
  *   live agent; an error is legible, and the spike showed agents relay it
- *   without treating it as a harness fault. Retirement is the narrower case
- *   and it is done by visibility, never by removal: the entry stays in the MCP
- *   server for the agents already holding it, and only leaves the catalogue a
- *   process that connects *next* is shown.
+ *   without treating it as a harness fault.
+ *
+ *   Retirement is the narrower case and it is done by visibility, never by
+ *   removal: the entry stays in the MCP server, and only leaves the catalogue a
+ *   process that connects *next* is shown. Be precise about what an agent that
+ *   still holds a retired name gets, because it is **not** the `isError`
+ *   sentence above: MCP consults the same visibility predicate on `tools/call`
+ *   as on `tools/list` (`mcpCore.ts`, `tools.call`), so the handler is never
+ *   reached and the answer is a JSON-RPC error — `Tool "x" not found` — rather
+ *   than a tool result. That is legible and it is honest, but it is a different
+ *   shape from an unavailable extension's, and an agent may treat it as a
+ *   harness fault rather than a fact about the world. The `ExtensionUnknownToolError`
+ *   result still exists and still reaches an agent: it covers the narrow window
+ *   between an extension dropping a tool and the next sync noticing.
  * - **At least one resource is registered before the server starts serving**,
  *   or the `resources` capability is never advertised and clients never look.
  *   The three here are registered as a layer, which is why they are static
@@ -283,6 +300,13 @@ export interface ExtensionMcpShape {
    * registry, so this does not retire its tools — they stay listed and answer
    * `ExtensionUnavailableError`, which is the legible outcome the spike asked
    * for.
+   *
+   * **The invariant this leans on**: `registerTools` replaces an extension's
+   * whole set in one write, so `listTools` is never a half-registered
+   * extension. If registration ever became two calls — a second one adding to
+   * the first — a sync landing between them would read a partial set and retire
+   * everything the second call was about to restore, and that retirement would
+   * stand until the next spawn. Any change there has to keep the write atomic.
    */
   readonly noteRegisteredTools: (tools: ReadonlyArray<ExtensionToolOwner>) => Effect.Effect<void>;
 }
