@@ -1,4 +1,5 @@
 import type {
+  ExtensionDeployTarget,
   ExtensionSettingsGroup,
   ExtensionSettingsRow,
   ExtensionStateTone,
@@ -16,7 +17,6 @@ import {
   RefreshCwIcon,
 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
-import { useNavigate } from "@tanstack/react-router";
 
 import { requestConfirmDialog } from "../../confirmDialog";
 import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
@@ -83,6 +83,25 @@ function reportOutcome(outcome: ExtensionActionOutcome): void {
   toastManager.add({ type: "error", title: outcome.title, description: outcome.description });
 }
 
+/**
+ * Deploy, from wherever it is offered.
+ *
+ * The confirmation is the gate and it is imperative, so it needs no screen of
+ * its own — which is what lets the sidebar's "new build on disk" affordance be
+ * one click rather than a trip to this screen to press the same button again.
+ */
+export function useDeployExtension(): (target: ExtensionDeployTarget) => Promise<void> {
+  const deploy = useAtomCommand(extensionEnvironment.deploy);
+  return useCallback(
+    async (target) => {
+      reportOutcome(
+        await confirmAndDeployExtension({ target, confirm: requestConfirmDialog, deploy }),
+      );
+    },
+    [deploy],
+  );
+}
+
 function ExtensionLogsPanel({ row }: { row: ExtensionSettingsRow }) {
   const [open, setOpen] = useState(false);
   // Only subscribes once opened: the tail is a per-extension query and there is
@@ -147,7 +166,7 @@ function ExtensionLogsPanel({ row }: { row: ExtensionSettingsRow }) {
 }
 
 function ExtensionCard({ row }: { row: ExtensionSettingsRow }) {
-  const deploy = useAtomCommand(extensionEnvironment.deploy);
+  const deployExtension = useDeployExtension();
   const setEnabled = useAtomCommand(extensionEnvironment.setEnabled);
   const toggle = extensionToggleAction(row);
 
@@ -164,8 +183,8 @@ function ExtensionCard({ row }: { row: ExtensionSettingsRow }) {
   const [editingPath, setEditingPath] = useState(false);
 
   const handleDeploy = useCallback(async () => {
-    reportOutcome(await confirmAndDeployExtension({ row, confirm: requestConfirmDialog, deploy }));
-  }, [deploy, row]);
+    await deployExtension(row);
+  }, [deployExtension, row]);
 
   const handleToggle = useCallback(async () => {
     reportOutcome(
@@ -591,22 +610,5 @@ export function ExtensionsSettingsPanel() {
         ))
       )}
     </SettingsPageContainer>
-  );
-}
-
-/** Where the sidebar's redeploy affordance sends someone. */
-export function useNavigateToExtensionSettings(): (input: {
-  readonly environmentId: string;
-  readonly name: string;
-}) => void {
-  const navigate = useNavigate();
-  return useCallback(
-    (input) => {
-      void navigate({
-        to: "/settings/extensions",
-        hash: `extension-${input.environmentId}-${input.name}`,
-      });
-    },
-    [navigate],
   );
 }

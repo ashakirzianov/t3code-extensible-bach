@@ -1,4 +1,8 @@
-import type { ExtensionSettingsRow } from "@t3tools/client-runtime/extensions";
+import {
+  extensionDeployConfirmation,
+  type ExtensionDeployTarget,
+  type ExtensionSettingsRow,
+} from "@t3tools/client-runtime/extensions";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
@@ -48,11 +52,11 @@ const recorder = () => {
   };
 };
 
-describe("deploying an extension from Settings", () => {
+describe("deploying an extension", () => {
   it("dispatches only after the confirmation is accepted", async () => {
     const deploy = recorder();
     const outcome = await confirmAndDeployExtension({
-      row: row(),
+      target: row(),
       confirm: () => Promise.resolve(true),
       deploy: deploy.of(succeeded),
     });
@@ -64,7 +68,7 @@ describe("deploying an extension from Settings", () => {
   it("does not dispatch when the confirmation is declined", async () => {
     const deploy = recorder();
     const outcome = await confirmAndDeployExtension({
-      row: row(),
+      target: row(),
       confirm: () => Promise.resolve(false),
       deploy: deploy.of(succeeded),
     });
@@ -76,7 +80,7 @@ describe("deploying an extension from Settings", () => {
   it("treats a host with no confirmation dialog as a decline, never as consent", async () => {
     const deploy = recorder();
     const outcome = await confirmAndDeployExtension({
-      row: row(),
+      target: row(),
       confirm: () => undefined,
       deploy: deploy.of(succeeded),
     });
@@ -87,7 +91,7 @@ describe("deploying an extension from Settings", () => {
 
   it("names the extension and the reason when the deploy fails", async () => {
     const outcome = await confirmAndDeployExtension({
-      row: row(),
+      target: row(),
       confirm: () => Promise.resolve(true),
       deploy: recorder().of(failed),
     });
@@ -101,12 +105,32 @@ describe("deploying an extension from Settings", () => {
 
   it("stays quiet when a newer command interrupted this one", async () => {
     const outcome = await confirmAndDeployExtension({
-      row: row(),
+      target: row(),
       confirm: () => Promise.resolve(true),
       deploy: recorder().of(interrupted),
     });
 
     expect(outcome).toEqual({ status: "cancelled" });
+  });
+
+  // The sidebar's "new build on disk" button has a nav entry, not a settings
+  // row, and deploying from it must be the same one call behind the same
+  // confirmation rather than a trip to Settings to press Redeploy again.
+  it("takes a sidebar nav entry as its target, not only a settings row", async () => {
+    const deploy = recorder();
+    let asked: string | null = null;
+    const outcome = await confirmAndDeployExtension({
+      target: { environmentId: "env-1", name: "bach" } as ExtensionDeployTarget,
+      confirm: (message) => {
+        asked = message;
+        return Promise.resolve(true);
+      },
+      deploy: deploy.of(succeeded),
+    });
+
+    expect(asked).toBe(extensionDeployConfirmation(row()));
+    expect(outcome).toEqual({ status: "done" });
+    expect(deploy.calls).toEqual([{ environmentId: "env-1", input: { name: "bach" } }]);
   });
 });
 

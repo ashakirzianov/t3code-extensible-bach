@@ -7,7 +7,7 @@ import * as Option from "effect/Option";
 import { AsyncResult } from "effect/unstable/reactivity";
 
 import { cn } from "../lib/utils";
-import { useNavigateToExtensionSettings } from "../components/settings/ExtensionsSettings";
+import { useDeployExtension } from "../components/settings/ExtensionsSettings";
 import { extensionEnvironment, useExtensionNavEntries } from "../state/extensions";
 import { useEnvironmentHttpBaseUrl } from "../state/environments";
 import { Button } from "../components/ui/button";
@@ -64,7 +64,7 @@ function useExtensionIconUrl(entry: ExtensionNavEntry): string | null {
 function ExtensionSidebarRow({ entry }: { entry: ExtensionNavEntry }) {
   const navigate = useNavigate();
   const { isMobile, setOpenMobile } = useSidebar();
-  const openSettings = useNavigateToExtensionSettings();
+  const deployExtension = useDeployExtension();
   const isActive = useLocation({
     select: (location) => location.pathname.startsWith(`/ext/${entry.environmentId}/${entry.name}`),
   });
@@ -79,13 +79,13 @@ function ExtensionSidebarRow({ entry }: { entry: ExtensionNavEntry }) {
     });
   }, [entry.environmentId, entry.name, isMobile, navigate, setOpenMobile]);
 
-  // Deploy is a human click, and it belongs where the version, the path and the
-  // logs are — so this affordance takes you there rather than being a second
-  // implementation of the confirmation.
+  // Deploy is a human click and the confirmation is the gate, so the row asks
+  // it here rather than sending someone to Settings to press the same button
+  // again. It is the screen's own `useDeployExtension`, not a second
+  // implementation — same confirmation, same command, same failure toast.
   const handleRedeploy = useCallback(() => {
-    if (isMobile) setOpenMobile(false);
-    openSettings({ environmentId: entry.environmentId, name: entry.name });
-  }, [entry.environmentId, entry.name, isMobile, openSettings, setOpenMobile]);
+    void deployExtension({ environmentId: entry.environmentId, name: entry.name });
+  }, [deployExtension, entry.environmentId, entry.name]);
 
   return (
     <SidebarMenuItem className="relative">
@@ -132,7 +132,7 @@ function ExtensionSidebarRow({ entry }: { entry: ExtensionNavEntry }) {
           <TooltipTrigger
             render={
               <Button
-                aria-label={`A new build of ${entry.label} is on disk`}
+                aria-label={`Deploy the new build of ${entry.label}`}
                 className="absolute top-1/2 right-1 size-5 -translate-y-1/2"
                 onClick={handleRedeploy}
                 size="icon-xs"
@@ -142,7 +142,7 @@ function ExtensionSidebarRow({ entry }: { entry: ExtensionNavEntry }) {
           >
             <RefreshCwIcon className="size-3" />
           </TooltipTrigger>
-          <TooltipPopup side="right">A new build is on disk. Deploy it in Settings.</TooltipPopup>
+          <TooltipPopup side="right">A new build is on disk. Deploy it.</TooltipPopup>
         </Tooltip>
       ) : null}
     </SidebarMenuItem>

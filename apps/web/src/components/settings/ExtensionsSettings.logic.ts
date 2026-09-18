@@ -2,6 +2,7 @@ import {
   extensionChangePathConfirmation,
   extensionDeployConfirmation,
   extensionRemoveConfirmation,
+  type ExtensionDeployTarget,
   type ExtensionSettingsRow,
 } from "@t3tools/client-runtime/extensions";
 import { getFilesystemBrowsePath } from "@t3tools/client-runtime/state/filesystem";
@@ -53,24 +54,25 @@ const settle = <A, E>(
  * not silently deploy, so an absent one counts as declined.
  */
 export async function confirmAndDeployExtension(input: {
-  readonly row: ExtensionSettingsRow;
+  /** A Settings row or a sidebar nav entry: Deploy only needs the two names. */
+  readonly target: ExtensionDeployTarget;
   readonly confirm: ConfirmFn;
   readonly deploy: (input: {
-    readonly environmentId: ExtensionSettingsRow["environmentId"];
+    readonly environmentId: ExtensionDeployTarget["environmentId"];
     readonly input: { readonly name: string };
   }) => Promise<AtomCommandResult<unknown, unknown>>;
 }): Promise<ExtensionActionOutcome> {
-  const confirmation = input.confirm(extensionDeployConfirmation(input.row));
+  const confirmation = input.confirm(extensionDeployConfirmation(input.target));
   if (confirmation === undefined) return { status: "cancelled" };
   if (!(await confirmation)) return { status: "cancelled" };
   const result = await input.deploy({
-    environmentId: input.row.environmentId,
-    input: { name: input.row.name },
+    environmentId: input.target.environmentId,
+    input: { name: input.target.name },
   });
   return settle(
     result,
-    `Could not deploy ${input.row.name}`,
-    `Deploying ${input.row.name} failed.`,
+    `Could not deploy ${input.target.name}`,
+    `Deploying ${input.target.name} failed.`,
   );
 }
 
