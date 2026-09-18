@@ -4,6 +4,7 @@ import {
   type ExtensionNavEntry,
 } from "@t3tools/client-runtime/extensions";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import * as Option from "effect/Option";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 
@@ -18,8 +19,9 @@ import {
   useExtensionHttpPrefixes,
   useExtensionNavEntry,
 } from "../state/extensions";
+import { usePreparedConnection } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
-import { canLoadExtensionBundle } from "./bundleOrigin";
+import { rebaseExtensionAssetUrls, resolveExtensionBundleAccess } from "./bundleOrigin";
 import { createExtensionHostApi } from "./hostApi";
 import { ExtensionLoadError, mountExtension, type ExtensionMountHandle } from "./loader";
 
@@ -53,34 +55,39 @@ export function ExtensionHostView({
   const navigate = useNavigate();
   const assetUrls = useAtomCommand(extensionEnvironment.assetUrls);
   const containerRef = useRef<HTMLDivElement | null>(null);
-  // Read by the host API and the mount effect at call time. Keeping them out of
-  // the effect's dependencies is what stops an environment reconnect, or a
-  // navigation inside the extension, from remounting the whole tree.
-  const liveRef = useRef({ environments, prefixByEnvironment, subPath });
-  // Declared before the mount effect so it has already run by the time that one
-  // reads the ref, and unconditional so every render refreshes it.
-  useEffect(() => {
-    liveRef.current = { environments, prefixByEnvironment, subPath };
-  });
-  const handleRef = useRef<ExtensionMountHandle | null>(null);
-  const [load, setLoad] = useState<LoadState>({ status: "idle" });
-
   const httpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const prepared = usePreparedConnection(environmentId);
   // Cross-origin bundles cannot execute under the desktop CSP and there is no
-  // fetch-then-evaluate escape hatch, so a remote environment's extension is
-  // not loadable from here yet. Proxying it through the client's own backend is
-  // the follow-up; until then the route says so rather than failing obscurely.
-  // The desktop renderer is the case a bare origin comparison gets wrong — see
-  // `canLoadExtensionBundle`.
-  const loadable = canLoadExtensionBundle({
+  // fetch-then-evaluate escape hatch, so the minted paths have to arrive on the
+  // page's own origin: directly for a same-origin environment and for the
+  // desktop's primary, and through the desktop's own backend for one it reached
+  // over SSH. A client with no backend of its own still cannot mount a remote
+  // environment's bundle, and the route says so rather than failing obscurely.
+  // See `resolveExtensionBundleAccess`.
+  const access = resolveExtensionBundleAccess({
     httpBaseUrl,
     rendererHref: window.location.href,
     rendererOrigin: window.location.origin,
     isDesktopRenderer: window.desktopBridge !== undefined,
+    isSshEnvironment:
+      Option.isSome(prepared) && prepared.value.target._tag === "SshConnectionTarget",
     environmentId,
     primaryEnvironmentId,
   });
+  const loadable = access.kind !== "unavailable";
+
+  // Read by the host API and the mount effect at call time. Keeping them out of
+  // the effect's dependencies is what stops an environment reconnect, or a
+  // navigation inside the extension, from remounting the whole tree.
+  const liveRef = useRef({ environments, prefixByEnvironment, subPath, access });
+  // Declared before the mount effect so it has already run by the time that one
+  // reads the ref, and unconditional so every render refreshes it.
+  useEffect(() => {
+    liveRef.current = { environments, prefixByEnvironment, subPath, access };
+  });
+  const handleRef = useRef<ExtensionMountHandle | null>(null);
+  const [load, setLoad] = useState<LoadState>({ status: "idle" });
 
   const navigateToThread = useCallback(
     (threadId: ThreadId, targetEnvironmentId: EnvironmentId) => {
@@ -127,7 +134,10 @@ export function ExtensionHostView({
             document: window.document,
           },
           extensionName: name,
-          assets: result.value,
+          // The environment minted these against its own origin. A remote one's
+          // are re-based onto the path this client's own backend serves them
+          // from; a local one's are unchanged.
+          assets: rebaseExtensionAssetUrls(liveRef.current.access, result.value),
           container,
           hostApi: createExtensionHostApi({
             extensionName: name,

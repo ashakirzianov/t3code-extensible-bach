@@ -32,6 +32,7 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
+import * as RemoteExtensionAssets from "../../extensions/RemoteExtensionAssets.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import * as DesktopSshEnvironment from "../../ssh/DesktopSshEnvironment.ts";
@@ -136,7 +137,7 @@ export const ensureSshEnvironment = DesktopIpc.makeIpcMethod({
     options,
   }) {
     const sshEnvironment = yield* DesktopSshEnvironment.DesktopSshEnvironment;
-    return yield* sshEnvironment.ensureEnvironment(target, options).pipe(
+    const result = yield* sshEnvironment.ensureEnvironment(target, options).pipe(
       Effect.catch((error) =>
         DesktopSshEnvironment.isDesktopSshPasswordPromptCancellation(error)
           ? Effect.succeed({
@@ -146,6 +147,16 @@ export const ensureSshEnvironment = DesktopIpc.makeIpcMethod({
           : Effect.fail(error),
       ),
     );
+    // The forwarded port this process just opened is the one thing that makes
+    // this environment's extension assets serveable from the renderer's own
+    // origin. Remembering it here is what keeps that proxy an allow-list.
+    if ("httpBaseUrl" in result) {
+      RemoteExtensionAssets.rememberRemoteEnvironment(
+        RemoteExtensionAssets.remoteEnvironmentKey(target),
+        result.httpBaseUrl,
+      );
+    }
+    return result;
   }),
 });
 
@@ -156,6 +167,10 @@ export const disconnectSshEnvironment = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.sshEnvironment.disconnectEnvironment")(function* (target) {
     const sshEnvironment = yield* DesktopSshEnvironment.DesktopSshEnvironment;
     yield* sshEnvironment.disconnectEnvironment(target);
+    // The port is gone; it must stop being proxyable with it.
+    RemoteExtensionAssets.forgetRemoteEnvironment(
+      RemoteExtensionAssets.remoteEnvironmentKey(target),
+    );
   }),
 });
 

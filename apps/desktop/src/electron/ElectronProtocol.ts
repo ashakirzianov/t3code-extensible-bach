@@ -11,6 +11,8 @@ import * as Scope from "effect/Scope";
 
 import * as Electron from "electron";
 
+import * as RemoteExtensionAssets from "../extensions/RemoteExtensionAssets.ts";
+
 export const DESKTOP_HOST = "app";
 const DESKTOP_PRODUCTION_SCHEME = "t3code";
 const DESKTOP_DEVELOPMENT_SCHEME = "t3code-dev";
@@ -145,6 +147,33 @@ const registerDesktopSchemePrivileges = Effect.sync(registerDesktopSchemePrivile
 
 export const layerSchemePrivileges = Layer.effectDiscard(registerDesktopSchemePrivileges);
 
+/**
+ * A remote environment's extension asset, fetched from the forwarded port this
+ * process opened and returned under the renderer's own origin — the only way a
+ * bundle that does not live here can be `import()`ed under `script-src 'self'`.
+ * See `../extensions/RemoteExtensionAssets.ts` for why this is not a relay.
+ *
+ * Runs before either serving mode, so it works the same whether the renderer is
+ * the packaged client on disk or a dev server.
+ */
+async function proxyRemoteExtensionAsset(
+  request: Request,
+  contentSecurityPolicy: string,
+): Promise<Response> {
+  const requestUrl = new URL(request.url);
+  const target =
+    requestUrl.host === DESKTOP_HOST
+      ? RemoteExtensionAssets.resolveRemoteExtensionAsset({
+          method: request.method,
+          pathname: requestUrl.pathname,
+        })
+      : null;
+  if (target === null)
+    return withContentSecurityPolicy(new Response(null, { status: 404 }), contentSecurityPolicy);
+  const response = await fetchWithTransientRetry(target, { method: request.method });
+  return withContentSecurityPolicy(response, contentSecurityPolicy);
+}
+
 async function proxyRequest(
   request: Request,
   targetOrigin: URL,
@@ -265,6 +294,11 @@ export const make = Effect.gen(function* () {
         Effect.try({
           try: () => {
             Electron.protocol.handle(input.scheme, async (request) => {
+              if (
+                RemoteExtensionAssets.isRemoteExtensionAssetRoute(new URL(request.url).pathname)
+              ) {
+                return proxyRemoteExtensionAsset(request, contentSecurityPolicy);
+              }
               if ("assetDirectory" in input) {
                 return withContentSecurityPolicy(
                   await runPromise(serveDesktopAsset(request, input.assetDirectory)),

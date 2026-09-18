@@ -31,11 +31,13 @@ export class ExtensionFetchError extends Error {
  * this maps the two credential shapes an extension can ever see, and refuses
  * the third loudly.
  *
- * A DPoP credential means a relay connection, which is cross-origin, and a
- * cross-origin environment cannot load an extension bundle at all under the
- * desktop CSP — so no mount that could reach this exists. Signing a proof here
- * would be dead code guessing at a case that cannot occur; failing is the
- * outcome we want if that ever stops being true, over a silent 401.
+ * A DPoP credential means a relay connection, whose HTTP base is somebody
+ * else's machine: no client has a backend that may proxy its bundle, so a relay
+ * environment's extension cannot be mounted and no mount that could reach this
+ * exists. (A desktop client's SSH environment can be — its base is a forwarded
+ * loopback port and its credential is a bearer, which this handles.) Signing a
+ * proof here would be dead code guessing at a case that cannot occur; failing is
+ * the outcome we want if that ever stops being true, over a silent 401.
  */
 const extensionAuthHeaders = (
   authorization: PreparedHttpAuthorization | null,

@@ -7,6 +7,10 @@
       "types": "./src/fatalStartup.ts",
       "import": "./src/fatalStartup.ts"
     },
+    "./extensionRemoteAssets": {
+      "types": "./src/extensionRemoteAssets.ts",
+      "import": "./src/extensionRemoteAssets.ts"
+    },
     "./forkIdentity": {
       "types": "./src/forkIdentity.ts",
       "import": "./src/forkIdentity.ts"

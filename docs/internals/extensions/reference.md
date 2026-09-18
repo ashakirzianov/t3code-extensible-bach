@@ -345,12 +345,28 @@ which the browser requires before it will execute it at all.
 
 Every failure — forged, expired, wrong extension, missing file, traversal — answers 404. Distinguishing them only helps a prober.
 
-**Not yet: an extension on a remote environment.** The desktop renderer's
-`script-src 'self'` means a bundle can only execute from the host's own origin, and
-the fetch-then-`blob:` escape is blocked too ([spike](docs/internals/extensions/spikes/electron-runtime.md)). A
-bundle belonging to a remote environment therefore has to be proxied through the local
-backend before it can be mounted. That proxying is a follow-up; today these routes
-serve the environment the server itself is.
+**An extension on a remote environment.** The desktop renderer's `script-src 'self'`
+means a bundle can only execute from the page's own origin, and the fetch-then-`blob:`
+escape is blocked too ([spike](docs/internals/extensions/spikes/electron-runtime.md)). These routes serve the
+environment the server itself is, so a bundle belonging to another one has to arrive on
+the client's origin some other way — and that is the client's own backend, not the
+server's: an environment list is client state, and a T3 server knows nothing about the
+other environments its client is connected to.
+
+The desktop app is the client that has a backend: its Electron main process, which is
+also the party that opened the SSH tunnel. So for an environment it reached over SSH —
+whose HTTP base is a forwarded loopback port — main serves the asset route under the
+renderer's own origin at `/__ext-remote/<forwarded port>/ext-assets/…` and forwards to
+that port. Only `/ext-assets` travels, only `GET` and `HEAD`, only a port this process
+opened and has not closed, and no header from the renderer goes with it: the signed
+token in the path is the whole credential, so the proxy carries none of its own. The
+minted path is re-based and never rewritten, so a Deploy's new token is still a URL the
+browser and the module registry have never seen, and a code-split chunk imported
+relatively resolves back through the same prefix.
+
+Everything else is still refused: a relay or LAN environment (somebody else's machine,
+not a port this app opened), and any client with no backend of its own — a browser at
+app.t3.codes or one served by a T3 server. Those still see the message.
 
 ## Web host
 
@@ -373,9 +389,10 @@ Mounting is `extensions.admin.assetUrls` followed by a same-origin dynamic `impo
 what it minted — the only strategy that executes under the desktop CSP, as the section
 above explains. The client links the stylesheet first so the extension's first frame is
 already styled, imports the module, and calls `mount` with a container it owns; on the way
-out it calls `unmount` and removes the link. An extension on a remote environment cannot be
-mounted for the same reason its bundle cannot be served from here yet, so the route says so
-instead of failing quietly.
+out it calls `unmount` and removes the link. On the desktop, an extension on an environment
+reached over SSH is mounted the same way, from the minted paths re-based onto the asset
+proxy above; an environment no backend of this client's can reach cannot be mounted at all,
+and the route says so instead of failing quietly.
 
 The host API a mounted bundle is handed is five things and no more: `mount`, `unmount`, the
 list of connected environments, an authenticated `fetch` scoped to one of them, and

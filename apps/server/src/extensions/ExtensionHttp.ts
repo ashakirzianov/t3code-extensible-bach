@@ -24,10 +24,13 @@ import {
   type ExtensionName,
   type ExtensionWebEntry,
 } from "@t3tools/contracts";
+import { EXTENSION_ASSET_ROUTE_PREFIX } from "@t3tools/shared/extensionRemoteAssets";
 
 // The string lives in contracts, where the client builds the same paths from it.
 export const EXT_API_ROUTE_PREFIX = EXTENSION_HTTP_ROUTE_PREFIX;
-export const EXT_ASSETS_ROUTE_PREFIX = "/ext-assets";
+// Likewise shared: a desktop client re-bases this prefix onto its own origin to
+// serve a remote environment's assets, and the two must name the same route.
+export const EXT_ASSETS_ROUTE_PREFIX = EXTENSION_ASSET_ROUTE_PREFIX;
 
 /**
  * Headers the host owns and must not forward.
