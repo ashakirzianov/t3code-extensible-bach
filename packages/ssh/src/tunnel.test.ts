@@ -490,6 +490,86 @@ describe("ssh tunnel scripts", () => {
     }).pipe(Effect.provide(processLayer));
   });
 
+  /*
+   * The desktop answers for a forwarded port under its own origin — it serves
+   * that environment's extension assets there — so the window in which a port
+   * is "ours" has to be exact at both ends. A port that stays claimed after the
+   * tunnel is gone is one an unrelated local service may bind next.
+   */
+  it.effect.each([
+    "a disconnect whose remote stop fails",
+    "an ssh process that dies on its own",
+  ] as const)("tells an observer the tunnel closed after %s", (ending) => {
+    const events: Array<{ readonly event: string; readonly localPort: number }> = [];
+    let signalClosed: (() => void) | null = null;
+    const closed = new Promise<void>((resolve) => {
+      signalClosed = resolve;
+    });
+    let tunnelHandle: ChildProcessSpawner.ChildProcessHandle | null = null;
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.sync(() => {
+        const args = commandArgs(command);
+        if (args.includes("-N")) {
+          // Kept so the test can end the process behind the manager's back,
+          // which is what a dropped network or a reaped ssh looks like here.
+          tunnelHandle = makeRunningProcess(() => undefined);
+          return tunnelHandle;
+        }
+        if (args.includes("sh") && args.includes("--")) {
+          return makeSuccessfulProcess('{"remotePort":3773}\n');
+        }
+        if (args.includes("sh") && ending === "a disconnect whose remote stop fails") {
+          return {
+            ...makeSuccessfulProcess(""),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+            stderr: Stream.make(
+              new TextEncoder().encode("Remote T3 server did not stop within 2 seconds.\n"),
+            ),
+          };
+        }
+        return makeSuccessfulProcess('{"stopped":true}\n');
+      }),
+    );
+    const layer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Layer.succeed(HttpClient.HttpClient, testHttpClient),
+      Layer.succeed(NetService.NetService, testNetService),
+      SshPasswordPrompt.disabledLayer,
+      SshEnvironmentManager.layer({
+        resolveCliRunner: Effect.succeed(ARCHIVE),
+        onTunnel: {
+          opened: ({ localPort }) => events.push({ event: "opened", localPort }),
+          closed: ({ localPort }) => {
+            events.push({ event: "closed", localPort });
+            signalClosed?.();
+          },
+        },
+      }),
+    );
+    const target = { alias: "devbox", hostname: "devbox", username: null, port: null } as const;
+
+    return Effect.gen(function* () {
+      const manager = yield* SshEnvironmentManager;
+      const bootstrap = yield* manager.ensureEnvironment(target);
+      assert.deepEqual(events, [{ event: "opened", localPort: 41773 }]);
+      assert.equal(bootstrap.httpBaseUrl, "http://127.0.0.1:41773/");
+
+      if (ending === "an ssh process that dies on its own") {
+        assert.isNotNull(tunnelHandle);
+        yield* tunnelHandle.kill();
+        yield* Effect.promise(() => closed);
+      } else {
+        // The remote stop fails, so the disconnect fails — and the port must
+        // already have been given up before that failure reached the caller.
+        const disconnected = yield* Effect.result(manager.disconnectEnvironment(target));
+        assert.isTrue(Result.isFailure(disconnected));
+      }
+
+      assert.deepEqual(events.at(-1), { event: "closed", localPort: 41773 });
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
   it.effect.each(["successful stop", "failed stop"] as const)(
     "closes the tunnel scope and starts fresh after a %s",
     (mode) => {

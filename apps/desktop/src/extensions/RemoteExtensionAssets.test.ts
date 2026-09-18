@@ -5,12 +5,10 @@ import {
   forgetRemoteEnvironment,
   isRemoteExtensionAssetRoute,
   rememberRemoteEnvironment,
-  remoteEnvironmentKey,
+  remoteExtensionAssetRequestInit,
   resolveRemoteExtensionAsset,
 } from "./RemoteExtensionAssets.ts";
 
-const target = { alias: "box", hostname: "box.local", username: "anton", port: null };
-const key = remoteEnvironmentKey(target);
 const forwarded = "http://127.0.0.1:54321/";
 const assetPath = "/ext-assets/eyJhIjoxfQ.sig/bach/entry.js";
 
@@ -20,7 +18,7 @@ describe("the remote extension asset proxy", () => {
   });
 
   it("forwards an asset request to the port this process opened", () => {
-    rememberRemoteEnvironment(key, forwarded);
+    rememberRemoteEnvironment(forwarded);
     expect(
       resolveRemoteExtensionAsset({
         method: "GET",
@@ -35,23 +33,59 @@ describe("the remote extension asset proxy", () => {
     ).toBeNull();
   });
 
-  it("refuses a port whose tunnel has been disconnected", () => {
-    rememberRemoteEnvironment(key, forwarded);
-    forgetRemoteEnvironment(key);
+  it("refuses a port whose tunnel has gone, however it went", () => {
+    // The tunnel manager raises `closed` for an explicit disconnect, for a
+    // teardown that then failed part-way, and for an ssh process that died on
+    // its own. All three arrive here as the same call, and a port some other
+    // local service may bind next must not be proxyable.
+    rememberRemoteEnvironment(forwarded);
+    forgetRemoteEnvironment(forwarded);
     expect(
       resolveRemoteExtensionAsset({ method: "GET", pathname: `/__ext-remote/54321${assetPath}` }),
     ).toBeNull();
   });
 
+  it("takes a repeated close, which is what a death and a teardown both raising looks like", () => {
+    rememberRemoteEnvironment(forwarded);
+    forgetRemoteEnvironment(forwarded);
+    forgetRemoteEnvironment(forwarded);
+    expect(
+      resolveRemoteExtensionAsset({ method: "GET", pathname: `/__ext-remote/54321${assetPath}` }),
+    ).toBeNull();
+  });
+
+  it("forgets the port even when the same port is later opened again", () => {
+    rememberRemoteEnvironment(forwarded);
+    forgetRemoteEnvironment(forwarded);
+    rememberRemoteEnvironment(forwarded);
+    expect(
+      resolveRemoteExtensionAsset({ method: "GET", pathname: `/__ext-remote/54321${assetPath}` }),
+    ).not.toBeNull();
+  });
+
+  it("forwards with no credential and no redirect of the far side's choosing", () => {
+    const init = remoteExtensionAssetRequestInit("GET");
+    // A followed 30x would end "a port, never a URL" at the far side's first
+    // redirect, and whatever answered would come back as script under this
+    // app's own origin.
+    expect(init.redirect).toBe("error");
+    // The signed token in the path is the whole credential; nothing of the
+    // app's session may ride along, and a remote 401 must not become the app's
+    // own login event.
+    expect(init.credentials).toBe("omit");
+    expect(init.headers).toBeUndefined();
+    expect(remoteExtensionAssetRequestInit("HEAD").method).toBe("HEAD");
+  });
+
   it("never remembers a base that is not loopback", () => {
-    rememberRemoteEnvironment(key, "http://192.168.1.20:54321/");
+    rememberRemoteEnvironment("http://192.168.1.20:54321/");
     expect(
       resolveRemoteExtensionAsset({ method: "GET", pathname: `/__ext-remote/54321${assetPath}` }),
     ).toBeNull();
   });
 
   it("carries only the asset route, never the environment's own API", () => {
-    rememberRemoteEnvironment(key, forwarded);
+    rememberRemoteEnvironment(forwarded);
     for (const pathname of [
       "/__ext-remote/54321/api/environment",
       "/__ext-remote/54321/ext-api/env-1/bach/agents",
@@ -63,7 +97,7 @@ describe("the remote extension asset proxy", () => {
   });
 
   it("refuses a traversal out of the asset route, encoded or not", () => {
-    rememberRemoteEnvironment(key, forwarded);
+    rememberRemoteEnvironment(forwarded);
     for (const pathname of [
       "/__ext-remote/54321/ext-assets/../api/environment",
       "/__ext-remote/54321/ext-assets/%2e%2e/api/environment",
@@ -74,7 +108,7 @@ describe("the remote extension asset proxy", () => {
   });
 
   it("refuses a port that is not a port", () => {
-    rememberRemoteEnvironment(key, forwarded);
+    rememberRemoteEnvironment(forwarded);
     for (const pathname of [
       `/__ext-remote/0${assetPath}`,
       `/__ext-remote/99999${assetPath}`,
@@ -86,7 +120,7 @@ describe("the remote extension asset proxy", () => {
   });
 
   it("answers GET and HEAD and nothing else: an asset is read, never written", () => {
-    rememberRemoteEnvironment(key, forwarded);
+    rememberRemoteEnvironment(forwarded);
     const pathname = `/__ext-remote/54321${assetPath}`;
     expect(resolveRemoteExtensionAsset({ method: "HEAD", pathname })).not.toBeNull();
     for (const method of ["POST", "PUT", "DELETE", "OPTIONS"]) {
@@ -102,13 +136,12 @@ describe("the remote extension asset proxy", () => {
   });
 
   it("keeps two open environments apart", () => {
-    const other = { ...target, alias: "other", hostname: "other.local" };
-    rememberRemoteEnvironment(key, forwarded);
-    rememberRemoteEnvironment(remoteEnvironmentKey(other), "http://127.0.0.1:54322/");
+    rememberRemoteEnvironment(forwarded);
+    rememberRemoteEnvironment("http://127.0.0.1:54322/");
     expect(
       resolveRemoteExtensionAsset({ method: "GET", pathname: `/__ext-remote/54322${assetPath}` }),
     ).toBe(`http://127.0.0.1:54322${assetPath}`);
-    forgetRemoteEnvironment(remoteEnvironmentKey(other));
+    forgetRemoteEnvironment("http://127.0.0.1:54322/");
     expect(
       resolveRemoteExtensionAsset({ method: "GET", pathname: `/__ext-remote/54321${assetPath}` }),
     ).not.toBeNull();

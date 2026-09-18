@@ -85,8 +85,25 @@ export interface RemoteT3RunnerOptions {
   readonly releaseBaseUrl?: string | null;
 }
 
+/**
+ * Told whenever a forwarded port starts or stops carrying an environment.
+ *
+ * A caller that answers for a forwarded port — the desktop's extension asset
+ * proxy does — cannot infer this from `ensureEnvironment` and
+ * `disconnectEnvironment` alone: a tunnel also ends when the ssh process dies
+ * on its own, when a stale one is replaced, and when the app shuts down. The
+ * manager is the only party that sees all four, so it says so. `closed` is
+ * raised before the tunnel is torn down, so a teardown that fails part-way
+ * still leaves the port forgotten.
+ */
+export interface SshTunnelObserver {
+  readonly opened: (input: { readonly httpBaseUrl: string; readonly localPort: number }) => void;
+  readonly closed: (input: { readonly httpBaseUrl: string; readonly localPort: number }) => void;
+}
+
 export interface SshEnvironmentManagerOptions {
   readonly resolveCliRunner?: Effect.Effect<RemoteT3RunnerOptions>;
+  readonly onTunnel?: SshTunnelObserver;
 }
 
 interface SshTunnelEntry {
@@ -1335,6 +1352,13 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
   const targetLocks = new Map<string, Semaphore.Semaphore>();
   const authSecrets = new Map<string, string>();
 
+  // Idempotent by construction: `closed` can arrive from the process watcher
+  // and from the finalizer for the same tunnel, and an observer must be able to
+  // treat both as "this port is no longer mine".
+  const notifyTunnel = (event: "opened" | "closed", entry: SshTunnelEntry) => {
+    options.onTunnel?.[event]({ httpBaseUrl: entry.httpBaseUrl, localPort: entry.localPort });
+  };
+
   // Keep one lock per target so reconnect cannot reuse a server while stop is pending.
   const withTargetLock = Effect.fn("ssh/tunnel.withTargetLock")(function* <A, E, R>(
     key: string,
@@ -1540,12 +1564,31 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       ),
     );
     tunnels.set(input.key, tunnelEntry);
+    notifyTunnel("opened", tunnelEntry);
+    // The ssh process can die without anyone asking it to — a dropped network,
+    // a killed parent, a remote that went away. Nothing else notices until the
+    // next `ensureEnvironment` probes readiness, which is far too late for an
+    // observer that answers for the port in the meantime.
+    yield* Effect.forkIn(
+      tunnelEntry.process.exitCode.pipe(
+        Effect.ignore,
+        Effect.andThen(Effect.sync(() => notifyTunnel("closed", tunnelEntry))),
+      ),
+      entryScope,
+      // Immediately: a watcher that only starts at the next yield can miss a
+      // process that exited in between, and then the port stays claimed for as
+      // long as the entry lives.
+      { startImmediately: true },
+    );
     const spawnerService = yield* ChildProcessSpawner.ChildProcessSpawner;
     const fileSystemService = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
     yield* Scope.addFinalizer(
       entryScope,
       Effect.gen(function* () {
+        // Before the kill, and before anything that can fail: whatever else
+        // this teardown manages, the port stops being one anyone answers for.
+        notifyTunnel("closed", tunnelEntry);
         const stopRemote = tunnels.get(tunnelEntry.key) === tunnelEntry;
         if (stopRemote) {
           tunnels.delete(tunnelEntry.key);

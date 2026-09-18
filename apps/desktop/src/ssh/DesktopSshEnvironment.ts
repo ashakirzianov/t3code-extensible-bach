@@ -25,6 +25,7 @@ import * as Path from "effect/Path";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
+import * as RemoteExtensionAssets from "../extensions/RemoteExtensionAssets.ts";
 import * as DesktopSshPasswordPrompts from "./DesktopSshPasswordPrompts.ts";
 
 export type DesktopSshEnvironmentRuntimeServices =
@@ -164,13 +165,24 @@ export const make = Effect.gen(function* () {
   });
 });
 
+/**
+ * The desktop answers for a forwarded port under its own origin — it serves
+ * that environment's extension assets there — so it has to know exactly how
+ * long each port is its own, including the ends nobody asked for.
+ */
+const tunnelObserver: SshTunnel.SshTunnelObserver = {
+  opened: ({ httpBaseUrl }) => RemoteExtensionAssets.rememberRemoteEnvironment(httpBaseUrl),
+  closed: ({ httpBaseUrl }) => RemoteExtensionAssets.forgetRemoteEnvironment(httpBaseUrl),
+};
+
 export const layer = (options: DesktopSshEnvironmentLayerOptions = {}) =>
   Layer.effect(DesktopSshEnvironment, make).pipe(
     Layer.provide(
-      SshTunnel.SshEnvironmentManager.layer(
-        options.resolveCliRunner === undefined
+      SshTunnel.SshEnvironmentManager.layer({
+        onTunnel: tunnelObserver,
+        ...(options.resolveCliRunner === undefined
           ? {}
-          : { resolveCliRunner: options.resolveCliRunner },
-      ),
+          : { resolveCliRunner: options.resolveCliRunner }),
+      }),
     ),
   );

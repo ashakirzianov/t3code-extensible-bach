@@ -170,7 +170,12 @@ async function proxyRemoteExtensionAsset(
       : null;
   if (target === null)
     return withContentSecurityPolicy(new Response(null, { status: 404 }), contentSecurityPolicy);
-  const response = await fetchWithTransientRetry(target, { method: request.method });
+  // A refused redirect throws here, and so does a port nothing is listening on
+  // any more. Both answer 404: the asset route answers 404 for every failure
+  // too, and distinguishing them only helps a prober.
+  const response = await Electron.net
+    .fetch(target, RemoteExtensionAssets.remoteExtensionAssetRequestInit(request.method))
+    .catch(() => new Response(null, { status: 404 }));
   return withContentSecurityPolicy(response, contentSecurityPolicy);
 }
 

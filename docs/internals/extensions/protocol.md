@@ -354,15 +354,30 @@ also the party that opened the SSH tunnel. So for an environment it reached over
 whose HTTP base is a forwarded loopback port — main serves the asset route under the
 renderer's own origin at `/__ext-remote/<forwarded port>/ext-assets/…` and forwards to
 that port. Only `/ext-assets` travels, only `GET` and `HEAD`, only a port this process
-opened and has not closed, and no header from the renderer goes with it: the signed
-token in the path is the whole credential, so the proxy carries none of its own. The
-minted path is re-based and never rewritten, so a Deploy's new token is still a URL the
-browser and the module registry have never seen, and a code-split chunk imported
-relatively resolves back through the same prefix.
+opened and has not closed, a redirect is refused rather than followed (a followed one
+would be the far side choosing the destination), and nothing of the app's session goes
+with the request: the signed token in the path is the whole credential, so the proxy
+carries none of its own. The minted path is re-based and never rewritten, so a Deploy's
+new token is still a URL the browser and the module registry have never seen, and a
+code-split chunk imported relatively resolves back through the same prefix. The port is
+given up the moment the tunnel ends — an explicit disconnect, a teardown that then
+failed, or an ssh process that died on its own — because a port this app has stopped
+forwarding is one an unrelated local service may bind next.
+
+**Say the corollary plainly: connecting an environment over SSH means that machine's
+extension web code runs inside the desktop app, under the app's own origin.** It is
+script in the renderer's document, with the same reach as the extensions of the local
+environment — the CSP does not distinguish them, because origin is all it has. That is
+the point of the feature and it is also its whole risk: connect over SSH only to a
+machine whose extensions you would install here. Nothing about the _server_ side is
+trusted any further — tools, HTTP routes and the socket are unchanged — but the web
+bundle is, necessarily, run.
 
 Everything else is still refused: a relay or LAN environment (somebody else's machine,
 not a port this app opened), and any client with no backend of its own — a browser at
-app.t3.codes or one served by a T3 server. Those still see the message.
+app.t3.codes or one served by a T3 server. Those still see the message. The manual
+verification recipe, including the negative checks, is in
+[`remote-environments.md`](remote-environments.md).
 
 ## Web host
 

@@ -40,28 +40,30 @@ import {
  * async callback registered with Electron, not an Effect, and this is a cache
  * of the app's own tunnels rather than state anything else reads.
  */
-const openEnvironments = new Map<string, { readonly port: number; readonly httpBaseUrl: string }>();
+const openEnvironments = new Map<number, string>();
 
-/** One SSH target, as a key — the same four fields the tunnel is keyed by. */
-export function remoteEnvironmentKey(target: {
-  readonly alias: string;
-  readonly hostname: string;
-  readonly username: string | null;
-  readonly port: number | null;
-}): string {
-  return JSON.stringify([target.alias, target.hostname, target.username, target.port]);
-}
-
-/** Remembered when the SSH bridge hands a forwarded base URL to the renderer. */
-export function rememberRemoteEnvironment(key: string, httpBaseUrl: string): void {
+/**
+ * Remembered when the tunnel opens and forgotten when it closes — both told by
+ * the tunnel manager itself (`SshEnvironmentManagerOptions.onTunnel`), which is
+ * the only party that knows when the ssh process died on its own. Keying by the
+ * forwarded port rather than by the SSH target is what makes that exact: a port
+ * is what the path names, and a target can be spelled more than one way.
+ *
+ * The lifetime matters more than it looks: a port this app has stopped
+ * forwarding is a port some unrelated local service may bind next, and
+ * answering for it would hand that service the app's own origin.
+ */
+export function rememberRemoteEnvironment(httpBaseUrl: string): void {
   const port = loopbackHttpBasePort(httpBaseUrl);
   if (port === null) return;
-  openEnvironments.set(key, { port, httpBaseUrl });
+  openEnvironments.set(port, httpBaseUrl);
 }
 
-/** Forgotten when the tunnel goes, so a closed port stops being proxyable. */
-export function forgetRemoteEnvironment(key: string): void {
-  openEnvironments.delete(key);
+/** Forgotten when the tunnel goes, however it went. */
+export function forgetRemoteEnvironment(httpBaseUrl: string): void {
+  const port = loopbackHttpBasePort(httpBaseUrl);
+  if (port === null) return;
+  openEnvironments.delete(port);
 }
 
 /** Test seam; the app never needs it. */
@@ -69,12 +71,7 @@ export function clearRemoteEnvironments(): void {
   openEnvironments.clear();
 }
 
-const lookupOpenEnvironment = (port: number): string | undefined => {
-  for (const entry of openEnvironments.values()) {
-    if (entry.port === port) return entry.httpBaseUrl;
-  }
-  return undefined;
-};
+const lookupOpenEnvironment = (port: number): string | undefined => openEnvironments.get(port);
 
 /**
  * The URL a request on the client's own origin forwards to, or `null` if it is
@@ -99,6 +96,25 @@ export function resolveRemoteExtensionAsset(input: {
   } catch {
     return null;
   }
+}
+
+/**
+ * How the forwarded request is made, and the other half of "a port, never a
+ * URL".
+ *
+ * - `redirect: "error"` because a redirect is the far side choosing the
+ *   destination. Following one would end the invariant at the first 30x: the
+ *   remote could point anywhere, and whatever answered would come back under
+ *   this app's own origin, as script. A 30x here is not a thing the asset route
+ *   ever answers, so refusing it costs nothing real.
+ * - `credentials: "omit"` because the signed token in the path is the whole
+ *   credential. Nothing of this app's session may ride along — and a 401 from
+ *   the far side must not be one Electron can turn into the app's own `login`
+ *   event.
+ * - No header from the renderer is copied, for the same reason.
+ */
+export function remoteExtensionAssetRequestInit(method: string): RequestInit {
+  return { method, redirect: "error", credentials: "omit" };
 }
 
 /**
