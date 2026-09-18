@@ -97,6 +97,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import * as DesktopBackendConfiguration from "./DesktopBackendConfiguration.ts";
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
+import * as RemoteExtensionAssets from "../extensions/RemoteExtensionAssets.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
@@ -309,15 +310,26 @@ export const layer = Layer.effect(
       // logs on success, so log the failure here before swallowing it —
       // otherwise a post-readiness window-open failure vanishes silently and
       // is near-impossible to diagnose in production.
+      // The renderer imports an extension's bundle page-relative, and the
+      // protocol handler forwards `/ext-assets/…` to the primary backend. It is
+      // told here rather than at bootstrap because the destination has to stop
+      // being answerable the moment the backend does: a loopback port this app
+      // no longer owns is one an unrelated local process may bind next, and
+      // whatever it returned would come back under the renderer's own origin as
+      // script. Same rule as a tunnel's port.
       onReady: (httpBaseUrl) =>
-        desktopWindow.handleBackendReady(httpBaseUrl).pipe(
+        Effect.sync(() => RemoteExtensionAssets.rememberPrimaryBackend(httpBaseUrl.href)).pipe(
+          Effect.andThen(desktopWindow.handleBackendReady(httpBaseUrl)),
           Effect.catch((error) =>
             logBackendPoolWarning("failed to open main window after backend readiness", {
               error: error.message,
             }),
           ),
         ),
-      onShutdown: () => desktopWindow.handleBackendNotReady,
+      onShutdown: () =>
+        Effect.sync(RemoteExtensionAssets.forgetPrimaryBackend).pipe(
+          Effect.andThen(desktopWindow.handleBackendNotReady),
+        ),
       onFatalStartup: handlePrimaryFatalStartup,
       onPreflightFailed: handlePrimaryPreflightFailure,
     });

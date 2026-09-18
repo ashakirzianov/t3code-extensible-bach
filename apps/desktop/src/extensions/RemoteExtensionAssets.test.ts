@@ -210,10 +210,53 @@ describe("the primary environment's asset bridge", () => {
     expect(resolvePrimaryExtensionAsset({ method: "GET", pathname: assetPath })).toBeNull();
   });
 
-  it("stops forwarding when the local environment is gone", () => {
+  /*
+   * The cell tracks the backend's life, not the process's. A backend that has
+   * stopped leaves its loopback port free for an unrelated local process to
+   * bind, and answering for it afterwards would put that process's bytes under
+   * the renderer's own origin, where `script-src 'self'` runs them.
+   */
+  it("stops forwarding the moment the backend stops, and forwards again when it is back", () => {
     rememberPrimaryBackend(primaryBase);
     forgetPrimaryBackend();
     expect(resolvePrimaryExtensionAsset({ method: "GET", pathname: assetPath })).toBeNull();
+
+    rememberPrimaryBackend(primaryBase);
+    expect(resolvePrimaryExtensionAsset({ method: "GET", pathname: assetPath })).not.toBeNull();
+  });
+
+  it("refuses a base that is not loopback, exactly as the remote path does", () => {
+    // Server exposure keeps `httpBaseUrl` on 127.0.0.1 even in
+    // network-accessible mode, where only `bindHost` opens up. That is another
+    // module's invariant, so it is checked here rather than inherited.
+    for (const base of [
+      "http://192.168.1.20:3773/",
+      "https://example.com/",
+      "http://127.0.0.1/",
+      "file:///tmp/",
+      "not a url",
+    ]) {
+      rememberPrimaryBackend(base);
+      expect(resolvePrimaryExtensionAsset({ method: "GET", pathname: assetPath })).toBeNull();
+    }
+  });
+
+  it("refuses a non-loopback base handed straight to the resolver", () => {
+    // The bar is re-checked rather than assumed held at the door above.
+    expect(
+      resolvePrimaryExtensionAsset({
+        method: "GET",
+        pathname: assetPath,
+        lookup: () => "http://192.168.1.20:3773/",
+      }),
+    ).toBeNull();
+  });
+
+  it("takes the other loopback spellings", () => {
+    for (const base of ["http://localhost:3773/", "http://[::1]:3773/"]) {
+      rememberPrimaryBackend(base);
+      expect(resolvePrimaryExtensionAsset({ method: "GET", pathname: assetPath })).not.toBeNull();
+    }
   });
 
   it("carries only the asset route, never the backend's own API", () => {

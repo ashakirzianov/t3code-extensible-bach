@@ -11,7 +11,6 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
-import * as RemoteExtensionAssets from "../extensions/RemoteExtensionAssets.ts";
 import { installDesktopIpcHandlers } from "../ipc/DesktopIpcHandlers.ts";
 import * as DesktopAppActivation from "./DesktopAppActivation.ts";
 import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
@@ -184,11 +183,6 @@ const bootstrap = Effect.gen(function* () {
   yield* snapShot.initialize;
 
   if (!settings.localEnvironmentEnabled) {
-    // No local backend, so nothing answers the renderer's own `/ext-assets/…`.
-    // Said explicitly rather than left to the initial value: toggling the
-    // setting relaunches, and a bridge pointing at a backend that is not there
-    // is worse than a 404.
-    yield* Effect.sync(RemoteExtensionAssets.forgetPrimaryBackend);
     yield* logBootstrapInfo("bootstrap skipping local environment (disabled in settings)");
     if (!(yield* Ref.get(state.quitting))) {
       yield* desktopWindow.createMainIfBackendReady;
@@ -233,12 +227,6 @@ const bootstrap = Effect.gen(function* () {
   }
   const serverExposureState = yield* serverExposure.configureFromSettings({ port: backendPort });
   const backendConfig = yield* serverExposure.backendConfig;
-  // The renderer imports an extension's bundle page-relative, and the protocol
-  // handler forwards `/ext-assets/…` here. It was registered before this point
-  // — before there was a backend to name — so the destination arrives now.
-  yield* Effect.sync(() =>
-    RemoteExtensionAssets.rememberPrimaryBackend(backendConfig.httpBaseUrl.href),
-  );
   yield* logBootstrapInfo("bootstrap resolved backend endpoint", {
     baseUrl: backendConfig.httpBaseUrl.href,
   });

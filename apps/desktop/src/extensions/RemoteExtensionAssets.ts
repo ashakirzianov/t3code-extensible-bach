@@ -168,17 +168,35 @@ export function isRemoteExtensionAssetRoute(pathname: string): boolean {
 let primaryBackendHttpBaseUrl: string | null = null;
 
 /**
- * Told by `bootstrap` once the backend's endpoint is resolved, which is later
- * than the protocol handler is registered — the handler is up before there is a
- * backend to name, and upstream now boots a window with no local backend at
- * all. Until this is called (and forever, when the local environment is
- * disabled) the route has nowhere to go and 404s.
+ * Remembered when the primary backend reports ready and forgotten when it stops
+ * — the same lifetime rule, and for the same reason, as a tunnel's port.
+ *
+ * The reason is worth spelling out, because it is the one way this bridge could
+ * hand the renderer somebody else's bytes as script. A backend that has gone for
+ * good leaves its loopback port free, and an unrelated local process may bind it
+ * next; answering for it afterwards would put that process's response under
+ * `t3code://app`, where `script-src 'self'` executes it. So the cell tracks the
+ * backend's life rather than the process's: `DesktopBackendPool`'s `onReady` and
+ * `onShutdown` are the only callers, because they are the only party that knows.
+ *
+ * **Loopback only**, checked here rather than trusted, exactly as
+ * `rememberRemoteEnvironment` checks it. It is loopback today — server exposure
+ * moves `bindHost` to `0.0.0.0` in network-accessible mode and leaves
+ * `httpBaseUrl` on `127.0.0.1` — but that is an invariant of another module, and
+ * a bridge that would forward the renderer's origin to a LAN address if it ever
+ * changed should say no rather than inherit the assumption. A refusal leaves the
+ * cell empty, which is a 404.
  */
 export function rememberPrimaryBackend(httpBaseUrl: string): void {
-  primaryBackendHttpBaseUrl = httpBaseUrl;
+  primaryBackendHttpBaseUrl = loopbackHttpBasePort(httpBaseUrl) === null ? null : httpBaseUrl;
 }
 
-/** Test seam, and the way back to "there is no local backend". */
+/**
+ * The way back to "there is no local backend": the backend stopped, the local
+ * environment was never enabled, or a test wants a clean slate. Also the state
+ * the cell starts in — the protocol handler is registered before there is a
+ * backend to name, and that gap is a 404 rather than a guess.
+ */
 export function forgetPrimaryBackend(): void {
   primaryBackendHttpBaseUrl = null;
 }
@@ -188,7 +206,9 @@ export function forgetPrimaryBackend(): void {
  * request is refused or there is no local backend to forward it to.
  *
  * The query string is dropped for the same reason as the remote path: a minted
- * asset URL carries none.
+ * asset URL carries none. The loopback bar is re-checked rather than assumed
+ * held from `rememberPrimaryBackend`, so a caller reaching past that door with
+ * its own `lookup` clears the same bar the remote path's port table does.
  */
 export function resolvePrimaryExtensionAsset(input: {
   readonly method: string;
@@ -199,6 +219,7 @@ export function resolvePrimaryExtensionAsset(input: {
   if (!isExtensionAssetPath(input.pathname)) return null;
   const httpBaseUrl = (input.lookup ?? (() => primaryBackendHttpBaseUrl))();
   if (httpBaseUrl === null) return null;
+  if (loopbackHttpBasePort(httpBaseUrl) === null) return null;
   try {
     return new URL(input.pathname, httpBaseUrl).toString();
   } catch {

@@ -13,6 +13,7 @@ import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as DesktopObservability from "../app/DesktopObservability.ts";
+import * as RemoteExtensionAssets from "../extensions/RemoteExtensionAssets.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
@@ -52,6 +53,7 @@ interface PoolLayerOverrides {
   readonly httpClient?: Layer.Layer<HttpClient.HttpClient>;
   readonly fileSystem?: Layer.Layer<FileSystem.FileSystem>;
   readonly resolvePrimary?: DesktopBackendConfiguration.DesktopBackendConfiguration["Service"]["resolvePrimary"];
+  readonly window?: Partial<DesktopWindow.DesktopWindow["Service"]>;
 }
 
 function makePoolLayer(
@@ -118,6 +120,7 @@ function makePoolLayer(
           dispatchSnapShotEvent: () => Effect.void,
           zoomMain: () => Effect.die("unexpected zoom"),
           syncAppearance: Effect.void,
+          ...overrides.window,
         } satisfies DesktopWindow.DesktopWindow["Service"]),
       ),
     ),
@@ -174,6 +177,102 @@ describe("DesktopBackendPool", () => {
       }),
     ),
   );
+
+  /*
+   * The extension asset bridge forwards the renderer's own `/ext-assets/…` to
+   * the primary backend, so the destination has to stop being answerable the
+   * moment that backend does: a loopback port this app no longer owns is one an
+   * unrelated local process may bind next, and whatever it answered would come
+   * back under the renderer's origin as script. Boot-scoped is not good enough;
+   * this is the callback pair that makes it lifecycle-scoped.
+   */
+  // `it.live` rather than `it.effect`: readiness is detected by polling on a
+  // real schedule, which a test clock never advances.
+  it.live("hands the extension asset bridge the backend's life, not just its address", () => {
+    const primaryConfig: DesktopBackendStartConfig = {
+      executablePath: "/electron",
+      args: ["/server/bin.mjs", "--bootstrap-fd", "3"],
+      entryPath: "/server/bin.mjs",
+      cwd: "/server",
+      env: { ELECTRON_RUN_AS_NODE: "1" },
+      bootstrap: {
+        mode: "desktop",
+        noBrowser: true,
+        port: 3773,
+        t3Home: "/tmp/t3",
+        host: "127.0.0.1",
+        desktopBootstrapToken: "token",
+        tailscaleServeEnabled: false,
+        tailscaleServePort: 443,
+        desktopTelemetryFd: 4,
+        desktopTelemetryControlFd: 5,
+      },
+      bootstrapDelivery: "fd3",
+      extendEnv: true,
+      httpBaseUrl: new URL("http://127.0.0.1:3773"),
+      captureOutput: true,
+      preflightFailure: Option.none(),
+    };
+    const assetPath = "/ext-assets/eyJhIjoxfQ.sig/bach/entry.js";
+    const bridgeTarget = () =>
+      RemoteExtensionAssets.resolvePrimaryExtensionAsset({ method: "GET", pathname: assetPath });
+
+    return Effect.gen(function* () {
+      RemoteExtensionAssets.forgetPrimaryBackend();
+      const labelRef = yield* Ref.make("Windows");
+      return yield* Effect.gen(function* () {
+        const pool = yield* DesktopBackendPool.DesktopBackendPool;
+        const primary = yield* pool.primary;
+
+        // Registration happens before there is a backend to name, and that gap
+        // is a 404 rather than a guess.
+        assert.isNull(bridgeTarget());
+
+        yield* primary.start;
+        assert.isTrue(yield* primary.waitForReady(Duration.seconds(5)));
+        assert.equal(bridgeTarget(), `http://127.0.0.1:3773${assetPath}`);
+
+        yield* primary.stop({ timeout: Duration.seconds(5) });
+        assert.isNull(bridgeTarget());
+      }).pipe(
+        Effect.provide(
+          makePoolLayer(labelRef, {
+            fileSystem: FileSystem.layerNoop({ exists: () => Effect.succeed(true) }),
+            httpClient: Layer.succeed(
+              HttpClient.HttpClient,
+              HttpClient.make((request) =>
+                Effect.succeed(
+                  HttpClientResponse.fromWeb(request, new Response(null, { status: 200 })),
+                ),
+              ),
+            ),
+            resolvePrimary: Effect.succeed(primaryConfig),
+            window: { handleBackendReady: () => Effect.void, handleBackendNotReady: Effect.void },
+            spawner: Layer.succeed(
+              ChildProcessSpawner.ChildProcessSpawner,
+              ChildProcessSpawner.make(() =>
+                Effect.succeed(
+                  ChildProcessSpawner.makeHandle({
+                    pid: ChildProcessSpawner.ProcessId(321),
+                    stdout: Stream.empty,
+                    stderr: Stream.empty,
+                    all: Stream.empty,
+                    exitCode: Effect.never,
+                    isRunning: Effect.succeed(true),
+                    kill: () => Effect.void,
+                    stdin: Sink.drain,
+                    getInputFd: () => Sink.drain,
+                    getOutputFd: () => Stream.empty,
+                    unref: Effect.succeed(Effect.void),
+                  }),
+                ),
+              ),
+            ),
+          }),
+        ),
+      );
+    });
+  });
 
   it.effect("reports a primary backend that refuses to start", () => {
     const failure = {
