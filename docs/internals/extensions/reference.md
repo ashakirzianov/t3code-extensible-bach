@@ -374,7 +374,7 @@ extension web code runs inside the desktop app, under the app's own origin.** It
 script in the renderer's document, with the same reach as the extensions of the local
 environment — the CSP does not distinguish them, because origin is all it has. That is
 the point of the feature and it is also its whole risk: connect over SSH only to a
-machine whose extensions you would install here. Nothing about the *server* side is
+machine whose extensions you would install here. Nothing about the _server_ side is
 trusted any further — tools, HTTP routes and the socket are unchanged — but the web
 bundle is, necessarily, run.
 
