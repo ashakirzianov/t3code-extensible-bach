@@ -753,6 +753,55 @@
             "emoji"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "monogram"
+              ]
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32
+            },
+            "color": {
+              "type": "string",
+              "enum": [
+                "gray",
+                "red",
+                "orange",
+                "amber",
+                "yellow",
+                "lime",
+                "green",
+                "emerald",
+                "teal",
+                "cyan",
+                "sky",
+                "blue",
+                "indigo",
+                "violet",
+                "purple",
+                "fuchsia",
+                "pink",
+                "rose"
+              ]
+            },
+            "colorCss": {
+              "$ref": "#/$defs/ExtensionProjectIconColorCss"
+            }
+          },
+          "required": [
+            "kind",
+            "text",
+            "color",
+            "colorCss"
+          ],
+          "additionalProperties": false
         }
       ]
     },

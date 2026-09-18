@@ -15,6 +15,7 @@ import * as McpProviderSession from "./McpProviderSession.ts";
 export interface McpCredentialRequest {
   readonly threadId: ThreadId;
   readonly providerInstanceId: ProviderInstanceId;
+  readonly capabilities: ReadonlySet<McpInvocationContext.McpCapability>;
 }
 
 export interface McpIssuedCredential {
@@ -77,7 +78,7 @@ export interface McpSessionRegistryOptions {
  *
  * The bound matters because `/mcp` is mounted outside the environment auth
  * stack and is reachable on whatever host the server binds to, so this token is
- * the only thing guarding the preview toolkit on a remote-reachable server.
+ * the only thing guarding the `t3-code` toolkits on a remote-reachable server.
  *
  * The fork widens upstream's 24h to 30d: extension-driven agents sit idle for
  * days between turns, and expiring their credential mid-life turns a resumable
@@ -142,7 +143,10 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         threadId: ThreadId.make(request.threadId),
         providerSessionId,
         providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
-        capabilities: new Set(["preview"]),
+        capabilities: new Set<McpInvocationContext.McpCapability>([
+          "pull-requests",
+          ...request.capabilities,
+        ]),
         issuedAt,
       };
       yield* SynchronizedRef.update(state, ({ records }) => {
@@ -158,6 +162,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           providerInstanceId: scope.providerInstanceId,
           endpoint,
           authorizationHeader: `Bearer ${rawToken}`,
+          capabilities: scope.capabilities,
         },
       };
     },

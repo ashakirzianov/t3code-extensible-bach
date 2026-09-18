@@ -27,7 +27,8 @@ const toOverride = (
   override: OrchestrationProjectShell["projectIcon"],
 ): ExtensionProjectIcon["override"] => {
   if (override === null || override === undefined) return null;
-  return override.kind === "lucide" ? withColorCss(override) : override;
+  // `emoji` carries no palette colour; `lucide` and `monogram` both do.
+  return override.kind === "emoji" ? override : withColorCss(override);
 };
 
 export const resolveExtensionProjectIcons = Effect.fn("extensions.projectIcons")(function* <

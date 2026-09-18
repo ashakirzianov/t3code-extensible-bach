@@ -251,6 +251,30 @@ export type ExtensionProjectIconOverride =
   | {
       readonly kind: "emoji";
       readonly emoji: string;
+    }
+  | {
+      readonly kind: "monogram";
+      readonly text: string;
+      readonly color: 
+        | "gray"
+        | "red"
+        | "orange"
+        | "amber"
+        | "yellow"
+        | "lime"
+        | "green"
+        | "emerald"
+        | "teal"
+        | "cyan"
+        | "sky"
+        | "blue"
+        | "indigo"
+        | "violet"
+        | "purple"
+        | "fuchsia"
+        | "pink"
+        | "rose";
+      readonly colorCss: ExtensionProjectIconColorCss;
     };
 
 export type ExtensionProjectIconsInput = Readonly<Record<string, unknown>> | ReadonlyArray<unknown>;

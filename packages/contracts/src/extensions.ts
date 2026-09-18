@@ -406,6 +406,13 @@ export const ExtensionProjectIconOverride = Schema.Union([
     kind: Schema.Literal("emoji"),
     emoji: BoundedString(32),
   }),
+  Schema.Struct({
+    kind: Schema.Literal("monogram"),
+    /** A short piece of text — usually one or two graphemes — drawn as the icon. */
+    text: BoundedString(32),
+    color: ProjectIconColor,
+    colorCss: ExtensionProjectIconColorCss,
+  }),
 ]).annotate({ identifier: "ExtensionProjectIconOverride" });
 export type ExtensionProjectIconOverride = typeof ExtensionProjectIconOverride.Type;
 

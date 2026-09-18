@@ -34,7 +34,7 @@ export const generateExtensionText = Effect.fn("ExtensionTextGeneration.generate
   function* (input: {
     readonly request: ExtensionGenerateTextInput;
     readonly settings: ServerSettings;
-    readonly textGeneration: TextGeneration.TextGeneration["Service"];
+    readonly textGeneration: Pick<TextGeneration.TextGeneration["Service"], "generateText">;
     readonly fileSystem: FileSystem.FileSystem;
   }): Effect.fn.Return<
     ExtensionGenerateTextResult,
