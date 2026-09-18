@@ -171,21 +171,17 @@ export function extensionToggleAction(row: ExtensionSettingsRow): {
       };
 }
 
-/**
- * The confirmation Deploy asks for. Host-owned and human-only by design: no
- * extension and no agent can reach Deploy, so the words here are the last
- * checkpoint before a running process is replaced.
- */
-/**
- * All Deploy needs to name an extension. A Settings row is one; so is a sidebar
- * nav entry — which is what lets the sidebar's affordance raise the same
- * confirmation instead of sending someone to Settings to click it again.
- */
+/** All Deploy needs to name an extension: a Settings row is one, a sidebar nav entry is one. */
 export interface ExtensionDeployTarget {
   readonly environmentId: EnvironmentId;
   readonly name: ExtensionName;
 }
 
+/**
+ * The confirmation Deploy asks for. Host-owned and human-only by design: no
+ * extension and no agent can reach Deploy, so the words here are the last
+ * checkpoint before a running process is replaced.
+ */
 export function extensionDeployConfirmation(target: ExtensionDeployTarget): string {
   return `Deploy the new build of ${target.name}?\nIt stops and starts again on the build that is on disk now.`;
 }

@@ -103,8 +103,9 @@ The nav row the host draws carries the manifest's `icon` when it declares one �
 served, like the bundle, by the signed asset route — and the host's own icon when
 it does not. The row is labelled, sits at the end of the thread list, and shows
 the badge at its end; a folder that has moved under a running process adds a
-small affordance that leads to Settings, where Deploy lives with the version, the
-path and the logs.
+small affordance that raises the host's own Deploy confirmation on the spot.
+Settings is where the same Deploy lives beside the version, the path and the
+logs, for when those are what make it a decision.
 
 The web entry is a path to an ES module inside the extension's folder. The client loads it
 with a same-origin `import()` — the only thing that executes under the desktop CSP
@@ -401,9 +402,10 @@ while it is mounted.
 environment, and per extension its version, where the host learned about it, where its folder
 is, what state it is in, the tools it registered, whatever it asked for and did not get, and a
 tail of its output. Deploy and Enable/Disable live here, each behind the host's own
-confirmation and each showing its own reverse, and the sidebar's "new build on disk" marker
-links straight to the row rather than acting on its own — the version, the state and the
-output are what make Deploy a decision rather than a reflex.
+confirmation and each showing its own reverse. The sidebar's "new build on disk" marker
+raises that same Deploy confirmation itself, through one implementation of ask, deploy,
+report; Settings is where the version, the state and the output sit beside it, for a
+deploy that wants to be a decision rather than a reflex.
 
 Mobile is a non-goal for v1. The nav entry, the extension route and the Settings screen are
 web-only, and the mobile app neither lists extensions nor mounts them; the derivations from
