@@ -13,6 +13,8 @@ import {
 } from "./lib/windowControlsOverlay";
 import { AppRoot } from "./AppRoot";
 import { clearChunkReloadGuard, reloadOnceForChunkLoadError } from "./lib/chunkReloadGuard";
+import { chunkReloadWithinCooldown, markChunkReloadAttempt } from "./lib/chunkReloadCooldown";
+import { isExtensionBundlePreloadError } from "./extensions/bundleImport";
 
 // Electron loads the app from a file-backed shell, so hash history avoids path resolution issues.
 const history = isElectron ? createHashHistory() : createBrowserHistory();
@@ -31,8 +33,19 @@ const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string
 let chunkLoadFailed = false;
 let reloadScheduled = false;
 window.addEventListener("vite:preloadError", (event) => {
+  // An extension's bundle is not one of this app's chunks: it is fetched by URL
+  // at mount time, and a broken one is the extension's problem. Left
+  // unprevented so it still rejects the import and the extension view shows its
+  // own failure, and not counted as a chunk failure so a genuinely clean boot
+  // still re-arms the guard.
+  if (isExtensionBundlePreloadError(event)) return;
   chunkLoadFailed = true;
+  // A successful boot clears the guard, so a route whose own import always
+  // fails would reload on every boot. A second reload inside a minute is a
+  // loop, not a stale deploy.
+  if (chunkReloadWithinCooldown()) return;
   if (reloadOnceForChunkLoadError()) {
+    markChunkReloadAttempt();
     reloadScheduled = true;
     event.preventDefault();
   }

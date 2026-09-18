@@ -22,6 +22,7 @@ import {
 import { usePreparedConnection } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
 import { rebaseExtensionAssetUrls, resolveExtensionBundleAccess } from "./bundleOrigin";
+import { importExtensionBundle } from "./bundleImport";
 import { createExtensionHostApi } from "./hostApi";
 import { ExtensionLoadError, mountExtension, type ExtensionMountHandle } from "./loader";
 
@@ -130,7 +131,7 @@ export function ExtensionHostView({
         }
         const handle = await mountExtension({
           deps: {
-            importModule: (url) => import(/* @vite-ignore */ url),
+            importModule: importExtensionBundle,
             document: window.document,
           },
           extensionName: name,
