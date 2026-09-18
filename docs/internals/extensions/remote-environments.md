@@ -6,13 +6,13 @@ environment"); this page is the part that cannot be a unit test.
 
 ## What is reachable, and from where
 
-| Client                                           | Environment              | Bundle                                |
-| ------------------------------------------------ | ------------------------ | ------------------------------------- |
-| any                                              | same origin as the page  | direct, unchanged                     |
-| desktop                                          | the primary (local) one  | direct, through the `t3code://` proxy |
-| desktop                                          | reached over SSH         | through the app's own asset proxy     |
-| desktop                                          | LAN URL, relay, tunnel   | refused, with the message             |
-| browser (app.t3.codes, or served by a T3 server) | anything not same-origin | refused, with the message             |
+| Client                                           | Environment              | Bundle                                                   |
+| ------------------------------------------------ | ------------------------ | -------------------------------------------------------- |
+| any                                              | same origin as the page  | direct, unchanged                                        |
+| desktop                                          | the primary (local) one  | direct, through the `t3code://` bridge for `/ext-assets` |
+| desktop                                          | reached over SSH         | through the app's own asset proxy                        |
+| desktop                                          | LAN URL, relay, tunnel   | refused, with the message                                |
+| browser (app.t3.codes, or served by a T3 server) | anything not same-origin | refused, with the message                                |
 
 The browser has no backend of its own that knows the client's other environments — the
 environment list is client state, and a T3 server knows nothing about the environments its
@@ -91,6 +91,20 @@ devtools.
     same-origin one still mounts.
 12. **The local environment is unchanged.** The primary environment's Bach entry mounts
     exactly as before, from `/ext-assets/…` with no `__ext-remote` prefix.
+13. **The local environment's bundle comes from the backend, in a _packaged_ build.** This is
+    the one that has to be checked on an installed app rather than a dev server, because the
+    two serve the renderer differently and only the packaged one is a directory of static
+    files. Open the primary environment's Bach entry: the interface appears, and the Network
+    tab shows `t3code://app/ext-assets/…` answering with `text/javascript` rather than a 404
+    or `index.html`. Then, in the devtools console,
+    `(await fetch("/ext-assets/anything.js")).status` must be **404**, and
+    `(await fetch("/api/environment")).status` must not be a proxied answer from the local
+    backend — the bridge carries the asset route and nothing else.
+14. **A broken bundle does not reload the app.** With devtools open on the extension page,
+    `await fetch(...)` is not enough; make the import itself fail (rename the extension's
+    `dist` entry file and reopen the page). The page must settle on "Could not load the bach
+    extension." and stay there. A renderer that reloads on a loop instead is the regression
+    this pair of checks exists for.
 
 A bundle that imports an **absolute** `/ext-assets/...` path rather than a relative chunk
 would not be re-based and would miss the proxy; Vite-built bundles emit relative chunks, so

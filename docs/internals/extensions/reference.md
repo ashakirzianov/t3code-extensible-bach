@@ -189,8 +189,10 @@ surrounding whitespace. A project whose name has no letters or digits at all get
 Colours come twice: `color` is the palette name, and `colorCss` is the CSS value the host
 draws it in — `light` on light themes, `dark` when the host's root element has the `dark`
 class — so a consumer needs no colour table of its own. The rule behind those values, for a consumer that builds its own table: they are Tailwind v4's default palette at shade 600 on light themes and 400 on dark — the shades the host's own classes use — given as Tailwind's `oklch()` values, not hex. The `faviconUrl` is root-relative
-(`/api/assets/…`), never an absolute origin, so the packaged desktop's `t3code://` proxy
-re-bases it like any other page path. The answer is keyed by the same project ids
+(`/api/assets/…`), never an absolute origin, so it belongs to the environment that answered
+rather than to whatever origin the consumer happens to be on. Resolve it against that
+environment's HTTP base: in a packaged desktop renderer the page's own origin is a directory
+of static files, and only `/ext-assets/…` is bridged from there to the local backend. The answer is keyed by the same project ids
 `subscribeShell` uses; when a project's title, favicon or icon changes there, ask again.
 
 ## Where extensions come from
@@ -366,6 +368,28 @@ chunks resolve while a traversal does not. The module is served as `text/javascr
 which the browser requires before it will execute it at all.
 
 Every failure — forged, expired, wrong extension, missing file, traversal — answers 404. Distinguishing them only helps a prober.
+
+**The primary environment in a packaged desktop renderer.** The minted paths are
+root-relative, so on any client whose page is served by the environment itself they simply
+resolve. The packaged desktop is the one client where "the page's origin" and "the
+environment" are not the same thing: the renderer loads `t3code://app`, which is a directory
+of static files on disk, and a static directory has no `/ext-assets` in it.
+
+So the Electron main process bridges that one route: a `GET` or `HEAD` of
+`t3code://app/ext-assets/…` is forwarded to the local backend's HTTP base, and everything
+else about the request is refused the same way the remote proxy refuses it — no other path,
+no other method, no traversal, no header from the renderer, no redirect followed, and a 404
+rather than the client's `index.html` for every refusal, because an `import()` answered with
+HTML is a syntax error rather than a missing module. The bridge is on in development too,
+where the renderer is a Vite server whose proxy would otherwise answer, so the two modes do
+not differ where it matters. When the local environment is disabled there is no backend to
+forward to and the route 404s.
+
+This used to need no bridge: before upstream allowed disabling the local environment, the
+packaged renderer's protocol handler proxied _every_ path to the local backend, so the asset
+route arrived there as a side effect of the transport. It is a deliberate route now, with
+tests, rather than something an uptake can quietly take away — which it did once, and the
+symptom was the whole renderer reloading several times a second on an extension's page.
 
 **An extension on a remote environment.** The desktop renderer's `script-src 'self'`
 means a bundle can only execute from the page's own origin, and the fetch-then-`blob:`
