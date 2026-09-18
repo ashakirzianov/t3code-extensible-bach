@@ -1,274 +1,21 @@
-import type { ExtensionAutomaticProjectIconName, ProjectIconColor } from "@t3tools/contracts";
+import type { ProjectIconColor } from "@t3tools/contracts";
 
 /**
  * The automatic project icon: what every client draws for a project that has
  * neither an icon of its own (Project settings) nor a favicon.
  *
+ * It is a monogram — one or two letters from the project's name — on a colour
+ * hashed from the same name. Nothing is guessed from the name's meaning: a
+ * keyword-derived Lucide icon used to be the answer here, and it was wrong
+ * often enough that two projects called `api` and `api-v2` looked identical
+ * while `Nebula` got a dice.
+ *
  * Shared rather than living in the web app because the host is not its only
  * reader — an extension gets the same icon from `extensions.projectIcons`, and
  * a second copy is how the command palette once drifted from the sidebar.
+ * `apps/web/src/projectIdentity.ts` re-exports this; there is no other
+ * implementation.
  */
-export const PROJECT_ICON_NAMES = [
-  "ai",
-  "book",
-  "cloud",
-  "database",
-  "desktop",
-  "game",
-  "image",
-  "mobile",
-  "music",
-  "package",
-  "security",
-  "server",
-  "shopping",
-  "terminal",
-  "test",
-  "video",
-  "web",
-  "code",
-  "braces",
-  "circuit",
-  "folder-code",
-  "layers",
-] as const;
-
-export type ProjectIconName = (typeof PROJECT_ICON_NAMES)[number];
-
-export type ProjectIconSelection =
-  | { readonly kind: "lucide"; readonly icon: ProjectIconName }
-  | { readonly kind: "emoji"; readonly icon: ProjectIconName; readonly emoji: string };
-
-interface ProjectIconClass {
-  readonly icon: ProjectIconName;
-  readonly terms: ReadonlyArray<string>;
-}
-
-const PROJECT_ICON_MODEL: ReadonlyArray<ProjectIconClass> = [
-  { icon: "ai", terms: ["ai", "agent", "bot", "gpt", "llm", "ml", "model", "neural"] },
-  {
-    icon: "mobile",
-    terms: ["android", "expo", "ios", "mobile", "native", "reactnative", "swift"],
-  },
-  {
-    icon: "desktop",
-    terms: ["desktop", "electron", "linux", "mac", "macos", "tauri", "windows"],
-  },
-  {
-    icon: "book",
-    terms: ["book", "docs", "documentation", "guide", "handbook", "manual", "wiki"],
-  },
-  {
-    icon: "security",
-    terms: ["auth", "identity", "oauth", "security", "sso", "vault"],
-  },
-  {
-    icon: "database",
-    terms: [
-      "analytics",
-      "data",
-      "database",
-      "db",
-      "mongo",
-      "mysql",
-      "postgres",
-      "redis",
-      "sql",
-      "storage",
-    ],
-  },
-  {
-    icon: "cloud",
-    terms: [
-      "aws",
-      "azure",
-      "cloud",
-      "deploy",
-      "devops",
-      "docker",
-      "gcp",
-      "infra",
-      "kubernetes",
-      "terraform",
-    ],
-  },
-  {
-    icon: "server",
-    terms: ["api", "backend", "gateway", "server", "service", "worker"],
-  },
-  {
-    icon: "terminal",
-    terms: ["automation", "bash", "cli", "command", "script", "shell", "terminal"],
-  },
-  {
-    icon: "package",
-    terms: ["component", "kit", "lib", "library", "package", "plugin", "sdk", "toolkit"],
-  },
-  {
-    icon: "test",
-    terms: ["benchmark", "e2e", "fixture", "spec", "test", "testing"],
-  },
-  {
-    icon: "shopping",
-    terms: ["cart", "commerce", "market", "shop", "store"],
-  },
-  { icon: "game", terms: ["game", "gaming", "play"] },
-  { icon: "music", terms: ["audio", "music", "podcast", "radio", "sound"] },
-  { icon: "video", terms: ["film", "movie", "stream", "video"] },
-  { icon: "image", terms: ["camera", "gallery", "image", "photo", "picture"] },
-  {
-    icon: "web",
-    terms: [
-      "browser",
-      "frontend",
-      "nextjs",
-      "react",
-      "site",
-      "svelte",
-      "ui",
-      "vue",
-      "web",
-      "website",
-    ],
-  },
-];
-
-const GENERIC_PROJECT_ICONS: ReadonlyArray<ProjectIconName> = [
-  "code",
-  "braces",
-  "circuit",
-  "folder-code",
-  "layers",
-];
-
-const projectIconCache = new Map<string, ProjectIconSelection>();
-
-function projectNameTokens(value: string): ReadonlyArray<string> {
-  return value
-    .replace(/([a-z\d])([A-Z])/g, "$1 $2")
-    .toLowerCase()
-    .split(/[^a-z\d]+/)
-    .filter(Boolean);
-}
-
-function termScore(token: string, term: string): number {
-  if (token === term) return 3;
-  if (term.length >= 4 && (token.startsWith(term) || token.endsWith(term))) return 1;
-  return 0;
-}
-
-function stableIndex(value: string, length: number): number {
-  let hash = 2_166_136_261;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 16_777_619);
-  }
-  return (hash >>> 0) % length;
-}
-
-export function selectProjectIcon(
-  projectName: string,
-  workspaceRoot: string,
-): ProjectIconSelection {
-  const name = projectName.trim() || workspaceRoot.split(/[\\/]+/).findLast(Boolean) || "project";
-  const cacheKey = name.toLowerCase();
-  const cachedIcon = projectIconCache.get(cacheKey);
-  if (cachedIcon) return cachedIcon;
-
-  const tokens = projectNameTokens(name);
-  let bestIcon: ProjectIconName | null = null;
-  let bestScore = 0;
-
-  for (const projectClass of PROJECT_ICON_MODEL) {
-    let score = 0;
-    for (const token of tokens) {
-      let tokenScore = 0;
-      for (const term of projectClass.terms) {
-        tokenScore = Math.max(tokenScore, termScore(token, term));
-      }
-      score += tokenScore;
-    }
-    if (score > bestScore) {
-      bestIcon = projectClass.icon;
-      bestScore = score;
-    }
-  }
-
-  const iconName =
-    bestIcon ?? GENERIC_PROJECT_ICONS[stableIndex(cacheKey, GENERIC_PROJECT_ICONS.length)]!;
-  const icon: ProjectIconSelection = { kind: "lucide", icon: iconName };
-  projectIconCache.set(cacheKey, icon);
-  return icon;
-}
-
-/** The colour the host draws each automatic icon in. */
-export const PROJECT_ICON_COLOR_BY_NAME: Readonly<Record<ProjectIconName, ProjectIconColor>> = {
-  ai: "violet",
-  book: "amber",
-  braces: "purple",
-  circuit: "teal",
-  cloud: "sky",
-  code: "blue",
-  database: "cyan",
-  desktop: "indigo",
-  "folder-code": "orange",
-  game: "emerald",
-  image: "pink",
-  layers: "fuchsia",
-  mobile: "lime",
-  music: "fuchsia",
-  package: "orange",
-  security: "teal",
-  server: "blue",
-  shopping: "rose",
-  terminal: "green",
-  test: "yellow",
-  video: "red",
-  web: "sky",
-};
-
-/**
- * Each automatic icon by its canonical Lucide name — the same vocabulary as a
- * user's own `lucide` icon override, so a reader renders both one way.
- */
-export const PROJECT_ICON_LUCIDE_NAMES: Readonly<
-  Record<ProjectIconName, ExtensionAutomaticProjectIconName>
-> = {
-  ai: "bot",
-  book: "book-open",
-  braces: "braces",
-  circuit: "circuit-board",
-  cloud: "cloud-cog",
-  code: "code-xml",
-  database: "database",
-  desktop: "monitor",
-  "folder-code": "folder-code",
-  game: "gamepad-2",
-  image: "image",
-  layers: "layers",
-  mobile: "smartphone",
-  music: "music",
-  package: "package",
-  security: "shield-check",
-  server: "server",
-  shopping: "shopping-bag",
-  terminal: "terminal",
-  test: "flask-conical",
-  video: "video",
-  web: "earth",
-};
-
-/** The automatic icon for a project, as a Lucide name and a palette colour. */
-export function automaticProjectIcon(
-  title: string,
-  workspaceRoot: string,
-): { readonly name: ExtensionAutomaticProjectIconName; readonly color: ProjectIconColor } {
-  const selection = selectProjectIcon(title, workspaceRoot);
-  return {
-    name: PROJECT_ICON_LUCIDE_NAMES[selection.icon],
-    color: PROJECT_ICON_COLOR_BY_NAME[selection.icon],
-  };
-}
 
 /**
  * The CSS colour the host draws each palette colour in: Tailwind's default
@@ -277,6 +24,9 @@ export function automaticProjectIcon(
  * values rather than names so a reader outside the host's stylesheet — an
  * extension inlining its own SVG — needs no palette of its own. A test in the
  * web app pins these against the installed Tailwind.
+ *
+ * The order is also the palette's order, which the hashed colour indexes into;
+ * the same test pins it against the picker's list.
  */
 export const PROJECT_ICON_COLOR_CSS: Readonly<
   Record<ProjectIconColor, { readonly light: string; readonly dark: string }>
@@ -300,3 +50,64 @@ export const PROJECT_ICON_COLOR_CSS: Readonly<
   pink: { light: "oklch(59.2% 0.249 0.584)", dark: "oklch(71.8% 0.202 349.761)" },
   rose: { light: "oklch(58.6% 0.253 17.585)", dark: "oklch(71.2% 0.194 13.428)" },
 };
+
+/**
+ * The palette, in the order the picker offers it. Read off the table above
+ * rather than written twice: the hashed colour is an index into this, and a
+ * second list would be a second thing to keep in step.
+ */
+const PROJECT_ICON_PALETTE = Object.keys(PROJECT_ICON_COLOR_CSS) as ReadonlyArray<ProjectIconColor>;
+
+/** Visual identity tokens for a generated project badge. */
+export interface ProjectIdentity {
+  readonly monogram: string;
+  readonly color: ProjectIconColor;
+}
+
+function normalizeProjectName(projectName: string): string {
+  return projectName.normalize("NFKC").trim();
+}
+
+function projectMonogram(projectName: string): string {
+  const words = normalizeProjectName(projectName).match(/[\p{L}\p{N}]+/gu) ?? [];
+  const firstWord = words[0];
+  if (!firstWord) return "PR";
+
+  const glyphs = Array.from(firstWord);
+  const first = glyphs[0] ?? "P";
+  const second =
+    glyphs.slice(1).find((glyph) => /\p{N}/u.test(glyph)) ??
+    (words.length > 1 ? Array.from(words.at(-1) ?? "")[0] : glyphs.at(-1)) ??
+    first;
+  return Array.from(`${first}${second}`.toUpperCase()).slice(0, 2).join("");
+}
+
+function projectColor(projectName: string): ProjectIconColor {
+  const seed = normalizeProjectName(projectName).toLocaleLowerCase("en-US") || "project";
+  let index = 0;
+  for (const glyph of seed) {
+    index = (index * 31 + (glyph.codePointAt(0) ?? 0)) % PROJECT_ICON_PALETTE.length;
+  }
+  return PROJECT_ICON_PALETTE[index] ?? "blue";
+}
+
+/** Derives the stable monogram and generated colors used when a project has no icon. */
+export function deriveProjectIdentity(projectName: string): ProjectIdentity {
+  return {
+    monogram: projectMonogram(projectName),
+    color: projectColor(projectName),
+  };
+}
+
+/**
+ * The automatic icon for a project, as the monogram to draw and the palette
+ * colour to draw it in. The title is the only input, exactly as in the
+ * sidebar — an extension and the host must land on the same badge.
+ */
+export function automaticProjectIcon(title: string): {
+  readonly text: string;
+  readonly color: ProjectIconColor;
+} {
+  const identity = deriveProjectIdentity(title);
+  return { text: identity.monogram, color: identity.color };
+}

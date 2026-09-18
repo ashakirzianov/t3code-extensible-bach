@@ -53,30 +53,6 @@ export type EnvironmentAuthorizationError = {
     | "extension";
 };
 
-export type ExtensionAutomaticProjectIconName =
-  | "bot"
-  | "book-open"
-  | "cloud-cog"
-  | "database"
-  | "monitor"
-  | "gamepad-2"
-  | "image"
-  | "smartphone"
-  | "music"
-  | "package"
-  | "shield-check"
-  | "server"
-  | "shopping-bag"
-  | "terminal"
-  | "flask-conical"
-  | "video"
-  | "earth"
-  | "code-xml"
-  | "braces"
-  | "circuit-board"
-  | "folder-code"
-  | "layers";
-
 export type ExtensionBadge =
   | {
       readonly kind: "none";
@@ -194,7 +170,7 @@ export type ExtensionProjectIcon = {
   readonly override: ExtensionProjectIconOverride | null;
   readonly faviconUrl: string | null;
   readonly automatic: {
-    readonly name: ExtensionAutomaticProjectIconName;
+    readonly text: string;
     readonly color: 
       | "gray"
       | "red"

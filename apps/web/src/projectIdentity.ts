@@ -1,43 +1,8 @@
-import { PROJECT_ICON_COLORS } from "./projectIconColors";
-import type { ProjectIconColor } from "@t3tools/contracts";
-
-/** Visual identity tokens for a generated project badge. */
-export interface ProjectIdentity {
-  readonly monogram: string;
-  readonly color: ProjectIconColor;
-}
-
-function normalizeProjectName(projectName: string): string {
-  return projectName.normalize("NFKC").trim();
-}
-
-function projectMonogram(projectName: string): string {
-  const words = normalizeProjectName(projectName).match(/[\p{L}\p{N}]+/gu) ?? [];
-  const firstWord = words[0];
-  if (!firstWord) return "PR";
-
-  const glyphs = Array.from(firstWord);
-  const first = glyphs[0] ?? "P";
-  const second =
-    glyphs.slice(1).find((glyph) => /\p{N}/u.test(glyph)) ??
-    (words.length > 1 ? Array.from(words.at(-1) ?? "")[0] : glyphs.at(-1)) ??
-    first;
-  return Array.from(`${first}${second}`.toUpperCase()).slice(0, 2).join("");
-}
-
-function projectColor(projectName: string): ProjectIconColor {
-  const seed = normalizeProjectName(projectName).toLocaleLowerCase("en-US") || "project";
-  let index = 0;
-  for (const glyph of seed) {
-    index = (index * 31 + (glyph.codePointAt(0) ?? 0)) % PROJECT_ICON_COLORS.length;
-  }
-  return PROJECT_ICON_COLORS[index]?.value ?? "blue";
-}
-
-/** Derives the stable monogram and generated colors used when a project has no icon. */
-export function deriveProjectIdentity(projectName: string): ProjectIdentity {
-  return {
-    monogram: projectMonogram(projectName),
-    color: projectColor(projectName),
-  };
-}
+/**
+ * Fork note: the derivation itself lives in `@t3tools/shared/projectIcon`.
+ *
+ * The server answers `extensions.projectIcons` with the same automatic icon,
+ * so an extension draws what the sidebar draws. One copy is what stops the two
+ * drifting; this module stays as the web's import path for it.
+ */
+export { deriveProjectIdentity, type ProjectIdentity } from "@t3tools/shared/projectIcon";

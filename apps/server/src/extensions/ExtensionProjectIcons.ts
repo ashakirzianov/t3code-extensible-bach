@@ -51,7 +51,7 @@ export const resolveExtensionProjectIcons = Effect.fn("extensions.projectIcons")
           icon: {
             override: toOverride(project.projectIcon),
             faviconUrl: url === null || isProjectFaviconFallbackUrl(url) ? null : url,
-            automatic: withColorCss(automaticProjectIcon(project.title, project.workspaceRoot)),
+            automatic: withColorCss(automaticProjectIcon(project.title)),
           } satisfies ExtensionProjectIcon,
         })),
       ),

@@ -43,11 +43,12 @@ describe("resolveExtensionProjectIcons", () => {
       ]);
       expect(projects[2]?.icon.faviconUrl).toBe("/api/assets/signed/plain/favicon.svg");
       // Always there, so a failed image always has something to fall back to.
-      expect(projects.every((entry) => entry.icon.automatic.name.length > 0)).toBe(true);
+      expect(projects.every((entry) => entry.icon.automatic.text.length > 0)).toBe(true);
+      // The monogram and hashed colour the sidebar draws for the same title.
       expect(projects[2]?.icon.automatic).toEqual({
-        name: "server",
-        color: "blue",
-        colorCss: { light: "oklch(54.6% 0.245 262.881)", dark: "oklch(70.7% 0.165 254.624)" },
+        text: "CA",
+        color: "lime",
+        colorCss: { light: "oklch(64.8% 0.2 131.684)", dark: "oklch(84.1% 0.238 128.85)" },
       });
     }),
   );

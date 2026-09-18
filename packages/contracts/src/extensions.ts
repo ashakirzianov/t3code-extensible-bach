@@ -430,46 +430,18 @@ export type ExtensionProjectIconOverride = typeof ExtensionProjectIconOverride.T
  * Colours come as the palette name (`color`) and as the CSS value the host
  * draws it in (`colorCss`), so a reader needs no colour table of its own.
  */
-/**
- * Every name `automatic` can carry — a closed set. A consumer that draws these
- * from its own copies (no Lucide dependency) can rely on having all of them: a
- * name joins this list only with a protocol change, never silently.
- */
-export const EXTENSION_AUTOMATIC_PROJECT_ICON_NAMES = [
-  "bot",
-  "book-open",
-  "cloud-cog",
-  "database",
-  "monitor",
-  "gamepad-2",
-  "image",
-  "smartphone",
-  "music",
-  "package",
-  "shield-check",
-  "server",
-  "shopping-bag",
-  "terminal",
-  "flask-conical",
-  "video",
-  "earth",
-  "code-xml",
-  "braces",
-  "circuit-board",
-  "folder-code",
-  "layers",
-] as const;
-export const ExtensionAutomaticProjectIconName = Schema.Literals(
-  EXTENSION_AUTOMATIC_PROJECT_ICON_NAMES,
-).annotate({ identifier: "ExtensionAutomaticProjectIconName" });
-export type ExtensionAutomaticProjectIconName = typeof ExtensionAutomaticProjectIconName.Type;
-
 export const ExtensionProjectIcon = Schema.Struct({
   override: Schema.NullOr(ExtensionProjectIconOverride),
   faviconUrl: Schema.NullOr(BoundedString(2048)),
+  /**
+   * A monogram on a colour hashed from the project's name — the same two
+   * fields as a `monogram` override, and drawn the same way. Nothing here is
+   * derived from what the name means, so there is no icon vocabulary to keep
+   * in step and no dependency on Lucide.
+   */
   automatic: Schema.Struct({
-    /** One of `EXTENSION_AUTOMATIC_PROJECT_ICON_NAMES`, a closed set of Lucide names. */
-    name: ExtensionAutomaticProjectIconName,
+    /** One or two graphemes, already uppercased. Draw it as text. */
+    text: BoundedString(32),
     color: ProjectIconColor,
     colorCss: ExtensionProjectIconColorCss,
   }),

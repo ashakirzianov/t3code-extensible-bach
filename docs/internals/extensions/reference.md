@@ -147,22 +147,22 @@ name when it has nothing better. `extensions.projectIcons` answers with every pr
 in the three halves the host itself resolves, kept apart rather than flattened into one
 picture:
 
-- `override` — what the user chose in Project settings, an emoji or a Lucide icon and
-  colour. When it is set, draw it and ignore the rest.
+- `override` — what the user chose in Project settings: an emoji, a Lucide icon and colour,
+  or a monogram and colour. When it is set, draw it and ignore the rest.
 - `faviconUrl` — the project's own favicon as a signed, same-origin path an `<img>` loads as
   is, the same URL the sidebar uses. `null` when the project has none. It expires in about an
   hour, so ask again when you render rather than keeping it.
-- `automatic` — a Lucide icon name and a colour. Always present: it is what to draw when
-  there is neither of the others, and what to fall back to if the favicon fails to load.
+- `automatic` — a monogram and a colour. Always present: it is what to draw when there is
+  neither of the others, and what to fall back to if the favicon fails to load.
 
-The automatic name is one of a **closed set** of 22 Lucide names, enumerated in the schema as
-`ExtensionAutomaticProjectIconName`: `bot`, `book-open`, `cloud-cog`, `database`, `monitor`,
-`gamepad-2`, `image`, `smartphone`, `music`, `package`, `shield-check`, `server`,
-`shopping-bag`, `terminal`, `flask-conical`, `video`, `earth`, `code-xml`, `braces`,
-`circuit-board`, `folder-code`, `layers`. A consumer that draws them from its own copies,
-without a Lucide dependency, can rely on that list being complete: a name joins it only
-with a protocol change. An override's Lucide name is the user's choice and is not limited
-to this set.
+`automatic.text` is one or two graphemes taken from the project's name and already
+uppercased — draw it as text, in `automatic.color`. It carries the same two fields as a
+`monogram` override, so one drawing routine serves both. Nothing is inferred from what the
+name means, so there is no icon vocabulary to keep in step and no Lucide dependency: the
+host draws it as bold monospace text on a tile tinted from the same colour, and a consumer
+is free to draw it however it likes. The colour is hashed from the name, so it is stable
+for a project and differs between projects; both text and colour ignore case and
+surrounding whitespace. A project whose name has no letters or digits at all gets `PR`.
 
 Colours come twice: `color` is the palette name, and `colorCss` is the CSS value the host
 draws it in — `light` on light themes, `dark` when the host's root element has the `dark`
@@ -807,10 +807,6 @@ stream of the listed element rather than a single result.
 | `message` | string | yes |
 | `requiredScope` | `"orchestration:read"` \| `"orchestration:operate"` \| `"terminal:operate"` \| `"review:write"` \| `"access:read"` \| `"access:write"` \| `"relay:read"` \| `"relay:write"` \| `"extension"` | yes |
 
-### ExtensionAutomaticProjectIconName
-
-`string`. One of: `"bot"`, `"book-open"`, `"cloud-cog"`, `"database"`, `"monitor"`, `"gamepad-2"`, `"image"`, `"smartphone"`, `"music"`, `"package"`, `"shield-check"`, `"server"`, `"shopping-bag"`, `"terminal"`, `"flask-conical"`, `"video"`, `"earth"`, `"code-xml"`, `"braces"`, `"circuit-board"`, `"folder-code"`, `"layers"`.
-
 ### ExtensionBadge
 
 One of 3 shapes.
@@ -996,7 +992,7 @@ No fields.
 | --- | --- | --- |
 | `override` | [`ExtensionProjectIconOverride`](#extensionprojecticonoverride) \| null | yes |
 | `faviconUrl` | string \| null | yes |
-| `automatic` | object (name, color, colorCss) | yes |
+| `automatic` | object (text, color, colorCss) | yes |
 
 ### ExtensionProjectIconColorCss
 

@@ -1,44 +1,29 @@
-import { EXTENSION_AUTOMATIC_PROJECT_ICON_NAMES } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  automaticProjectIcon,
-  PROJECT_ICON_COLOR_BY_NAME,
-  PROJECT_ICON_LUCIDE_NAMES,
-  PROJECT_ICON_NAMES,
-} from "./projectIcon.ts";
+import { automaticProjectIcon, PROJECT_ICON_COLOR_CSS } from "./projectIcon.ts";
 
 describe("the automatic project icon", () => {
-  it("gives every icon a Lucide name and a colour, so no project renders blank", () => {
-    for (const icon of PROJECT_ICON_NAMES) {
-      expect(PROJECT_ICON_LUCIDE_NAMES[icon]).toMatch(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
-      expect(PROJECT_ICON_COLOR_BY_NAME[icon]).toBeTruthy();
+  it("is the project's monogram on a colour hashed from its name", () => {
+    expect(automaticProjectIcon("Silver Orchard").text).toBe("SO");
+    expect(automaticProjectIcon("ios-client").text).toBe("IC");
+    expect(automaticProjectIcon("m7forge").text).toBe("M7");
+    // Two projects whose names differ get told apart by the colour too.
+    expect(automaticProjectIcon("Nebula").color).not.toBe(automaticProjectIcon("Juniper").color);
+  });
+
+  it("never renders blank: an unnameable project still gets a badge", () => {
+    expect(automaticProjectIcon("").text).toBe("PR");
+    expect(automaticProjectIcon("---").text).toBe("PR");
+  });
+
+  it("is stable for the same project, and ignores case and surrounding space", () => {
+    expect(automaticProjectIcon("  NEBULA  ").color).toBe(automaticProjectIcon("Nebula").color);
+    expect(automaticProjectIcon("Nebula")).toEqual(automaticProjectIcon("Nebula"));
+  });
+
+  it("only ever picks a colour the host has a CSS value for", () => {
+    for (const name of ["Jobs", "Scripts and Extractors", "T3", "文書", "", "---"]) {
+      expect(PROJECT_ICON_COLOR_CSS[automaticProjectIcon(name).color]).toBeTruthy();
     }
-  });
-
-  it("reads the project's name the way the host does", () => {
-    expect(automaticProjectIcon("ios-client", "/code/ios-client")).toEqual({
-      name: "smartphone",
-      color: "lime",
-    });
-  });
-
-  it("falls back to the folder name, and is stable for the same project", () => {
-    const first = automaticProjectIcon("", "/code/customer-api");
-    expect(first).toEqual({ name: "server", color: "blue" });
-    expect(automaticProjectIcon("", "/code/customer-api")).toEqual(first);
-  });
-});
-
-describe("the automatic icon's name set", () => {
-  it("is exactly the closed set the protocol publishes, in both directions", () => {
-    // Every name the model can produce is published, and every published name
-    // is producible — so a consumer drawing them from its own copies has all
-    // of them, and none it will never be sent.
-    const produced = new Set(Object.values(PROJECT_ICON_LUCIDE_NAMES));
-    expect([...produced].toSorted()).toEqual(
-      [...EXTENSION_AUTOMATIC_PROJECT_ICON_NAMES].toSorted(),
-    );
-    expect(EXTENSION_AUTOMATIC_PROJECT_ICON_NAMES).toHaveLength(PROJECT_ICON_NAMES.length);
   });
 });

@@ -24,6 +24,16 @@ describe("project icon colours sent to extensions", () => {
     }
   });
 
+  // The automatic icon's colour is a hash modulo the palette's length, indexed
+  // into the order of the table in `@t3tools/shared/projectIcon`. A colour
+  // added to the picker, or moved within it, has to move there too or the
+  // sidebar and an extension start drawing the same project differently.
+  it("are the picker's colours, in the picker's order", () => {
+    expect(Object.keys(PROJECT_ICON_COLOR_CSS)).toEqual(
+      PROJECT_ICON_COLORS.map(({ value }) => value),
+    );
+  });
+
   it("match the installed Tailwind palette at those shades", () => {
     for (const { value } of PROJECT_ICON_COLORS) {
       expect(PROJECT_ICON_COLOR_CSS[value]).toEqual({

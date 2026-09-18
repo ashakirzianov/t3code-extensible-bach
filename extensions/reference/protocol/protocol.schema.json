@@ -148,33 +148,6 @@
       ],
       "additionalProperties": false
     },
-    "ExtensionAutomaticProjectIconName": {
-      "type": "string",
-      "enum": [
-        "bot",
-        "book-open",
-        "cloud-cog",
-        "database",
-        "monitor",
-        "gamepad-2",
-        "image",
-        "smartphone",
-        "music",
-        "package",
-        "shield-check",
-        "server",
-        "shopping-bag",
-        "terminal",
-        "flask-conical",
-        "video",
-        "earth",
-        "code-xml",
-        "braces",
-        "circuit-board",
-        "folder-code",
-        "layers"
-      ]
-    },
     "ExtensionBadge": {
       "anyOf": [
         {
@@ -616,8 +589,10 @@
         "automatic": {
           "type": "object",
           "properties": {
-            "name": {
-              "$ref": "#/$defs/ExtensionAutomaticProjectIconName"
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32
             },
             "color": {
               "type": "string",
@@ -647,7 +622,7 @@
             }
           },
           "required": [
-            "name",
+            "text",
             "color",
             "colorCss"
           ],
