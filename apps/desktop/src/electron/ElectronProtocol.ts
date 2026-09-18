@@ -148,25 +148,29 @@ const registerDesktopSchemePrivileges = Effect.sync(registerDesktopSchemePrivile
 export const layerSchemePrivileges = Layer.effectDiscard(registerDesktopSchemePrivileges);
 
 /**
- * A remote environment's extension asset, fetched from the forwarded port this
- * process opened and returned under the renderer's own origin — the only way a
- * bundle that does not live here can be `import()`ed under `script-src 'self'`.
+ * An extension asset, fetched from the backend that owns it and returned under
+ * the renderer's own origin — the only way a bundle that does not live in the
+ * client's asset directory can be `import()`ed under `script-src 'self'`.
  * See `../extensions/RemoteExtensionAssets.ts` for why this is not a relay.
+ *
+ * Two callers, one shape: `/__ext-remote/<port>/ext-assets/…` for an
+ * environment this app reached over SSH, and `/ext-assets/…` for the primary
+ * backend this process started. Both resolve to a URL or to `null`, and `null`
+ * is a 404 — never the client's index.html, which an `import()` would read as a
+ * syntax error rather than a missing module.
  *
  * Runs before either serving mode, so it works the same whether the renderer is
  * the packaged client on disk or a dev server.
  */
-async function proxyRemoteExtensionAsset(
+async function proxyExtensionAsset(
   request: Request,
   contentSecurityPolicy: string,
+  resolve: (input: { readonly method: string; readonly pathname: string }) => string | null,
 ): Promise<Response> {
   const requestUrl = new URL(request.url);
   const target =
     requestUrl.host === DESKTOP_HOST
-      ? RemoteExtensionAssets.resolveRemoteExtensionAsset({
-          method: request.method,
-          pathname: requestUrl.pathname,
-        })
+      ? resolve({ method: request.method, pathname: requestUrl.pathname })
       : null;
   if (target === null)
     return withContentSecurityPolicy(new Response(null, { status: 404 }), contentSecurityPolicy);
@@ -182,7 +186,7 @@ async function proxyRemoteExtensionAsset(
   // any more. Both answer 404: the asset route answers 404 for every failure
   // too, and distinguishing them only helps a prober.
   const response = await Electron.net
-    .fetch(target, RemoteExtensionAssets.remoteExtensionAssetRequestInit(request.method))
+    .fetch(target, RemoteExtensionAssets.extensionAssetProxyRequestInit(request.method))
     .catch(() => new Response(null, { status: 404 }));
   return withContentSecurityPolicy(response, contentSecurityPolicy);
 }
@@ -307,10 +311,24 @@ export const make = Effect.gen(function* () {
         Effect.try({
           try: () => {
             Electron.protocol.handle(input.scheme, async (request) => {
-              if (
-                RemoteExtensionAssets.isRemoteExtensionAssetRoute(new URL(request.url).pathname)
-              ) {
-                return proxyRemoteExtensionAsset(request, contentSecurityPolicy);
+              const pathname = new URL(request.url).pathname;
+              if (RemoteExtensionAssets.isRemoteExtensionAssetRoute(pathname)) {
+                return proxyExtensionAsset(
+                  request,
+                  contentSecurityPolicy,
+                  RemoteExtensionAssets.resolveRemoteExtensionAsset,
+                );
+              }
+              // The primary backend's own asset route, bridged in both serving
+              // modes: a packaged renderer is a static directory with no
+              // `/ext-assets` in it, and a dev renderer is a Vite server whose
+              // proxy is a development-only accident to depend on.
+              if (RemoteExtensionAssets.isPrimaryExtensionAssetRoute(pathname)) {
+                return proxyExtensionAsset(
+                  request,
+                  contentSecurityPolicy,
+                  RemoteExtensionAssets.resolvePrimaryExtensionAsset,
+                );
               }
               if ("assetDirectory" in input) {
                 return withContentSecurityPolicy(

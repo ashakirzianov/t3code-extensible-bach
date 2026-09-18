@@ -2,10 +2,14 @@ import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
   clearRemoteEnvironments,
+  forgetPrimaryBackend,
   forgetRemoteEnvironment,
+  isPrimaryExtensionAssetRoute,
   isRemoteExtensionAssetRoute,
+  rememberPrimaryBackend,
   rememberRemoteEnvironment,
-  remoteExtensionAssetRequestInit,
+  extensionAssetProxyRequestInit,
+  resolvePrimaryExtensionAsset,
   resolveRemoteExtensionAsset,
 } from "./RemoteExtensionAssets.ts";
 
@@ -96,7 +100,7 @@ describe("the remote extension asset proxy", () => {
   });
 
   it("forwards with no credential and no redirect of the far side's choosing", () => {
-    const init = remoteExtensionAssetRequestInit("GET");
+    const init = extensionAssetProxyRequestInit("GET");
     // A followed 30x would end "a port, never a URL" at the far side's first
     // redirect, and whatever answered would come back as script under this
     // app's own origin.
@@ -106,7 +110,7 @@ describe("the remote extension asset proxy", () => {
     // own login event.
     expect(init.credentials).toBe("omit");
     expect(init.headers).toBeUndefined();
-    expect(remoteExtensionAssetRequestInit("HEAD").method).toBe("HEAD");
+    expect(extensionAssetProxyRequestInit("HEAD").method).toBe("HEAD");
   });
 
   it("never remembers a base that is not loopback", () => {
@@ -180,5 +184,75 @@ describe("the remote extension asset proxy", () => {
     expect(
       resolveRemoteExtensionAsset({ method: "GET", pathname: `/__ext-remote/54321${assetPath}` }),
     ).not.toBeNull();
+  });
+});
+
+const primaryBase = "http://127.0.0.1:3773/";
+
+describe("the primary environment's asset bridge", () => {
+  beforeEach(() => {
+    forgetPrimaryBackend();
+  });
+
+  it("forwards the renderer's own asset path to the backend this process started", () => {
+    rememberPrimaryBackend(primaryBase);
+    expect(resolvePrimaryExtensionAsset({ method: "GET", pathname: assetPath })).toBe(
+      `http://127.0.0.1:3773${assetPath}`,
+    );
+  });
+
+  /*
+   * The protocol handler is registered before there is a backend to name, and
+   * upstream now boots a window with no local backend at all. Both look the
+   * same from here, and both have to be a 404 rather than a guess.
+   */
+  it("has nowhere to send a request until a backend is named, and 404s meanwhile", () => {
+    expect(resolvePrimaryExtensionAsset({ method: "GET", pathname: assetPath })).toBeNull();
+  });
+
+  it("stops forwarding when the local environment is gone", () => {
+    rememberPrimaryBackend(primaryBase);
+    forgetPrimaryBackend();
+    expect(resolvePrimaryExtensionAsset({ method: "GET", pathname: assetPath })).toBeNull();
+  });
+
+  it("carries only the asset route, never the backend's own API", () => {
+    rememberPrimaryBackend(primaryBase);
+    for (const pathname of [
+      "/api/environment",
+      "/ext-api/env-1/bach/agents",
+      "/ext-assets",
+      "/",
+      "/index.html",
+    ]) {
+      expect(resolvePrimaryExtensionAsset({ method: "GET", pathname })).toBeNull();
+    }
+  });
+
+  it("refuses a traversal out of the asset route, encoded or not", () => {
+    rememberPrimaryBackend(primaryBase);
+    for (const pathname of [
+      "/ext-assets/../api/environment",
+      "/ext-assets/%2e%2e/api/environment",
+      "/ext-assets/a\\b",
+    ]) {
+      expect(resolvePrimaryExtensionAsset({ method: "GET", pathname })).toBeNull();
+    }
+  });
+
+  it("answers GET and HEAD and nothing else: an asset is read, never written", () => {
+    rememberPrimaryBackend(primaryBase);
+    expect(resolvePrimaryExtensionAsset({ method: "HEAD", pathname: assetPath })).not.toBeNull();
+    for (const method of ["POST", "PUT", "DELETE", "OPTIONS"]) {
+      expect(resolvePrimaryExtensionAsset({ method, pathname: assetPath })).toBeNull();
+    }
+  });
+
+  it("knows which paths are addressed to it, so a refusal 404s instead of falling through", () => {
+    expect(isPrimaryExtensionAssetRoute(assetPath)).toBe(true);
+    expect(isPrimaryExtensionAssetRoute("/ext-assets/nonsense")).toBe(true);
+    expect(isPrimaryExtensionAssetRoute("/ext-assets")).toBe(false);
+    expect(isPrimaryExtensionAssetRoute("/ext/env-1/bach")).toBe(false);
+    expect(isPrimaryExtensionAssetRoute(`/__ext-remote/54321${assetPath}`)).toBe(false);
   });
 });

@@ -32,19 +32,28 @@ import {
  *
  * **The desktop renderer is the case a plain origin comparison gets wrong.** It
  * does not load the app over http: it loads `t3code://app`, and the protocol
- * handler proxies every path to the primary backend
- * (`apps/desktop/src/electron/ElectronProtocol.ts`, `proxyRequest` re-bases
- * `pathname + search` onto the target origin). So a page-relative
+ * handler forwards `/ext-assets/...` on that origin to the primary backend
+ * (`apps/desktop/src/electron/ElectronProtocol.ts`,
+ * `RemoteExtensionAssets.resolvePrimaryExtensionAsset`). So a page-relative
  * `/ext-assets/...` import resolves to `t3code://app/ext-assets/...`, which is
- * the page's own origin — `'self'` covers it, and it reaches the primary
+ * the page's own origin — `'self'` covers it — and it reaches the primary
  * backend. Comparing the environment's `httpBaseUrl` (`http://127.0.0.1:3773`)
  * with the renderer's origin (`t3code://app`) says "different origin" and hides
  * the local environment's extensions behind the remote-server message, which is
  * exactly what happened on the first packaged build to run this path.
  *
+ * **Why that route is named here rather than assumed.** Until upstream's
+ * "allow disabling the local environment" change, the packaged renderer's
+ * protocol handler proxied *every* path to the primary backend, so the asset
+ * route arrived there by accident of the transport. It does not any more: a
+ * packaged renderer is a directory of static files, which has no `/ext-assets`
+ * in it, and the one route that still has to reach the backend is bridged
+ * explicitly. This premise is now a thing the desktop app does on purpose, with
+ * tests, rather than a side effect it could lose again in an uptake.
+ *
  * That allowance is scoped to the **primary** environment on purpose: it is the
- * only one the protocol handler proxies to. Every other environment goes
- * through the asset proxy or not at all.
+ * only one the protocol handler bridges this way. Every other environment goes
+ * through the remote asset proxy or not at all.
  */
 export type ExtensionBundleAccess =
   | { readonly kind: "direct" }

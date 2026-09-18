@@ -65,8 +65,27 @@ export function parseExtensionRemoteAssetPath(
   const port = parsePort(rest.slice(0, separator));
   if (port === null) return null;
   const assetPath = rest.slice(separator);
-  if (!isAllowedAssetPath(assetPath)) return null;
+  if (!isExtensionAssetPath(assetPath)) return null;
   return { port, assetPath };
+}
+
+/**
+ * Whether a path is one an environment's asset route would serve, and refuses
+ * to walk out of.
+ *
+ * Exported because the same question is asked of a path that arrives without a
+ * port in front of it: the desktop protocol handler forwards the renderer's own
+ * `/ext-assets/…` to the *primary* backend, and that path has to clear exactly
+ * the same bar as a remote one. One predicate, so the two cannot drift.
+ */
+export function isExtensionAssetPath(assetPath: string): boolean {
+  if (!assetPath.startsWith(`${EXTENSION_ASSET_ROUTE_PREFIX}/`)) return false;
+  if (assetPath.includes("\0") || assetPath.includes("\\")) return false;
+  // Traversal is checked before any decoding, and on the encoded form too, so
+  // neither `..` nor `%2e%2e` can walk out of the asset route.
+  const lowered = assetPath.toLowerCase();
+  if (lowered.includes("..") || lowered.includes("%2e")) return false;
+  return true;
 }
 
 /**
@@ -99,14 +118,4 @@ function parsePort(value: string): number | null {
   if (!/^[0-9]{1,5}$/.test(value)) return null;
   const port = Number.parseInt(value, 10);
   return port >= 1 && port <= MAX_PORT ? port : null;
-}
-
-function isAllowedAssetPath(assetPath: string): boolean {
-  if (!assetPath.startsWith(`${EXTENSION_ASSET_ROUTE_PREFIX}/`)) return false;
-  if (assetPath.includes("\0") || assetPath.includes("\\")) return false;
-  // Traversal is checked before any decoding, and on the encoded form too, so
-  // neither `..` nor `%2e%2e` can walk out of the asset route.
-  const lowered = assetPath.toLowerCase();
-  if (lowered.includes("..") || lowered.includes("%2e")) return false;
-  return true;
 }

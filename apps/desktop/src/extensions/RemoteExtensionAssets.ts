@@ -1,5 +1,7 @@
 import {
+  EXTENSION_ASSET_ROUTE_PREFIX,
   EXTENSION_REMOTE_ASSET_ROUTE_PREFIX,
+  isExtensionAssetPath,
   loopbackHttpBasePort,
   parseExtensionRemoteAssetPath,
 } from "@t3tools/shared/extensionRemoteAssets";
@@ -132,7 +134,7 @@ export function resolveRemoteExtensionAsset(input: {
  *   event.
  * - No header from the renderer is copied, for the same reason.
  */
-export function remoteExtensionAssetRequestInit(method: string): RequestInit {
+export function extensionAssetProxyRequestInit(method: string): RequestInit {
   return { method, redirect: "error", credentials: "omit" };
 }
 
@@ -144,4 +146,72 @@ export function remoteExtensionAssetRequestInit(method: string): RequestInit {
  */
 export function isRemoteExtensionAssetRoute(pathname: string): boolean {
   return pathname.startsWith(`${EXTENSION_REMOTE_ASSET_ROUTE_PREFIX}/`);
+}
+
+/**
+ * The same bridge, for the environment this app runs itself.
+ *
+ * The renderer's *primary* environment used to need no bridge at all: the
+ * packaged app loaded `t3code://app` from a protocol handler that proxied every
+ * path to the local backend, so a page-relative `/ext-assets/…` simply arrived
+ * there. Upstream's "allow disabling the local environment" work made the
+ * packaged renderer a directory of static files instead, and a static directory
+ * has no `/ext-assets`: the import 404s, and a 404 on a module import is a
+ * reload loop away from unusable.
+ *
+ * So the asset route is bridged explicitly, in both serving modes, with the
+ * same three locks as the remote path — only `/ext-assets/…`, only `GET` and
+ * `HEAD`, no renderer header forwarded — and one fewer degree of freedom: there
+ * is no port in the path to vary, because the destination is the one backend
+ * this process started.
+ */
+let primaryBackendHttpBaseUrl: string | null = null;
+
+/**
+ * Told by `bootstrap` once the backend's endpoint is resolved, which is later
+ * than the protocol handler is registered — the handler is up before there is a
+ * backend to name, and upstream now boots a window with no local backend at
+ * all. Until this is called (and forever, when the local environment is
+ * disabled) the route has nowhere to go and 404s.
+ */
+export function rememberPrimaryBackend(httpBaseUrl: string): void {
+  primaryBackendHttpBaseUrl = httpBaseUrl;
+}
+
+/** Test seam, and the way back to "there is no local backend". */
+export function forgetPrimaryBackend(): void {
+  primaryBackendHttpBaseUrl = null;
+}
+
+/**
+ * The URL a renderer-origin `/ext-assets/…` forwards to, or `null` when the
+ * request is refused or there is no local backend to forward it to.
+ *
+ * The query string is dropped for the same reason as the remote path: a minted
+ * asset URL carries none.
+ */
+export function resolvePrimaryExtensionAsset(input: {
+  readonly method: string;
+  readonly pathname: string;
+  readonly lookup?: () => string | null;
+}): string | null {
+  if (input.method !== "GET" && input.method !== "HEAD") return null;
+  if (!isExtensionAssetPath(input.pathname)) return null;
+  const httpBaseUrl = (input.lookup ?? (() => primaryBackendHttpBaseUrl))();
+  if (httpBaseUrl === null) return null;
+  try {
+    return new URL(input.pathname, httpBaseUrl).toString();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether a path is addressed to the primary bridge at all. Same reason as
+ * `isRemoteExtensionAssetRoute`: a refusal here must be a 404 rather than the
+ * packaged client's index.html, which an `import()` would read as a syntax
+ * error instead of a missing module.
+ */
+export function isPrimaryExtensionAssetRoute(pathname: string): boolean {
+  return pathname.startsWith(`${EXTENSION_ASSET_ROUTE_PREFIX}/`);
 }
