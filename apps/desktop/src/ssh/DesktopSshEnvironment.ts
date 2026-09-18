@@ -171,8 +171,10 @@ export const make = Effect.gen(function* () {
  * long each port is its own, including the ends nobody asked for.
  */
 const tunnelObserver: SshTunnel.SshTunnelObserver = {
-  opened: ({ httpBaseUrl }) => RemoteExtensionAssets.rememberRemoteEnvironment(httpBaseUrl),
-  closed: ({ httpBaseUrl }) => RemoteExtensionAssets.forgetRemoteEnvironment(httpBaseUrl),
+  opened: ({ tunnelId, httpBaseUrl }) =>
+    RemoteExtensionAssets.rememberRemoteEnvironment({ tunnelId, httpBaseUrl }),
+  closed: ({ tunnelId, httpBaseUrl }) =>
+    RemoteExtensionAssets.forgetRemoteEnvironment({ tunnelId, httpBaseUrl }),
 };
 
 export const layer = (options: DesktopSshEnvironmentLayerOptions = {}) =>

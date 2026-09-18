@@ -496,11 +496,67 @@ describe("ssh tunnel scripts", () => {
    * is "ours" has to be exact at both ends. A port that stays claimed after the
    * tunnel is gone is one an unrelated local service may bind next.
    */
+  // An observer is a bystander. If one throws, the tunnel must still be built
+  // and — far more important — must still be torn down: the kill and the remote
+  // stop are in that same finalizer, and a throw that escaped would strand an
+  // ssh process and a remote server.
+  it.effect("carries on when the observer throws, on open and on close", () => {
+    let tunnelKillCount = 0;
+    let stopCommandCount = 0;
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.sync(() => {
+        const args = commandArgs(command);
+        if (args.includes("-N")) {
+          return makeRunningProcess(() => {
+            tunnelKillCount += 1;
+          });
+        }
+        if (args.includes("sh") && args.includes("--")) {
+          return makeSuccessfulProcess('{"remotePort":3773}\n');
+        }
+        if (args.includes("sh")) {
+          stopCommandCount += 1;
+          return makeSuccessfulProcess('{"stopped":true}\n');
+        }
+        return makeSuccessfulProcess("\n");
+      }),
+    );
+    const throwing = () => {
+      throw new Error("observer is broken");
+    };
+    const layer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Layer.succeed(HttpClient.HttpClient, testHttpClient),
+      Layer.succeed(NetService.NetService, testNetService),
+      SshPasswordPrompt.disabledLayer,
+      SshEnvironmentManager.layer({
+        resolveCliRunner: Effect.succeed(ARCHIVE),
+        onTunnel: { opened: throwing, closed: throwing },
+      }),
+    );
+    const target = { alias: "devbox", hostname: "devbox", username: null, port: null } as const;
+
+    return Effect.gen(function* () {
+      const manager = yield* SshEnvironmentManager;
+      const bootstrap = yield* manager.ensureEnvironment(target);
+      assert.equal(bootstrap.httpBaseUrl, "http://127.0.0.1:41773/");
+
+      yield* manager.disconnectEnvironment(target);
+      assert.equal(tunnelKillCount, 1);
+      assert.equal(stopCommandCount, 1);
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
   it.effect.each([
     "a disconnect whose remote stop fails",
     "an ssh process that dies on its own",
   ] as const)("tells an observer the tunnel closed after %s", (ending) => {
-    const events: Array<{ readonly event: string; readonly localPort: number }> = [];
+    const events: Array<{
+      readonly event: string;
+      readonly localPort: number;
+      readonly tunnelId: string;
+    }> = [];
     let signalClosed: (() => void) | null = null;
     const closed = new Promise<void>((resolve) => {
       signalClosed = resolve;
@@ -539,9 +595,10 @@ describe("ssh tunnel scripts", () => {
       SshEnvironmentManager.layer({
         resolveCliRunner: Effect.succeed(ARCHIVE),
         onTunnel: {
-          opened: ({ localPort }) => events.push({ event: "opened", localPort }),
-          closed: ({ localPort }) => {
-            events.push({ event: "closed", localPort });
+          opened: ({ localPort, tunnelId }) =>
+            events.push({ event: "opened", localPort, tunnelId }),
+          closed: ({ localPort, tunnelId }) => {
+            events.push({ event: "closed", localPort, tunnelId });
             signalClosed?.();
           },
         },
@@ -552,7 +609,10 @@ describe("ssh tunnel scripts", () => {
     return Effect.gen(function* () {
       const manager = yield* SshEnvironmentManager;
       const bootstrap = yield* manager.ensureEnvironment(target);
-      assert.deepEqual(events, [{ event: "opened", localPort: 41773 }]);
+      assert.lengthOf(events, 1);
+      assert.include(events[0], { event: "opened", localPort: 41773 });
+      const tunnelId = events[0]?.tunnelId;
+      assert.isString(tunnelId);
       assert.equal(bootstrap.httpBaseUrl, "http://127.0.0.1:41773/");
 
       if (ending === "an ssh process that dies on its own") {
@@ -566,7 +626,11 @@ describe("ssh tunnel scripts", () => {
         assert.isTrue(Result.isFailure(disconnected));
       }
 
-      assert.deepEqual(events.at(-1), { event: "closed", localPort: 41773 });
+      // The same tunnel, named: a close that could not be told apart from the
+      // next tunnel's on the same port is the bug this id exists for.
+      assert.deepEqual(events.at(-1), { event: "closed", localPort: 41773, tunnelId });
+      // One open, one close, and no repeat however many places raised it.
+      assert.lengthOf(events, 2);
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 

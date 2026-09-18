@@ -40,29 +40,47 @@ import {
  * async callback registered with Electron, not an Effect, and this is a cache
  * of the app's own tunnels rather than state anything else reads.
  */
-const openEnvironments = new Map<number, string>();
+const openEnvironments = new Map<
+  number,
+  { readonly tunnelId: string; readonly httpBaseUrl: string }
+>();
 
 /**
  * Remembered when the tunnel opens and forgotten when it closes — both told by
  * the tunnel manager itself (`SshEnvironmentManagerOptions.onTunnel`), which is
- * the only party that knows when the ssh process died on its own. Keying by the
- * forwarded port rather than by the SSH target is what makes that exact: a port
- * is what the path names, and a target can be spelled more than one way.
+ * the only party that knows when the ssh process died on its own. The map is
+ * keyed by the forwarded port, because a port is what the request path names.
  *
  * The lifetime matters more than it looks: a port this app has stopped
  * forwarding is a port some unrelated local service may bind next, and
  * answering for it would hand that service the app's own origin.
  */
-export function rememberRemoteEnvironment(httpBaseUrl: string): void {
-  const port = loopbackHttpBasePort(httpBaseUrl);
+export function rememberRemoteEnvironment(input: {
+  readonly tunnelId: string;
+  readonly httpBaseUrl: string;
+}): void {
+  const port = loopbackHttpBasePort(input.httpBaseUrl);
   if (port === null) return;
-  openEnvironments.set(port, httpBaseUrl);
+  openEnvironments.set(port, { tunnelId: input.tunnelId, httpBaseUrl: input.httpBaseUrl });
 }
 
-/** Forgotten when the tunnel goes, however it went. */
-export function forgetRemoteEnvironment(httpBaseUrl: string): void {
-  const port = loopbackHttpBasePort(httpBaseUrl);
+/**
+ * Forgotten when the tunnel goes, however it went — but only if the port is
+ * still that tunnel's.
+ *
+ * The key is the port and the events are not ordered with each other: a tunnel
+ * that died can be reported closed *after* the next tunnel was handed the same
+ * ephemeral port, and forgetting on the port alone would take a live
+ * environment's interface away. So the id has to match the one that put the
+ * entry there; a late `closed` for a superseded tunnel is a no-op.
+ */
+export function forgetRemoteEnvironment(input: {
+  readonly tunnelId: string;
+  readonly httpBaseUrl: string;
+}): void {
+  const port = loopbackHttpBasePort(input.httpBaseUrl);
   if (port === null) return;
+  if (openEnvironments.get(port)?.tunnelId !== input.tunnelId) return;
   openEnvironments.delete(port);
 }
 
@@ -71,7 +89,8 @@ export function clearRemoteEnvironments(): void {
   openEnvironments.clear();
 }
 
-const lookupOpenEnvironment = (port: number): string | undefined => openEnvironments.get(port);
+const lookupOpenEnvironment = (port: number): string | undefined =>
+  openEnvironments.get(port)?.httpBaseUrl;
 
 /**
  * The URL a request on the client's own origin forwards to, or `null` if it is
