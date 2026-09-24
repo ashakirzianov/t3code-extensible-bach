@@ -7,7 +7,7 @@ import { DatabaseMigratedAheadError, latestKnownMigrationId, runMigrations } fro
 
 /** A private in-memory database per test, so each starts from a fresh home. */
 const freshDatabase = <A, E>(effect: Effect.Effect<A, E, SqlClient.SqlClient>) =>
-  Effect.provide(effect, NodeSqliteClient.layerMemory());
+  Effect.provide(effect, NodeSqliteClient.layer({ filename: ":memory:" }));
 
 /** Records a migration this build does not know about, as a newer build would. */
 const recordFutureMigration = (id: number) =>

@@ -30,12 +30,12 @@ import * as ExtensionSupervisor from "./ExtensionSupervisor.ts";
 type HttpServerAddress = (typeof HttpServer.HttpServer)["Service"]["address"];
 
 const websocketUrlFrom = (address: HttpServerAddress): string => {
-  if (address._tag !== "TcpAddress") return "ws://127.0.0.1/ws";
-  const hostname =
-    address.hostname === "0.0.0.0" || address.hostname === "::" || address.hostname === "[::]"
-      ? "127.0.0.1"
-      : address.hostname;
-  const host = hostname.includes(":") && !hostname.startsWith("[") ? `[${hostname}]` : hostname;
+  if (address._tag === "UnixPathAddress") return "ws://127.0.0.1/ws";
+  // A wildcard bind is not a dialable host; an extension always reaches the
+  // server it was spawned by over loopback.
+  const literal = address.address.toString();
+  if (literal === "0.0.0.0" || literal === "::") return `ws://127.0.0.1:${address.port}/ws`;
+  const host = address._tag === "InetAddressV6" ? `[${literal}]` : literal;
   return `ws://${host}:${address.port}/ws`;
 };
 

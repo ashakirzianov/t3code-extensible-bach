@@ -2352,7 +2352,7 @@ export const stageBundledExtensions = Effect.fn("stageBundledExtensions")(functi
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const raw =
-    input.entries ?? (yield* Config.string(BUNDLED_EXTENSIONS_ENV).pipe(Config.withDefault("")));
+    input.entries ?? (yield* Config.String(BUNDLED_EXTENSIONS_ENV).pipe(Config.withDefault("")));
   const destinationRoot = path.join(input.stageResourcesDir, "extensions");
   yield* fs.remove(destinationRoot, { recursive: true, force: true }).pipe(Effect.ignore);
   yield* fs.makeDirectory(destinationRoot, { recursive: true });

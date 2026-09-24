@@ -83,7 +83,7 @@ const tailscaleServeFlag = Flag.Boolean("tailscale-serve").pipe(
  * checkout's build without editing settings. A settings entry of the same name
  * wins, which is what makes both safe.
  */
-export const extensionFlag = Flag.keyValuePair("extension").pipe(
+export const extensionFlag = Flag.KeyValuePair("extension").pipe(
   Flag.withDescription("Run an extension from a built folder, as `name=path`. Repeatable."),
   Flag.withDefault({}),
 );

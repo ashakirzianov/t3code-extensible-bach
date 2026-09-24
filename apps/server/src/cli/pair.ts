@@ -512,7 +512,7 @@ const tailscaleServePortFlag = Flag.Int("tailscale-serve-port").pipe(
   Flag.withDefault(DEFAULT_TAILSCALE_SERVE_PORT),
 );
 
-const extensionNameFlag = Flag.string("extension").pipe(
+const extensionNameFlag = Flag.String("extension").pipe(
   Flag.withSchema(ExtensionName),
   Flag.withDescription(
     "Mint an extension credential for this extension name instead of a browser pairing link.",
