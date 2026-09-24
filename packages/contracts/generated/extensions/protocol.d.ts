@@ -5,6 +5,7 @@
 export type ExtensionWsMethod =
   | "extensions.hello"
   | "extensions.registerTools"
+  | "extensions.registerResources"
   | "extensions.registerHttpPrefix"
   | "extensions.registerWebEntry"
   | "extensions.setBadge"
@@ -12,6 +13,7 @@ export type ExtensionWsMethod =
   | "extensions.respondTool"
   | "extensions.respondHttp"
   | "extensions.respondToolsForThread"
+  | "extensions.respondReadResource"
   | "extensions.projectIcons"
   | "extensions.generateText";
 
@@ -21,6 +23,7 @@ export interface ExtensionMethodErrors {
     | ExtensionNotFoundError
     | EnvironmentAuthorizationError;
   "extensions.registerTools": ExtensionHandshakeRequiredError | EnvironmentAuthorizationError;
+  "extensions.registerResources": ExtensionHandshakeRequiredError | EnvironmentAuthorizationError;
   "extensions.registerHttpPrefix":
     | ExtensionHandshakeRequiredError
     | ExtensionHttpPrefixCollisionError
@@ -31,6 +34,7 @@ export interface ExtensionMethodErrors {
   "extensions.respondTool": EnvironmentAuthorizationError;
   "extensions.respondHttp": EnvironmentAuthorizationError;
   "extensions.respondToolsForThread": EnvironmentAuthorizationError;
+  "extensions.respondReadResource": EnvironmentAuthorizationError;
   "extensions.projectIcons": EnvironmentAuthorizationError;
   "extensions.generateText":
     | ExtensionTextGenerationUnavailableError
@@ -76,6 +80,8 @@ export type ExtensionError =
   | ExtensionHandshakeRequiredError
   | ExtensionToolNameCollisionError
   | ExtensionUnknownToolError
+  | ExtensionResourceUriCollisionError
+  | ExtensionUnknownResourceError
   | ExtensionUnavailableError
   | ExtensionHttpPrefixCollisionError
   | ExtensionTextGenerationUnavailableError
@@ -271,6 +277,19 @@ export type ExtensionProtocolMismatchError = {
 
 export type ExtensionProtocolVersion = number;
 
+export type ExtensionReadResourceRequest = {
+  readonly requestId: ExtensionReadResourceRequestId;
+  readonly uri: ExtensionResourceUri;
+};
+
+export type ExtensionReadResourceRequestId = string;
+
+export type ExtensionReadResourceResult = {
+  readonly connectionId: ExtensionConnectionId;
+  readonly requestId: ExtensionReadResourceRequestId;
+  readonly contents: ReadonlyArray<ExtensionResourceContents>;
+};
+
 export type ExtensionRegisterHttpPrefixInput = {
   readonly prefix: ExtensionHttpPrefix;
 };
@@ -280,9 +299,18 @@ export type ExtensionRegisterHttpPrefixResult = {
   readonly basePath: string;
 };
 
+export type ExtensionRegisterResourcesInput = {
+  readonly resources: ReadonlyArray<ExtensionResourceDefinition>;
+};
+
+export type ExtensionRegisterResourcesResult = {
+  readonly resources: ReadonlyArray<ExtensionResourceRegistration>;
+};
+
 export type ExtensionRegisterToolsInput = {
   readonly tools: ReadonlyArray<ExtensionToolDefinition>;
   readonly filterToolsPerThread?: boolean;
+  readonly instructions?: string;
 };
 
 export type ExtensionRegisterToolsResult = {
@@ -294,6 +322,49 @@ export type ExtensionRegisterWebEntryInput = {
 };
 
 export type ExtensionRelativePath = string;
+
+export type ExtensionResourceContents =
+  | {
+      readonly type: "text";
+      readonly uri: ExtensionResourceUri;
+      readonly mimeType?: string;
+      readonly text: string;
+    }
+  | {
+      readonly type: "blob";
+      readonly uri: ExtensionResourceUri;
+      readonly mimeType?: string;
+      readonly blob: string;
+    };
+
+export type ExtensionResourceDefinition = {
+  readonly uri: ExtensionResourceUri;
+  readonly name: string;
+  readonly description: string;
+  readonly mimeType: string;
+};
+
+export type ExtensionResourceRegistration =
+  | {
+      readonly status: "accepted";
+      readonly uri: ExtensionResourceUri;
+    }
+  | {
+      readonly status: "rejected";
+      readonly uri: ExtensionResourceUri;
+      readonly reason: ExtensionResourceRejectionReason;
+      readonly message: string;
+    };
+
+export type ExtensionResourceRejectionReason = "uri-collision" | "unsupported";
+
+export type ExtensionResourceUri = string;
+
+export type ExtensionResourceUriCollisionError = {
+  readonly _tag: "ExtensionResourceUriCollisionError";
+  readonly uri: ExtensionResourceUri;
+  readonly owner?: ExtensionName;
+};
 
 export type ExtensionServerEntry = {
   readonly entry: ExtensionRelativePath;
@@ -322,6 +393,11 @@ export type ExtensionStreamEvent =
       readonly type: "toolsForThread";
       readonly connectionId: ExtensionConnectionId;
       readonly request: ExtensionToolsForThreadRequest;
+    }
+  | {
+      readonly type: "readResource";
+      readonly connectionId: ExtensionConnectionId;
+      readonly request: ExtensionReadResourceRequest;
     };
 
 export type ExtensionTextGenerationFailedError = {
@@ -415,9 +491,16 @@ export type ExtensionUnavailableError = {
   readonly extensionName: ExtensionName;
   readonly reason: ExtensionUnavailableReason;
   readonly toolName?: ExtensionToolName;
+  readonly resourceUri?: ExtensionResourceUri;
 };
 
 export type ExtensionUnavailableReason = "not-connected" | "stopped" | "restarting" | "timeout";
+
+export type ExtensionUnknownResourceError = {
+  readonly _tag: "ExtensionUnknownResourceError";
+  readonly uri: ExtensionResourceUri;
+  readonly extensionName?: ExtensionName;
+};
 
 export type ExtensionUnknownToolError = {
   readonly _tag: "ExtensionUnknownToolError";

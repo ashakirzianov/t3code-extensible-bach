@@ -156,6 +156,7 @@ export const RPC_REQUIRED_SCOPES = {
   // minted for an extension process carries.
   [EXTENSION_WS_METHODS.hello]: AuthExtensionScope,
   [EXTENSION_WS_METHODS.registerTools]: AuthExtensionScope,
+  [EXTENSION_WS_METHODS.registerResources]: AuthExtensionScope,
   [EXTENSION_WS_METHODS.registerHttpPrefix]: AuthExtensionScope,
   [EXTENSION_WS_METHODS.registerWebEntry]: AuthExtensionScope,
   [EXTENSION_WS_METHODS.setBadge]: AuthExtensionScope,
@@ -163,6 +164,7 @@ export const RPC_REQUIRED_SCOPES = {
   [EXTENSION_WS_METHODS.respondTool]: AuthExtensionScope,
   [EXTENSION_WS_METHODS.respondHttp]: AuthExtensionScope,
   [EXTENSION_WS_METHODS.respondToolsForThread]: AuthExtensionScope,
+  [EXTENSION_WS_METHODS.respondReadResource]: AuthExtensionScope,
   [EXTENSION_WS_METHODS.projectIcons]: AuthExtensionScope,
   [EXTENSION_WS_METHODS.generateText]: AuthExtensionScope,
   // Management is Settings talking, so it takes the ordinary client scopes.

@@ -125,9 +125,12 @@ import {
   ExtensionProtocolMismatchError,
   ExtensionRegisterHttpPrefixInput,
   ExtensionRegisterHttpPrefixResult,
+  ExtensionRegisterResourcesInput,
+  ExtensionRegisterResourcesResult,
   ExtensionRegisterToolsInput,
   ExtensionRegisterToolsResult,
   ExtensionRegisterWebEntryInput,
+  ExtensionReadResourceResult,
   ExtensionSetBadgeInput,
   ExtensionSetEnabledInput,
   ExtensionStreamEvent,
@@ -1430,6 +1433,12 @@ export const WsExtensionsRegisterToolsRpc = Rpc.make(EXTENSION_WS_METHODS.regist
   error: Schema.Union([ExtensionHandshakeRequiredError, EnvironmentAuthorizationError]),
 });
 
+export const WsExtensionsRegisterResourcesRpc = Rpc.make(EXTENSION_WS_METHODS.registerResources, {
+  payload: ExtensionRegisterResourcesInput,
+  success: ExtensionRegisterResourcesResult,
+  error: Schema.Union([ExtensionHandshakeRequiredError, EnvironmentAuthorizationError]),
+});
+
 export const WsExtensionsRegisterHttpPrefixRpc = Rpc.make(EXTENSION_WS_METHODS.registerHttpPrefix, {
   payload: ExtensionRegisterHttpPrefixInput,
   success: ExtensionRegisterHttpPrefixResult,
@@ -1471,6 +1480,14 @@ export const WsExtensionsRespondToolsForThreadRpc = Rpc.make(
   EXTENSION_WS_METHODS.respondToolsForThread,
   {
     payload: ExtensionToolsForThreadResult,
+    error: EnvironmentAuthorizationError,
+  },
+);
+
+export const WsExtensionsRespondReadResourceRpc = Rpc.make(
+  EXTENSION_WS_METHODS.respondReadResource,
+  {
+    payload: ExtensionReadResourceResult,
     error: EnvironmentAuthorizationError,
   },
 );
@@ -1707,6 +1724,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationSubscribeThreadRpc,
   WsExtensionsHelloRpc,
   WsExtensionsRegisterToolsRpc,
+  WsExtensionsRegisterResourcesRpc,
   WsExtensionsRegisterHttpPrefixRpc,
   WsExtensionsRegisterWebEntryRpc,
   WsExtensionsSetBadgeRpc,
@@ -1716,6 +1734,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsExtensionsProjectIconsRpc,
   WsExtensionsGenerateTextRpc,
   WsExtensionsRespondToolsForThreadRpc,
+  WsExtensionsRespondReadResourceRpc,
   WsExtensionsAdminListRpc,
   WsExtensionsAdminSubscribeRpc,
   WsExtensionsAdminDeployRpc,

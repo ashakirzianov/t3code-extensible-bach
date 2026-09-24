@@ -33,7 +33,7 @@ export interface ExtensionStateView {
  * after, because they describe a running extension that is missing a piece.
  */
 export interface ExtensionProblem {
-  readonly kind: "error" | "tool" | "http-prefix";
+  readonly kind: "error" | "tool" | "resource" | "http-prefix";
   readonly subject: string | null;
   readonly message: string;
 }

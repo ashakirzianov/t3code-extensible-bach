@@ -29,7 +29,9 @@ import {
   ExtensionHttpPrefixCollisionError,
   ExtensionNotFoundError,
   ExtensionProtocolMismatchError,
+  ExtensionResourceUriCollisionError,
   ExtensionUnavailableError,
+  ExtensionUnknownResourceError,
   ExtensionUnknownToolError,
   negotiateExtensionProtocolVersion,
   type EnvironmentId,
@@ -45,12 +47,18 @@ import {
   type ExtensionLogsResult,
   type ExtensionManifest,
   type ExtensionName,
+  type ExtensionReadResourceResult,
   type ExtensionRegisterHttpPrefixInput,
   type ExtensionRegisterHttpPrefixResult,
+  type ExtensionRegisterResourcesInput,
+  type ExtensionRegisterResourcesResult,
   type ExtensionRegisterToolsInput,
   type ExtensionRegisterToolsResult,
   type ExtensionRejection,
   type ExtensionRegisterWebEntryInput,
+  type ExtensionResourceDefinition,
+  type ExtensionResourceRegistration,
+  type ExtensionResourceUri,
   type ExtensionRuntimeState,
   type ExtensionSetBadgeInput,
   type ExtensionSource,
@@ -92,6 +100,17 @@ export interface ExtensionToolOwner {
   readonly definition: ExtensionToolDefinition;
 }
 
+export interface ExtensionResourceOwner {
+  readonly extensionName: ExtensionName;
+  readonly definition: ExtensionResourceDefinition;
+}
+
+/** One extension's standing guidance, in the order the extensions started. */
+export interface ExtensionInstructions {
+  readonly extensionName: ExtensionName;
+  readonly instructions: string;
+}
+
 export interface ExtensionConnectionInput {
   readonly name: ExtensionName;
   /** The authenticated session's subject, so a token cannot answer for another extension. */
@@ -125,6 +144,11 @@ type PendingCall =
         ExtensionToolsForThreadResult,
         ExtensionUnavailableError
       >;
+    }
+  | {
+      readonly kind: "resource";
+      readonly connectionId: string;
+      readonly deferred: Deferred.Deferred<ExtensionReadResourceResult, ExtensionUnavailableError>;
     };
 
 interface ExtensionRecord {
@@ -140,6 +164,12 @@ interface ExtensionRecord {
   readonly restartCount: number;
   readonly logs: ReadonlyArray<ExtensionLogEntry>;
   readonly tools: ReadonlyArray<ExtensionToolDefinition>;
+  readonly resources: ReadonlyArray<ExtensionResourceDefinition>;
+  /**
+   * Standing guidance this registration declared, appended to the MCP server's
+   * instructions. Absent when the registration carried none.
+   */
+  readonly instructions?: string;
   /** This registration asked to answer `toolsForThread` for every thread. */
   readonly filterToolsPerThread: boolean;
   /** What this registration asked for and did not get. Cleared on restart. */
@@ -184,6 +214,9 @@ export interface ExtensionRegistryShape {
   readonly registerTools: (
     input: ExtensionRegisterToolsInput & ExtensionConnectionInput,
   ) => Effect.Effect<ExtensionRegisterToolsResult, ExtensionHandshakeRequiredError>;
+  readonly registerResources: (
+    input: ExtensionRegisterResourcesInput & ExtensionConnectionInput,
+  ) => Effect.Effect<ExtensionRegisterResourcesResult, ExtensionHandshakeRequiredError>;
   readonly registerHttpPrefix: (
     input: ExtensionRegisterHttpPrefixInput & ExtensionConnectionInput,
   ) => Effect.Effect<
@@ -202,6 +235,7 @@ export interface ExtensionRegistryShape {
   readonly respondTool: (response: ExtensionToolResult) => Effect.Effect<void>;
   readonly respondHttp: (response: ExtensionHttpResponse) => Effect.Effect<void>;
   readonly respondToolsForThread: (response: ExtensionToolsForThreadResult) => Effect.Effect<void>;
+  readonly respondReadResource: (response: ExtensionReadResourceResult) => Effect.Effect<void>;
 
   // --- broker, host to extension -------------------------------------------
   readonly invokeTool: (input: {
@@ -213,8 +247,32 @@ export interface ExtensionRegistryShape {
     readonly prefix: ExtensionHttpPrefix;
     readonly request: Omit<ExtensionHttpRequest, "requestId">;
   }) => Effect.Effect<ExtensionHttpResponse, ExtensionUnavailableError | ExtensionNotFoundError>;
+  /**
+   * Reads one registered resource from whoever owns its URI. The answer is the
+   * extension's own; a silent or stopped extension is an
+   * `ExtensionUnavailableError`, which the MCP broker turns into a protocol
+   * error because `resources/read` has no error-result shape to carry it.
+   */
+  readonly readResource: (input: {
+    readonly uri: ExtensionResourceUri;
+  }) => Effect.Effect<
+    ExtensionReadResourceResult,
+    ExtensionUnavailableError | ExtensionUnknownResourceError
+  >;
   /** Every tool the host should register with MCP, in start order. */
   readonly listTools: Effect.Effect<ReadonlyArray<ExtensionToolOwner>>;
+  /** Every resource the host should register with MCP, in start order. */
+  readonly listResources: Effect.Effect<ReadonlyArray<ExtensionResourceOwner>>;
+  /**
+   * The instructions of every *connected* extension, in start order.
+   *
+   * Connected rather than merely registered: instructions describe a working
+   * extension, and a stopped one's guidance would tell an agent to reach for
+   * tools that can only answer `ExtensionUnavailableError`. The tools stay in
+   * the catalogue because a running agent already holds their names; nothing
+   * holds a copy of the instructions, so there is nothing to keep honest.
+   */
+  readonly listInstructions: Effect.Effect<ReadonlyArray<ExtensionInstructions>>;
   /**
    * What each extension that filters per thread says this thread may see.
    *
@@ -303,6 +361,11 @@ export interface ExtensionRegistryOptions {
    * catalogue is one flat namespace and the host's tools were there first.
    */
   readonly reservedToolNames?: ReadonlyArray<ExtensionToolName>;
+  /**
+   * Resource URIs the host itself serves over MCP. Same rule as the tool
+   * names: one flat namespace, and the host's own resources were there first.
+   */
+  readonly reservedResourceUris?: ReadonlyArray<string>;
   readonly hostVersion: string;
   /** `<stateDir>/extensions`; each extension gets a directory named after it. */
   readonly dataRoot: string;
@@ -318,6 +381,7 @@ const emptyRecord = (source: ResolvedExtensionSource): ExtensionRecord => ({
   restartCount: 0,
   logs: [],
   tools: [],
+  resources: [],
   filterToolsPerThread: false,
   rejections: [],
   helloAcked: false,
@@ -348,6 +412,19 @@ const ownerOfTool = (
   for (const record of state.records.values()) {
     if (record.name === claimant) continue;
     if (record.tools.some((tool) => tool.name === toolName)) return record.name;
+  }
+  return undefined;
+};
+
+/** Who already owns `uri`, or `undefined` if it is free. Mirrors `ownerOfTool`. */
+const ownerOfResource = (
+  state: RegistryState,
+  uri: ExtensionResourceUri,
+  claimant: ExtensionName,
+): ExtensionName | undefined => {
+  for (const record of state.records.values()) {
+    if (record.name === claimant) continue;
+    if (record.resources.some((resource) => resource.uri === uri)) return record.name;
   }
   return undefined;
 };
@@ -385,6 +462,7 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
   const crypto = yield* Crypto.Crypto;
   const callTimeoutMs = options.callTimeoutMs ?? EXTENSION_CALL_TIMEOUT_MS;
   const reservedToolNames = new Set<string>(options.reservedToolNames ?? []);
+  const reservedResourceUris = new Set<string>(options.reservedResourceUris ?? []);
   const state = yield* SynchronizedRef.make<RegistryState>({
     records: new Map(),
     pending: new Map(),
@@ -438,6 +516,8 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
       case "http":
         return Deferred.fail(entry.deferred, error);
       case "tools":
+        return Deferred.fail(entry.deferred, error);
+      case "resource":
         return Deferred.fail(entry.deferred, error);
     }
   };
@@ -564,18 +644,74 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
       );
       return [
         { tools: results } satisfies ExtensionRegisterToolsResult,
+        withRecord(current, input.name, (record) => {
+          // Dropped rather than kept when absent: registration is a complete
+          // replacement, so a build that stopped declaring instructions must
+          // not keep publishing the last build's.
+          const { instructions: _previous, ...withoutInstructions } = record;
+          return {
+            ...withoutInstructions,
+            ...(input.instructions === undefined ? {} : { instructions: input.instructions }),
+            tools: accepted,
+            filterToolsPerThread: input.filterToolsPerThread === true,
+            rejections: [
+              ...record.rejections.filter((rejection) => rejection.kind !== "tool"),
+              ...rejections,
+            ],
+          };
+        }),
+      ] as const;
+    });
+    return result;
+  });
+
+  const registerResources: ExtensionRegistryShape["registerResources"] = Effect.fn(
+    "ExtensionRegistry.registerResources",
+  )(function* (input) {
+    yield* requireHandshake(EXTENSION_WS_METHODS.registerResources, input);
+    return yield* modifyState((current) => {
+      const accepted: ExtensionResourceDefinition[] = [];
+      const results: ExtensionResourceRegistration[] = [];
+      for (const resource of input.resources) {
+        if (reservedResourceUris.has(resource.uri)) {
+          results.push({
+            status: "rejected",
+            uri: resource.uri,
+            reason: "uri-collision",
+            message: new ExtensionResourceUriCollisionError({ uri: resource.uri }).message,
+          });
+          continue;
+        }
+        const owner = ownerOfResource(current, resource.uri, input.name);
+        if (owner !== undefined) {
+          results.push({
+            status: "rejected",
+            uri: resource.uri,
+            reason: "uri-collision",
+            message: new ExtensionResourceUriCollisionError({ uri: resource.uri, owner }).message,
+          });
+          continue;
+        }
+        accepted.push(resource);
+        results.push({ status: "accepted", uri: resource.uri });
+      }
+      const rejections = results.flatMap((result) =>
+        result.status === "rejected"
+          ? [{ kind: "resource" as const, subject: result.uri, message: result.message }]
+          : [],
+      );
+      return [
+        { resources: results } satisfies ExtensionRegisterResourcesResult,
         withRecord(current, input.name, (record) => ({
           ...record,
-          tools: accepted,
-          filterToolsPerThread: input.filterToolsPerThread === true,
+          resources: accepted,
           rejections: [
-            ...record.rejections.filter((rejection) => rejection.kind !== "tool"),
+            ...record.rejections.filter((rejection) => rejection.kind !== "resource"),
             ...rejections,
           ],
         })),
       ] as const;
     });
-    return result;
   });
 
   const registerHttpPrefix: ExtensionRegistryShape["registerHttpPrefix"] = Effect.fn(
@@ -694,6 +830,14 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
     yield* Deferred.succeed(entry.deferred, response);
   });
 
+  const respondReadResource: ExtensionRegistryShape["respondReadResource"] = Effect.fn(
+    "ExtensionRegistry.respondReadResource",
+  )(function* (response) {
+    const entry = yield* takePending(response.requestId, response.connectionId, "resource");
+    if (entry?.kind !== "resource") return;
+    yield* Deferred.succeed(entry.deferred, response);
+  });
+
   const respondToolsForThread: ExtensionRegistryShape["respondToolsForThread"] = Effect.fn(
     "ExtensionRegistry.respondToolsForThread",
   )(function* (response) {
@@ -795,6 +939,49 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
     });
   });
 
+  const readResource: ExtensionRegistryShape["readResource"] = Effect.fn(
+    "ExtensionRegistry.readResource",
+  )(function* (input) {
+    const current = yield* SynchronizedRef.get(state);
+    const owner = [...current.records.values()].find((record) =>
+      record.resources.some((resource) => resource.uri === input.uri),
+    );
+    if (!owner) return yield* new ExtensionUnknownResourceError({ uri: input.uri });
+    if (!owner.connection) {
+      return yield* new ExtensionUnavailableError({
+        extensionName: owner.name,
+        resourceUri: input.uri,
+        reason: owner.enabled
+          ? owner.state === "starting"
+            ? "restarting"
+            : "not-connected"
+          : "stopped",
+      });
+    }
+    const connection = owner.connection;
+    const requestId = yield* nextCallId("resource");
+    return yield* call<ExtensionReadResourceResult>({
+      callId: requestId,
+      connection,
+      toPending: (deferred) => ({
+        kind: "resource",
+        connectionId: connection.connectionId,
+        deferred,
+      }),
+      event: {
+        type: "readResource",
+        connectionId: connection.connectionId,
+        request: { requestId, uri: input.uri },
+      },
+      unavailable: (reason) =>
+        new ExtensionUnavailableError({
+          extensionName: owner.name,
+          resourceUri: input.uri,
+          reason,
+        }),
+    });
+  });
+
   const proxyHttp: ExtensionRegistryShape["proxyHttp"] = Effect.fn("ExtensionRegistry.proxyHttp")(
     function* (input) {
       const current = yield* SynchronizedRef.get(state);
@@ -835,6 +1022,26 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
     Effect.map((current) =>
       [...current.records.values()].flatMap((record) =>
         record.tools.map((definition) => ({ extensionName: record.name, definition })),
+      ),
+    ),
+  );
+
+  const listResources: ExtensionRegistryShape["listResources"] = SynchronizedRef.get(state).pipe(
+    Effect.map((current) =>
+      [...current.records.values()].flatMap((record) =>
+        record.resources.map((definition) => ({ extensionName: record.name, definition })),
+      ),
+    ),
+  );
+
+  const listInstructions: ExtensionRegistryShape["listInstructions"] = SynchronizedRef.get(
+    state,
+  ).pipe(
+    Effect.map((current) =>
+      [...current.records.values()].flatMap((record) =>
+        record.instructions === undefined || record.connection === undefined
+          ? []
+          : [{ extensionName: record.name, instructions: record.instructions }],
       ),
     ),
   );
@@ -1047,16 +1254,21 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
   return ExtensionRegistry.of({
     hello,
     registerTools,
+    registerResources,
     registerHttpPrefix,
     registerWebEntry,
     setBadge,
     connect,
     respondTool,
     respondToolsForThread,
+    respondReadResource,
     respondHttp,
     invokeTool,
+    readResource,
     proxyHttp,
     listTools,
+    listResources,
+    listInstructions,
     toolsForThread,
     awaitReady: Deferred.await(ready),
     markSourcesResolved,

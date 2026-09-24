@@ -124,6 +124,7 @@ export type ExtensionProtocolVersion = typeof ExtensionProtocolVersion.Type;
 export const EXTENSION_WS_METHODS = {
   hello: "extensions.hello",
   registerTools: "extensions.registerTools",
+  registerResources: "extensions.registerResources",
   registerHttpPrefix: "extensions.registerHttpPrefix",
   registerWebEntry: "extensions.registerWebEntry",
   setBadge: "extensions.setBadge",
@@ -131,6 +132,7 @@ export const EXTENSION_WS_METHODS = {
   respondTool: "extensions.respondTool",
   respondHttp: "extensions.respondHttp",
   respondToolsForThread: "extensions.respondToolsForThread",
+  respondReadResource: "extensions.respondReadResource",
   projectIcons: "extensions.projectIcons",
   generateText: "extensions.generateText",
 } as const;
@@ -231,6 +233,11 @@ export const ExtensionHttpRequestId = BoundedString(128).annotate({
 });
 export type ExtensionHttpRequestId = typeof ExtensionHttpRequestId.Type;
 
+export const ExtensionReadResourceRequestId = BoundedString(128).annotate({
+  identifier: "ExtensionReadResourceRequestId",
+});
+export type ExtensionReadResourceRequestId = typeof ExtensionReadResourceRequestId.Type;
+
 export const ExtensionToolsRequestId = BoundedString(128).annotate({
   identifier: "ExtensionToolsRequestId",
 });
@@ -305,6 +312,25 @@ export type ExtensionHelloAck = typeof ExtensionHelloAck.Type;
 /** Cap on one extension's tool surface, so a bad build cannot flood MCP. */
 export const EXTENSION_TOOLS_MAX = 64;
 
+/**
+ * What an MCP server's `instructions` may be before a client starts cutting it.
+ *
+ * Claude Code truncates a server's instructions at roughly 2,500 characters,
+ * and it does it mid-sentence. The host composes under this number rather than
+ * leaving the cut to the client, so what an agent reads always ends where the
+ * host meant it to. Its own preamble is a few hundred characters; the rest is
+ * what the extensions get to share.
+ */
+export const EXTENSION_MCP_INSTRUCTIONS_MAX_CHARS = 2500;
+
+/**
+ * Cap on one extension's `instructions`. Deliberately smaller than the budget
+ * above: the budget is shared, so an extension that spends all of it is an
+ * extension that pushes the next one out entirely. A few hundred characters is
+ * the size that survives a second extension being installed.
+ */
+export const EXTENSION_INSTRUCTIONS_MAX_CHARS = 2000;
+
 export const ExtensionToolDefinition = Schema.Struct({
   name: ExtensionToolName,
   /** What the agent sees. This is the only guidance a tool gets. */
@@ -325,6 +351,19 @@ export const ExtensionRegisterToolsInput = Schema.Struct({
    * this existed.
    */
   filterToolsPerThread: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Standing guidance for every agent in the environment, appended to the MCP
+   * server's own `instructions`. It is billed on every turn of every thread,
+   * so it belongs to the extension as a whole — what it is, what its tools are
+   * for, when not to reach for them — and never to one tool, which has its own
+   * `description`.
+   *
+   * Replaced with the rest of the registration: re-sending without it clears
+   * what the previous registration said. Like the tool catalogue, it is read
+   * when a provider process connects, so a change reaches the *next* agent
+   * session rather than a running one.
+   */
+  instructions: Schema.optionalKey(BoundedString(EXTENSION_INSTRUCTIONS_MAX_CHARS)),
 }).annotate({ identifier: "ExtensionRegisterToolsInput" });
 export type ExtensionRegisterToolsInput = typeof ExtensionRegisterToolsInput.Type;
 
@@ -358,6 +397,68 @@ export const ExtensionRegisterToolsResult = Schema.Struct({
   tools: Schema.Array(ExtensionToolRegistration),
 }).annotate({ identifier: "ExtensionRegisterToolsResult" });
 export type ExtensionRegisterToolsResult = typeof ExtensionRegisterToolsResult.Type;
+
+// ---------------------------------------------------------------------------
+// registerResources
+// ---------------------------------------------------------------------------
+
+/** Cap on one extension's resource surface, for the same reason as the tools. */
+export const EXTENSION_RESOURCES_MAX = 64;
+
+/**
+ * The URI an agent reads a resource by. Unique across the environment, like a
+ * tool name: MCP has one flat resource namespace and the host serves its own
+ * `t3code://` resources in it.
+ */
+export const ExtensionResourceUri = BoundedString(512).annotate({
+  identifier: "ExtensionResourceUri",
+});
+export type ExtensionResourceUri = typeof ExtensionResourceUri.Type;
+
+export const ExtensionResourceDefinition = Schema.Struct({
+  uri: ExtensionResourceUri,
+  /** A short handle. MCP clients use it to label the resource in their UI. */
+  name: BoundedString(128),
+  /** Why an agent would read this. The only guidance a resource gets. */
+  description: BoundedString(4096),
+  mimeType: BoundedString(100),
+}).annotate({ identifier: "ExtensionResourceDefinition" });
+export type ExtensionResourceDefinition = typeof ExtensionResourceDefinition.Type;
+
+export const ExtensionRegisterResourcesInput = Schema.Struct({
+  /** The complete resource surface. Re-sending replaces the previous set. */
+  resources: Schema.Array(ExtensionResourceDefinition).check(
+    Schema.isMaxLength(EXTENSION_RESOURCES_MAX),
+  ),
+}).annotate({ identifier: "ExtensionRegisterResourcesInput" });
+export type ExtensionRegisterResourcesInput = typeof ExtensionRegisterResourcesInput.Type;
+
+export const ExtensionResourceRejectionReason = Schema.Literals([
+  "uri-collision",
+  "unsupported",
+]).annotate({ identifier: "ExtensionResourceRejectionReason" });
+export type ExtensionResourceRejectionReason = typeof ExtensionResourceRejectionReason.Type;
+
+/** Per resource, not per call — the same rule `registerTools` answers by. */
+export const ExtensionResourceRegistration = Schema.Union([
+  Schema.Struct({
+    status: Schema.Literal("accepted"),
+    uri: ExtensionResourceUri,
+  }),
+  Schema.Struct({
+    status: Schema.Literal("rejected"),
+    uri: ExtensionResourceUri,
+    reason: ExtensionResourceRejectionReason,
+    /** Shown verbatim in Settings, so it names the other owner on collision. */
+    message: BoundedString(512),
+  }),
+]).annotate({ identifier: "ExtensionResourceRegistration" });
+export type ExtensionResourceRegistration = typeof ExtensionResourceRegistration.Type;
+
+export const ExtensionRegisterResourcesResult = Schema.Struct({
+  resources: Schema.Array(ExtensionResourceRegistration),
+}).annotate({ identifier: "ExtensionRegisterResourcesResult" });
+export type ExtensionRegisterResourcesResult = typeof ExtensionRegisterResourcesResult.Type;
 
 // ---------------------------------------------------------------------------
 // registerHttpPrefix, registerWebEntry, setBadge
@@ -582,6 +683,23 @@ export const ExtensionToolsForThreadRequest = Schema.Struct({
 export type ExtensionToolsForThreadRequest = typeof ExtensionToolsForThreadRequest.Type;
 
 // ---------------------------------------------------------------------------
+// Host to extension: reading a registered resource
+// ---------------------------------------------------------------------------
+
+/**
+ * One `resources/read` an agent made, routed to whoever registered the URI.
+ *
+ * It carries no caller: MCP reads a resource by URI alone, and the host has
+ * nothing more truthful to attach. An extension that needs to know who is
+ * asking should expose a tool, which does carry `ExtensionToolCaller`.
+ */
+export const ExtensionReadResourceRequest = Schema.Struct({
+  requestId: ExtensionReadResourceRequestId,
+  uri: ExtensionResourceUri,
+}).annotate({ identifier: "ExtensionReadResourceRequest" });
+export type ExtensionReadResourceRequest = typeof ExtensionReadResourceRequest.Type;
+
+// ---------------------------------------------------------------------------
 // Host to extension: proxied HTTP
 // ---------------------------------------------------------------------------
 
@@ -663,6 +781,11 @@ export const ExtensionStreamEvent = Schema.Union([
     connectionId: ExtensionConnectionId,
     request: ExtensionToolsForThreadRequest,
   }),
+  Schema.Struct({
+    type: Schema.Literal("readResource"),
+    connectionId: ExtensionConnectionId,
+    request: ExtensionReadResourceRequest,
+  }),
 ]).annotate({ identifier: "ExtensionStreamEvent" });
 export type ExtensionStreamEvent = typeof ExtensionStreamEvent.Type;
 
@@ -712,6 +835,40 @@ export const ExtensionToolsForThreadResult = Schema.Struct({
   tools: Schema.Array(ExtensionToolName).check(Schema.isMaxLength(EXTENSION_TOOLS_MAX)),
 }).annotate({ identifier: "ExtensionToolsForThreadResult" });
 export type ExtensionToolsForThreadResult = typeof ExtensionToolsForThreadResult.Type;
+
+/**
+ * The bytes of one resource. `text` keeps the common case readable on the wire
+ * and in logs; `blob` is base64 so binary survives a JSON transport, exactly
+ * as `ExtensionToolContent` does it.
+ */
+export const ExtensionResourceContents = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("text"),
+    uri: ExtensionResourceUri,
+    mimeType: Schema.optionalKey(BoundedString(100)),
+    text: Schema.String.check(Schema.isMaxLength(EXTENSION_TOOL_TEXT_MAX_CHARS)),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("blob"),
+    uri: ExtensionResourceUri,
+    mimeType: Schema.optionalKey(BoundedString(100)),
+    blob: Schema.String.check(Schema.isMaxLength(EXTENSION_HTTP_BODY_MAX_CHARS)),
+  }),
+]).annotate({ identifier: "ExtensionResourceContents" });
+export type ExtensionResourceContents = typeof ExtensionResourceContents.Type;
+
+/**
+ * The answer to one `readResource`. An empty `contents` is a real answer — the
+ * resource exists and has nothing in it — so a failure is a *failure*, not an
+ * empty array: the host maps a missing answer to an MCP error, because
+ * `resources/read` has no `isError` shape a tool result would carry.
+ */
+export const ExtensionReadResourceResult = Schema.Struct({
+  connectionId: ExtensionConnectionId,
+  requestId: ExtensionReadResourceRequestId,
+  contents: Schema.Array(ExtensionResourceContents),
+}).annotate({ identifier: "ExtensionReadResourceResult" });
+export type ExtensionReadResourceResult = typeof ExtensionReadResourceResult.Type;
 
 export const ExtensionHttpResponse = Schema.Struct({
   connectionId: ExtensionConnectionId,
@@ -765,6 +922,39 @@ export class ExtensionToolNameCollisionError extends Schema.TaggedError<Extensio
   }
 }
 
+export class ExtensionResourceUriCollisionError extends Schema.TaggedError<ExtensionResourceUriCollisionError>()(
+  "ExtensionResourceUriCollisionError",
+  {
+    uri: ExtensionResourceUri,
+    /** Who already owns the URI. Absent when the host itself owns it. */
+    owner: Schema.optionalKey(ExtensionName),
+  },
+) {
+  override get message(): string {
+    return this.owner === undefined
+      ? `Resource ${this.uri} is already provided by T3 Code.`
+      : `Resource ${this.uri} is already provided by extension ${this.owner}.`;
+  }
+}
+
+/**
+ * The URI reached the broker and nobody registers it — the narrow window
+ * between an extension dropping a resource and the next catalogue sync
+ * noticing. It becomes an MCP error rather than empty contents, because an
+ * agent that gets nothing back cannot tell the two apart.
+ */
+export class ExtensionUnknownResourceError extends Schema.TaggedError<ExtensionUnknownResourceError>()(
+  "ExtensionUnknownResourceError",
+  {
+    uri: ExtensionResourceUri,
+    extensionName: Schema.optionalKey(ExtensionName),
+  },
+) {
+  override get message(): string {
+    return `No registered extension resource at ${this.uri}.`;
+  }
+}
+
 export class ExtensionUnknownToolError extends Schema.TaggedError<ExtensionUnknownToolError>()(
   "ExtensionUnknownToolError",
   {
@@ -796,13 +986,16 @@ export class ExtensionUnavailableError extends Schema.TaggedError<ExtensionUnava
     extensionName: ExtensionName,
     reason: ExtensionUnavailableReason,
     toolName: Schema.optionalKey(ExtensionToolName),
+    resourceUri: Schema.optionalKey(ExtensionResourceUri),
   },
 ) {
   override get message(): string {
     const subject =
-      this.toolName === undefined
-        ? `Extension ${this.extensionName}`
-        : `The extension backing ${this.toolName} (${this.extensionName})`;
+      this.toolName !== undefined
+        ? `The extension backing ${this.toolName} (${this.extensionName})`
+        : this.resourceUri !== undefined
+          ? `The extension backing ${this.resourceUri} (${this.extensionName})`
+          : `Extension ${this.extensionName}`;
     switch (this.reason) {
       case "stopped":
         return `${subject} is stopped.`;
@@ -862,6 +1055,8 @@ export const ExtensionError = Schema.Union([
   ExtensionHandshakeRequiredError,
   ExtensionToolNameCollisionError,
   ExtensionUnknownToolError,
+  ExtensionResourceUriCollisionError,
+  ExtensionUnknownResourceError,
   ExtensionUnavailableError,
   ExtensionHttpPrefixCollisionError,
   ExtensionTextGenerationUnavailableError,
@@ -946,9 +1141,9 @@ export type ExtensionRuntimeState = typeof ExtensionRuntimeState.Type;
  * the rejections of that kind, and a restart clears them all.
  */
 export const ExtensionRejection = Schema.Struct({
-  kind: Schema.Literals(["tool", "http-prefix"]),
-  /** The tool name or prefix that was refused. */
-  subject: BoundedString(64),
+  kind: Schema.Literals(["tool", "resource", "http-prefix"]),
+  /** The tool name, resource URI, or prefix that was refused. */
+  subject: BoundedString(512),
   /** Shown verbatim; it names the other owner where there is one. */
   message: BoundedString(512),
 }).annotate({ identifier: "ExtensionRejection" });

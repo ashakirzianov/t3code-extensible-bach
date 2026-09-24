@@ -622,25 +622,39 @@ export const DeviceToolkitRegistrationLive = Layer.mergeAll(
   DeviceScreenshotRegistrationLive,
 );
 
-const McpTransportLive = McpServer.layerHttp({
-  name: "T3 Code",
-  version: packageJson.version,
-  path: "/mcp",
-  protocols: [McpProtocol.v2025_06_18],
-  // The one server-level slot MCP gives us. Clients that honour it put this in
-  // the model's context, so it says what the extension surface is and where
-  // the guides are rather than repeating either.
-  instructions: ExtensionMcp.EXTENSION_MCP_INSTRUCTIONS,
-}).pipe(Layer.provide(McpAuthMiddlewareLive));
+const McpTransportLive = Layer.unwrap(
+  Effect.gen(function* () {
+    const gate = yield* ExtensionMcp.ExtensionMcp;
+    return McpServer.layerHttp({
+      name: "T3 Code",
+      version: packageJson.version,
+      path: "/mcp",
+      protocols: [McpProtocol.v2025_06_18],
+      // The one server-level slot MCP gives us. Clients that honour it put
+      // this in the model's context, so it says what the extension surface is
+      // and where the guides are rather than repeating either — and then the
+      // extensions' own instructions, appended by the gate.
+      //
+      // A getter because MCP reads it once per `initialize`, which is when a
+      // provider process connects: the value the gate composed at credential
+      // issuance is the one that session gets, and a later Deploy reaches the
+      // session after it. Reading it eagerly here would freeze the string at
+      // server start, before any extension has said hello.
+      get instructions() {
+        return gate.mcpInstructions();
+      },
+    });
+  }),
+).pipe(Layer.provide(McpAuthMiddlewareLive));
 
 export const layer = Layer.mergeAll(
   PreviewToolkitRegistrationLive,
   // Resources must be registered before serving starts or the `resources`
   // capability is never advertised and no client looks for them.
   ExtensionMcp.resourcesLayer,
-  // Hands the gate below us the sync that needs `McpServer`, which only
-  // exists here.
-  ExtensionMcp.toolsLayer,
+  // Hands the gate below us the catalogue sync that needs `McpServer`, which
+  // only exists here.
+  ExtensionMcp.catalogueLayer,
   PullRequestsToolkitRegistrationLive,
   DeviceToolkitRegistrationLive,
 ).pipe(Layer.provideMerge(McpTransportLive));

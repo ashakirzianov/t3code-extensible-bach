@@ -3475,6 +3475,14 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "extensions" },
           ),
+        [EXTENSION_WS_METHODS.registerResources]: (input) =>
+          observeRpcEffect(
+            EXTENSION_WS_METHODS.registerResources,
+            withExtensionName(EXTENSION_WS_METHODS.registerResources, (name) =>
+              extensions.registerResources({ ...input, name }),
+            ),
+            { "rpc.aggregate": "extensions" },
+          ),
         [EXTENSION_WS_METHODS.registerHttpPrefix]: (input) =>
           observeRpcEffect(
             EXTENSION_WS_METHODS.registerHttpPrefix,
@@ -3560,6 +3568,12 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             EXTENSION_WS_METHODS.respondToolsForThread,
             extensions.respondToolsForThread(input),
+            { "rpc.aggregate": "extensions" },
+          ),
+        [EXTENSION_WS_METHODS.respondReadResource]: (input) =>
+          observeRpcEffect(
+            EXTENSION_WS_METHODS.respondReadResource,
+            extensions.respondReadResource(input),
             { "rpc.aggregate": "extensions" },
           ),
         [EXTENSION_WS_METHODS.respondHttp]: (input) =>

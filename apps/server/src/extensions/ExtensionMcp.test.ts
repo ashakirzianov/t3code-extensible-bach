@@ -9,7 +9,6 @@ import {
   ThreadId,
   type ExtensionManifest,
 } from "@t3tools/contracts";
-import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -35,14 +34,18 @@ import {
   EXTENSION_INSTALLED_URI,
   EXTENSION_MCP_INSTRUCTIONS,
   EXTENSION_SCAFFOLD_URI,
+  addExtensionResource,
   addExtensionTool,
+  composeMcpInstructions,
   extensionResourceDefinitions,
+  makeCatalogueSync,
+  makeResourceSync,
   installedResourceJson,
   make,
   makeToolSync,
   toCallToolResult,
   toErrorResult,
-  toolsLayer,
+  catalogueLayer,
 } from "./ExtensionMcp.ts";
 import { EXTENSION_SUBJECT_PREFIX } from "./ExtensionIdentity.ts";
 import * as ExtensionRegistry from "./ExtensionRegistry.ts";
@@ -334,7 +337,7 @@ describe("the readiness gate", () => {
         const registry = yield* makeRegistry();
         const bridge = yield* gate(registry);
         const synced = yield* Ref.make(0);
-        yield* bridge.installToolSync(Ref.update(synced, (count) => count + 1));
+        yield* bridge.installCatalogueSync(Ref.update(synced, (count) => count + 1));
 
         yield* withTool(registry);
         yield* registry.markSourcesResolved;
@@ -359,7 +362,7 @@ describe("the readiness gate", () => {
         const registry = yield* makeRegistry();
         const bridge = yield* gate(registry);
         const synced = yield* Ref.make(0);
-        yield* bridge.installToolSync(Ref.update(synced, (count) => count + 1));
+        yield* bridge.installCatalogueSync(Ref.update(synced, (count) => count + 1));
 
         yield* withTool(registry);
         yield* registry.markSourcesResolved;
@@ -555,7 +558,7 @@ describe("the catalogue after a redeploy", () => {
         const captured = yield* Ref.make<
           ReadonlyArray<{ readonly name: string; readonly description: string }>
         >([]);
-        yield* bridge.installToolSync(
+        yield* bridge.installCatalogueSync(
           yield* makeToolSync({ addTool: captureAdds(captured), registry, gate: bridge }),
         );
 
@@ -742,7 +745,7 @@ describe("the catalogue after a redeploy", () => {
         ).layer;
 
         yield* HttpRouter.serve(
-          toolsLayer.pipe(
+          catalogueLayer.pipe(
             Layer.provideMerge(
               McpServer.layerHttp({
                 name: "T3 Code",
@@ -961,7 +964,7 @@ describe("per-thread tool visibility", () => {
         ).layer;
 
         yield* HttpRouter.serve(
-          toolsLayer.pipe(
+          catalogueLayer.pipe(
             Layer.provideMerge(
               McpServer.layerHttp({
                 name: "T3 Code",
@@ -1030,5 +1033,219 @@ describe("per-thread tool visibility", () => {
         expect(builderCall).toContain("not found");
       }),
     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpServer.layerTest))),
+  );
+});
+
+describe("server instructions", () => {
+  const section = (extensionName: string, instructions: string) => ({
+    extensionName: extensionName as never,
+    instructions,
+  });
+
+  it("puts the host's own paragraph first and each extension under its name", () => {
+    const composed = composeMcpInstructions([
+      section("bach", "Bach runs the fleet."),
+      section("notes", "Notes keeps the notebook."),
+    ]);
+    expect(composed.startsWith(EXTENSION_MCP_INSTRUCTIONS)).toBe(true);
+    expect(composed).toContain("## bach\nBach runs the fleet.");
+    expect(composed).toContain("## notes\nNotes keeps the notebook.");
+    // Start order, so the string an agent reads does not shuffle between runs.
+    expect(composed.indexOf("## bach")).toBeLessThan(composed.indexOf("## notes"));
+  });
+
+  it("drops whole sections under the budget rather than letting a client cut one", () => {
+    const composed = composeMcpInstructions(
+      [section("bach", "a".repeat(200)), section("notes", "b".repeat(200))],
+      { host: "host.", budget: 340 },
+    );
+    expect(composed.length).toBeLessThanOrEqual(340);
+    expect(composed).toContain("## bach");
+    // Named rather than silently missing: an agent that knows can ask.
+    expect(composed).toContain("Instructions from notes did not fit");
+    expect(composed).not.toContain("bbbb");
+  });
+
+  it("keeps the host's own paragraph even when nothing else fits", () => {
+    const composed = composeMcpInstructions([section("bach", "a".repeat(400))], {
+      host: "host.",
+      budget: 50,
+    });
+    expect(composed.startsWith("host.")).toBe(true);
+    expect(composed).toContain("Instructions from bach did not fit");
+  });
+});
+
+describe("the catalogue sync", () => {
+  const notesResource = {
+    uri: "bach://notes",
+    name: "bach-notes",
+    description: "Everything Bach knows about the running fleet.",
+    mimeType: "application/json",
+  };
+
+  /** Captures URI and description, which is what a redeploy can move. */
+  const captureAddResource = (
+    captured: Ref.Ref<ReadonlyArray<{ readonly uri: string; readonly description: string }>>,
+  ): McpServer.McpServer["Service"]["addResource"] =>
+    ((options: { readonly resource: { readonly uri: string; readonly description: string } }) =>
+      Ref.update(captured, (current) => [
+        ...current,
+        { uri: options.resource.uri, description: options.resource.description },
+      ])) as unknown as McpServer.McpServer["Service"]["addResource"];
+
+  const gate = (registry: ExtensionRegistry.ExtensionRegistryShape) =>
+    make().pipe(Effect.provideService(ExtensionRegistry.ExtensionRegistry, registry));
+
+  it.effect("adds a resource once and re-adds it when its description moves", () =>
+    Effect.gen(function* () {
+      const registry = yield* makeRegistry();
+      yield* withTool(registry);
+      const captured = yield* Ref.make<
+        ReadonlyArray<{ readonly uri: string; readonly description: string }>
+      >([]);
+      const sync = yield* makeResourceSync({
+        addResource: captureAddResource(captured),
+        registry,
+      });
+
+      yield* registry.registerResources({ name: "bach", resources: [notesResource] });
+      yield* sync;
+      expect(yield* Ref.get(captured)).toMatchObject([{ uri: "bach://notes" }]);
+
+      // An unchanged redeploy costs the catalogue nothing.
+      yield* registry.registerResources({ name: "bach", resources: [notesResource] });
+      yield* sync;
+      expect((yield* Ref.get(captured)).length).toBe(1);
+
+      yield* registry.registerResources({
+        name: "bach",
+        resources: [{ ...notesResource, description: "Now with fewer words." }],
+      });
+      yield* sync;
+      expect((yield* Ref.get(captured)).length).toBe(2);
+    }),
+  );
+
+  it.effect("composes the instructions from whatever is connected at sync time", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeRegistry();
+        const bridge = yield* gate(registry);
+        yield* withTool(registry);
+        const captured = yield* Ref.make<
+          ReadonlyArray<{ readonly name: string; readonly handle: unknown }>
+        >([]);
+        const resources = yield* Ref.make<
+          ReadonlyArray<{ readonly uri: string; readonly description: string }>
+        >([]);
+        const sync = yield* makeCatalogueSync({
+          addTool: captureAddTool(captured as never),
+          addResource: captureAddResource(resources),
+          registry,
+          gate: bridge,
+        });
+
+        // Before the extension connects there is nothing to say about it.
+        yield* registry.registerTools({
+          name: "bach",
+          tools: [spawnTool],
+          instructions: "Spawn agents through Bach, never by hand.",
+        });
+        yield* sync;
+        expect(bridge.mcpInstructions()).toBe(EXTENSION_MCP_INSTRUCTIONS);
+
+        yield* Stream.runForEach(yield* registry.connect({ name: "bach" }), () => Effect.void).pipe(
+          Effect.forkScoped,
+        );
+        yield* Effect.yieldNow;
+        yield* sync;
+        expect(bridge.mcpInstructions()).toContain("## bach");
+        expect(bridge.mcpInstructions()).toContain("never by hand");
+      }),
+    ),
+  );
+});
+
+describe("reading an extension resource", () => {
+  const notesResource = {
+    uri: "bach://notes",
+    name: "bach-notes",
+    description: "Everything Bach knows about the running fleet.",
+    mimeType: "application/json",
+  };
+
+  /** Captures the handler MCP would call on `resources/read`. */
+  const captureHandler = (
+    captured: Ref.Ref<
+      Effect.Effect<McpSchema.ReadResourceResult, McpSchema.InternalError, never> | undefined
+    >,
+  ): McpServer.McpServer["Service"]["addResource"] =>
+    ((options: {
+      readonly handle: Effect.Effect<McpSchema.ReadResourceResult, McpSchema.InternalError, never>;
+    }) =>
+      Ref.set(
+        captured,
+        options.handle,
+      )) as unknown as McpServer.McpServer["Service"]["addResource"];
+
+  it.effect("answers with the extension's own contents", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeRegistry();
+        yield* withTool(registry);
+        yield* registry.registerResources({ name: "bach", resources: [notesResource] });
+        const captured = yield* Ref.make<
+          Effect.Effect<McpSchema.ReadResourceResult, McpSchema.InternalError, never> | undefined
+        >(undefined);
+        yield* addExtensionResource({
+          addResource: captureHandler(captured),
+          registry,
+          definition: notesResource,
+        });
+
+        const events = yield* registry.connect({ name: "bach" });
+        yield* Stream.runForEach(events, (event) =>
+          event.type === "readResource"
+            ? registry.respondReadResource({
+                connectionId: event.connectionId,
+                requestId: event.request.requestId,
+                contents: [{ type: "text", uri: event.request.uri, text: '{"agents":2}' }],
+              })
+            : Effect.void,
+        ).pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
+
+        const handle = yield* Ref.get(captured);
+        const result = yield* handle!;
+        expect(result.contents[0]).toMatchObject({
+          uri: "bach://notes",
+          text: '{"agents":2}',
+        });
+      }),
+    ),
+  );
+
+  it.effect("turns an unreachable extension into an MCP error, not empty contents", () =>
+    Effect.gen(function* () {
+      const registry = yield* makeRegistry();
+      yield* withTool(registry);
+      yield* registry.registerResources({ name: "bach", resources: [notesResource] });
+      const captured = yield* Ref.make<
+        Effect.Effect<McpSchema.ReadResourceResult, McpSchema.InternalError, never> | undefined
+      >(undefined);
+      yield* addExtensionResource({
+        addResource: captureHandler(captured),
+        registry,
+        definition: notesResource,
+      });
+
+      const handle = yield* Ref.get(captured);
+      const error = yield* handle!.pipe(Effect.flip);
+      expect(error._tag).toBe("InternalError");
+      // `resources/read` has no error-result shape, so the sentence has to
+      // travel as the protocol error's message.
+      expect(error.message).toContain("bach://notes");
+    }),
   );
 });

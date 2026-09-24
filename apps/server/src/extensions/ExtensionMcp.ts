@@ -42,16 +42,31 @@
  *   between an extension dropping a tool and the next sync noticing.
  * - **At least one resource is registered before the server starts serving**,
  *   or the `resources` capability is never advertised and clients never look.
- *   The three here are registered as a layer, which is why they are static
- *   registrations rather than another thing `prepareForSession` does.
+ *   The three host resources are registered as a layer, which is why they are
+ *   static registrations rather than another thing `prepareForSession` does.
+ *   An extension's resources ride the same sync as its tools, and carry the
+ *   same caveat: a URI that appears later reaches the next provider process.
+ *   The one difference is what a stale URI answers. A tool can be hidden from
+ *   `tools/list` because MCP consults a visibility predicate the host owns; a
+ *   resource has no such predicate here, so a URI nobody registers any more
+ *   stays listed and the broker answers `ExtensionUnknownResourceError` as a
+ *   JSON-RPC error — `resources/read` has no `isError` result to carry it.
+ * - **The server-level `instructions` are composed at the same moment.** MCP
+ *   publishes them once per `initialize`, which is when a provider process
+ *   connects, so an extension's standing guidance follows exactly the rule its
+ *   tools do.
  */
 import {
+  EXTENSION_MCP_INSTRUCTIONS_MAX_CHARS,
   type ExtensionListResult,
   type ExtensionName,
+  type ExtensionReadResourceResult,
+  type ExtensionResourceContents,
   type ExtensionToolContent,
   type ExtensionToolName,
   type ExtensionToolResult,
   type ExtensionUnavailableError,
+  type ExtensionUnknownResourceError,
   type ExtensionUnknownToolError,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -66,7 +81,9 @@ import { McpSchema, McpServer } from "effect/unstable/ai";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import {
   ExtensionRegistry,
+  type ExtensionInstructions,
   type ExtensionRegistryShape,
+  type ExtensionResourceOwner,
   type ExtensionToolOwner,
 } from "./ExtensionRegistry.ts";
 import {
@@ -106,6 +123,51 @@ export const EXTENSION_MCP_INSTRUCTIONS = [
   "not a harness fault: say so and carry on.",
 ].join(" ");
 
+/**
+ * The whole server-level instructions string: the host's own paragraph, then
+ * one section per connected extension, in the order the extensions started.
+ *
+ * Two things decide the shape. The string is billed on every turn of every
+ * thread, and Claude Code cuts it at about
+ * `EXTENSION_MCP_INSTRUCTIONS_MAX_CHARS` — mid-sentence, with nothing said.
+ * So the host composes under that number itself and drops whole sections
+ * rather than letting a client cut one in half, and it names what it dropped:
+ * an agent that can see guidance is missing asks, where one reading a
+ * truncated sentence just believes it.
+ *
+ * The host's own paragraph always survives. It is the part that explains what
+ * an extension *is*, so it is the one section that is worth nothing in pieces.
+ */
+export const composeMcpInstructions = (
+  sections: ReadonlyArray<ExtensionInstructions>,
+  options: { readonly host?: string; readonly budget?: number } = {},
+): string => {
+  const host = options.host ?? EXTENSION_MCP_INSTRUCTIONS;
+  const budget = options.budget ?? EXTENSION_MCP_INSTRUCTIONS_MAX_CHARS;
+  const rendered = sections.map(
+    (section) => `## ${section.extensionName}\n${section.instructions.trim()}`,
+  );
+  const compose = (keep: number): string => {
+    const parts = [host, ...rendered.slice(0, keep)];
+    if (keep < sections.length) {
+      const left = sections.slice(keep).map((section) => section.extensionName);
+      parts.push(
+        `Instructions from ${left.join(", ")} did not fit and were left out; read ${EXTENSION_INSTALLED_URI} to see what is installed.`,
+      );
+    }
+    return parts.join("\n\n");
+  };
+  // Longest prefix that fits, notice included. Sections are dropped from the
+  // end so the order is the start order whatever gets left out, and the count
+  // is small enough that trying each length is cheaper than reasoning about
+  // how much the notice itself will cost.
+  for (let keep = sections.length; keep > 0; keep -= 1) {
+    const text = compose(keep);
+    if (text.length <= budget) return text;
+  }
+  return compose(0);
+};
+
 /** MCP-shaped content from the extension's answer, mapped one for one. */
 const toCallToolContent = (content: ReadonlyArray<ExtensionToolContent>) =>
   content.map((entry) =>
@@ -140,6 +202,40 @@ export const toErrorResult = (
     content: [{ type: "text", text: error.message }],
     structuredContent: { error: { _tag: error._tag, message: error.message } },
   });
+
+/**
+ * The extension's answer as MCP's `ReadResourceResult`. `blob` is decoded here
+ * because the MCP schema carries bytes while the extension wire carries
+ * base64 — the same asymmetry an image tool result has.
+ */
+export const toReadResourceResult = (
+  result: ExtensionReadResourceResult,
+): McpSchema.ReadResourceResult => ({
+  contents: result.contents.map((entry: ExtensionResourceContents) =>
+    entry.type === "text"
+      ? {
+          uri: entry.uri,
+          ...(entry.mimeType === undefined ? {} : { mimeType: entry.mimeType }),
+          text: entry.text,
+        }
+      : {
+          uri: entry.uri,
+          ...(entry.mimeType === undefined ? {} : { mimeType: entry.mimeType }),
+          blob: new Uint8Array(Buffer.from(entry.blob, "base64")),
+        },
+  ),
+});
+
+/**
+ * A brokering failure on `resources/read`. Unlike `tools/call` there is no
+ * result shape that carries an error, so the only way an agent hears about a
+ * stopped extension is a JSON-RPC failure — `InternalError` is the code MCP
+ * reserves for "the server could not do this", and its message is the
+ * extension's own sentence.
+ */
+export const toResourceError = (
+  error: ExtensionUnavailableError | ExtensionUnknownResourceError,
+): McpSchema.InternalError => new McpSchema.InternalError({ message: error.message });
 
 /**
  * What `t3code://extensions/installed` serves: enough for an agent told "add a
@@ -283,7 +379,21 @@ export interface ExtensionMcpShape {
    * reaches a *new* provider process, and issuing a credential is exactly when
    * one is about to connect.
    */
-  readonly installToolSync: (sync: Effect.Effect<void>) => Effect.Effect<void>;
+  readonly installCatalogueSync: (sync: Effect.Effect<void>) => Effect.Effect<void>;
+  /**
+   * The server-level `instructions` as of the last catalogue sync, read
+   * synchronously because MCP asks for it while answering `initialize` and the
+   * answer has to be a string, not an effect.
+   *
+   * Same "catalogue at connect" rule as the tools, and for the same reason:
+   * `initialize` happens once, when a provider process connects, so what an
+   * extension says here reaches the next session rather than a running one.
+   */
+  readonly mcpInstructions: () => string;
+  /** What the extensions are saying now, told to the gate by every sync. */
+  readonly noteInstructions: (
+    sections: ReadonlyArray<ExtensionInstructions>,
+  ) => Effect.Effect<void>;
   /**
    * What the extensions are registering *now*, told to the gate by the tool
    * sync on every run.
@@ -328,6 +438,9 @@ export const make = Effect.fnUntraced(function* (
   // two extensions cannot retire each other's names. `undefined` until the
   // first sync, which reads as "not known yet" and retires nothing.
   let registeredTools: ReadonlyMap<ExtensionName, ReadonlySet<string>> | undefined;
+  // Composed rather than composed-on-read: `initialize` cannot run an effect,
+  // and the sync is the one moment the answer is allowed to move anyway.
+  let mcpInstructions = EXTENSION_MCP_INSTRUCTIONS;
 
   const rememberVisibleTools = (
     threadId: ThreadId,
@@ -366,7 +479,12 @@ export const make = Effect.fnUntraced(function* (
       const allowed = visibleTools.get(input.threadId)?.get(input.extensionName);
       return allowed === undefined || allowed.has(input.toolName);
     },
-    installToolSync: (sync) => SynchronizedRef.set(toolSync, sync),
+    installCatalogueSync: (sync) => SynchronizedRef.set(toolSync, sync),
+    mcpInstructions: () => mcpInstructions,
+    noteInstructions: (sections) =>
+      Effect.sync(() => {
+        mcpInstructions = composeMcpInstructions(sections);
+      }),
     noteRegisteredTools: (tools) =>
       Effect.sync(() => {
         const next = new Map<ExtensionName, Set<string>>();
@@ -409,6 +527,42 @@ export const extensionToolFingerprint = (tool: ExtensionToolOwner): string =>
     tool.definition.description,
     tool.definition.inputSchema,
   ]);
+
+export const extensionResourceFingerprint = (resource: ExtensionResourceOwner): string =>
+  stableJson([
+    resource.extensionName,
+    resource.definition.uri,
+    resource.definition.name,
+    resource.definition.description,
+    resource.definition.mimeType,
+  ]);
+
+/**
+ * Registers one extension resource. The handler carries no caller: MCP reads a
+ * resource by URI and tells the server nothing about who asked, so an
+ * extension that needs an identity has to expose a tool instead.
+ */
+export const addExtensionResource = Effect.fn("ExtensionMcp.addExtensionResource")(
+  function* (input: {
+    readonly addResource: McpServer.McpServer["Service"]["addResource"];
+    readonly registry: ExtensionRegistryShape;
+    readonly definition: ExtensionResourceOwner["definition"];
+  }) {
+    yield* input.addResource({
+      resource: new McpSchema.Resource({
+        uri: input.definition.uri,
+        name: input.definition.name,
+        description: input.definition.description,
+        mimeType: input.definition.mimeType,
+      }),
+      annotations: Context.empty(),
+      handle: input.registry.readResource({ uri: input.definition.uri }).pipe(
+        Effect.map(toReadResourceResult),
+        Effect.catch((error) => Effect.fail(toResourceError(error))),
+      ),
+    });
+  },
+);
 
 /**
  * The catalogue sync, over any `addTool`: read what the extensions register
@@ -464,15 +618,88 @@ export const makeToolSync = (input: {
 };
 
 /**
- * Builds the tool sync and hands it to the gate. Lives where `McpServer`
+ * The resource half of the same sync. Separate from the tools only because
+ * `addResource` is a different call: the rules are identical, down to the
+ * fingerprint map never shrinking, and for the same reason — a resource an
+ * extension stopped registering has to keep answering an agent that already
+ * holds its URI.
+ *
+ * Unlike a tool it is not *retired*: MCP consults no visibility predicate the
+ * host controls here, so the registration stays and the broker answers
+ * `ExtensionUnknownResourceError` once nobody owns the URI.
+ */
+export const makeResourceSync = (input: {
+  readonly addResource: McpServer.McpServer["Service"]["addResource"];
+  readonly registry: ExtensionRegistryShape;
+}): Effect.Effect<Effect.Effect<void>> => {
+  const { addResource, registry } = input;
+  return SynchronizedRef.make<ReadonlyMap<string, string>>(new Map()).pipe(
+    Effect.map((registered) =>
+      Effect.gen(function* () {
+        const resources = yield* registry.listResources;
+        const already = yield* SynchronizedRef.get(registered);
+        const stale = resources.filter(
+          (resource) =>
+            already.get(resource.definition.uri) !== extensionResourceFingerprint(resource),
+        );
+        if (stale.length === 0) return;
+        yield* Effect.forEach(
+          stale,
+          (resource) =>
+            addExtensionResource({ addResource, registry, definition: resource.definition }),
+          { discard: true },
+        );
+        yield* SynchronizedRef.update(registered, (current) => {
+          const next = new Map(current);
+          for (const resource of stale) {
+            next.set(resource.definition.uri, extensionResourceFingerprint(resource));
+          }
+          return next;
+        });
+      }),
+    ),
+  );
+};
+
+/**
+ * Everything a provider process about to connect has to be shown: the tools,
+ * the resources, and the instructions. One installed effect rather than three,
+ * because they share a moment — the instant before a credential is handed out
+ * — and nothing reads a half-synced catalogue.
+ */
+export const makeCatalogueSync = (input: {
+  readonly addTool: McpServer.McpServer["Service"]["addTool"];
+  readonly addResource: McpServer.McpServer["Service"]["addResource"];
+  readonly registry: ExtensionRegistryShape;
+  readonly gate: ExtensionMcpShape;
+}): Effect.Effect<Effect.Effect<void>> =>
+  Effect.gen(function* () {
+    const tools = yield* makeToolSync(input);
+    const resources = yield* makeResourceSync(input);
+    return Effect.gen(function* () {
+      yield* tools;
+      yield* resources;
+      yield* input.gate.noteInstructions(yield* input.registry.listInstructions);
+    });
+  });
+
+/**
+ * Builds the catalogue sync and hands it to the gate. Lives where `McpServer`
  * exists, which is above the session registry.
  */
-export const toolsLayer = Layer.effectDiscard(
+export const catalogueLayer = Layer.effectDiscard(
   Effect.gen(function* () {
     const registry = yield* ExtensionRegistry;
     const server = yield* McpServer.McpServer;
     const gate = yield* ExtensionMcp;
-    yield* gate.installToolSync(yield* makeToolSync({ addTool: server.addTool, registry, gate }));
+    yield* gate.installCatalogueSync(
+      yield* makeCatalogueSync({
+        addTool: server.addTool,
+        addResource: server.addResource,
+        registry,
+        gate,
+      }),
+    );
   }),
 );
 

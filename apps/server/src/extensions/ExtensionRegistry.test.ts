@@ -39,13 +39,39 @@ const spawnTool = {
   inputSchema: { type: "object" },
 };
 
-const makeRegistry = (options: { readonly callTimeoutMs?: number } = {}) =>
+const notesResource = {
+  uri: "bach://notes",
+  name: "bach-notes",
+  description: "Everything Bach knows about the running fleet.",
+  mimeType: "application/json",
+};
+
+const makeRegistry = (
+  options: {
+    readonly callTimeoutMs?: number;
+    readonly reservedResourceUris?: ReadonlyArray<string>;
+  } = {},
+) =>
   make({
     environmentId: caller.environmentId,
     hostVersion: "0.0.38",
     dataRoot: "/home/dev/.t3/userdata/extensions",
     ...options,
   }).pipe(Effect.provide(NodeServices.layer));
+
+/** Register a second extension and complete its handshake. */
+const withSecondExtension = Effect.fn("test.withSecondExtension")(function* (
+  registry: Registry,
+  name: string,
+) {
+  yield* registry.upsertSource({ name, path: `/opt/${name}`, enabled: true, source: "settings" });
+  yield* registry.hello({
+    protocolVersion: EXTENSION_PROTOCOL_VERSION,
+    manifest: { ...manifest, name },
+    name,
+    subject: `${EXTENSION_SUBJECT_PREFIX}${name}`,
+  });
+});
 
 type Registry = ExtensionRegistryShape;
 
@@ -632,6 +658,128 @@ describe("per-thread tool sets", () => {
       const answers = yield* registry.toolsForThread(caller.threadId);
 
       expect(answers.size).toBe(0);
+    }),
+  );
+});
+
+describe("instructions", () => {
+  it.effect("reports them only while the extension is connected, in start order", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeRegistry();
+        yield* withHandshake(registry);
+        yield* registry.registerTools({
+          name: "bach",
+          tools: [spawnTool],
+          instructions: "Bach runs the fleet.",
+        });
+        // Registered but not connected: nothing to tell an agent about, since
+        // every tool it would point at can only answer "unavailable".
+        expect(yield* registry.listInstructions).toStrictEqual([]);
+
+        yield* Stream.runForEach(yield* registry.connect({ name: "bach" }), () => Effect.void).pipe(
+          Effect.forkScoped,
+        );
+        yield* Effect.yieldNow;
+        expect(yield* registry.listInstructions).toStrictEqual([
+          { extensionName: "bach", instructions: "Bach runs the fleet." },
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("drops them when a later registration stops declaring them", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeRegistry();
+        yield* withHandshake(registry);
+        yield* Stream.runForEach(yield* registry.connect({ name: "bach" }), () => Effect.void).pipe(
+          Effect.forkScoped,
+        );
+        yield* Effect.yieldNow;
+        yield* registry.registerTools({
+          name: "bach",
+          tools: [spawnTool],
+          instructions: "Bach runs the fleet.",
+        });
+        expect(yield* registry.listInstructions).toHaveLength(1);
+
+        yield* registry.registerTools({ name: "bach", tools: [spawnTool] });
+        expect(yield* registry.listInstructions).toStrictEqual([]);
+      }),
+    ),
+  );
+});
+
+describe("resources", () => {
+  it.effect("routes a read to the extension that registered the URI", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeRegistry();
+        yield* withHandshake(registry);
+        yield* registry.registerResources({ name: "bach", resources: [notesResource] });
+        const events = attach(yield* registry.connect({ name: "bach" }), () => undefined);
+        yield* Stream.runForEach(events, (event) =>
+          event.type === "readResource"
+            ? registry.respondReadResource({
+                connectionId: event.connectionId,
+                requestId: event.request.requestId,
+                contents: [{ type: "text", uri: event.request.uri, text: '{"agents":2}' }],
+              })
+            : Effect.void,
+        ).pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
+
+        const result = yield* registry.readResource({ uri: "bach://notes" });
+        expect(result.contents[0]).toStrictEqual({
+          type: "text",
+          uri: "bach://notes",
+          text: '{"agents":2}',
+        });
+      }),
+    ),
+  );
+
+  it.effect("separates a URI nobody registered from an extension that is down", () =>
+    Effect.gen(function* () {
+      const registry = yield* makeRegistry();
+      yield* withHandshake(registry);
+      yield* registry.registerResources({ name: "bach", resources: [notesResource] });
+
+      const unknown = yield* registry.readResource({ uri: "bach://nothing" }).pipe(Effect.flip);
+      expect(unknown._tag).toBe("ExtensionUnknownResourceError");
+
+      const unavailable = yield* registry.readResource({ uri: "bach://notes" }).pipe(Effect.flip);
+      expect(unavailable._tag).toBe("ExtensionUnavailableError");
+      // The message names the URI, so an agent reading it knows what it lost.
+      expect(unavailable.message).toContain("bach://notes");
+      expect((yield* registry.listResources).length).toBe(1);
+    }),
+  );
+
+  it.effect("refuses a URI the host or another extension already owns", () =>
+    Effect.gen(function* () {
+      const registry = yield* makeRegistry({ reservedResourceUris: ["t3code://extensions/guide"] });
+      yield* withHandshake(registry);
+      const reserved = yield* registry.registerResources({
+        name: "bach",
+        resources: [{ ...notesResource, uri: "t3code://extensions/guide" }, notesResource],
+      });
+      expect(reserved.resources).toMatchObject([
+        { status: "rejected", uri: "t3code://extensions/guide", reason: "uri-collision" },
+        { status: "accepted", uri: "bach://notes" },
+      ]);
+
+      yield* withSecondExtension(registry, "notes");
+      const collided = yield* registry.registerResources({
+        name: "notes",
+        resources: [notesResource],
+      });
+      expect(collided.resources).toMatchObject([{ status: "rejected", reason: "uri-collision" }]);
+      // The refusal is where Settings can read it, and it names the owner.
+      const status = yield* registry.get("notes");
+      expect(status.rejections).toMatchObject([{ kind: "resource", subject: "bach://notes" }]);
+      expect(status.rejections[0]?.message).toContain("bach");
     }),
   );
 });
