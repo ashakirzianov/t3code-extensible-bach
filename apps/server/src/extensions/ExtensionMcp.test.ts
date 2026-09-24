@@ -40,6 +40,7 @@ import {
   extensionResourceDefinitions,
   makeCatalogueSync,
   makeResourceSync,
+  resourcesLayer,
   installedResourceJson,
   make,
   makeToolSync,
@@ -1247,5 +1248,110 @@ describe("reading an extension resource", () => {
       // travel as the protocol error's message.
       expect(error.message).toContain("bach://notes");
     }),
+  );
+});
+
+describe("over the real transport", () => {
+  const notesResource = {
+    uri: "bach://notes",
+    name: "bach-notes",
+    description: "Everything Bach knows about the running fleet.",
+    mimeType: "application/json",
+  };
+
+  it.effect("publishes the extension's instructions and serves its resource", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeRegistry();
+        const bridge = yield* make().pipe(
+          Effect.provideService(ExtensionRegistry.ExtensionRegistry, registry),
+        );
+        yield* withTool(registry);
+        yield* registry.registerTools({
+          name: "bach",
+          tools: [spawnTool],
+          instructions: "Spawn agents through Bach, never by hand.",
+        });
+        yield* registry.registerResources({ name: "bach", resources: [notesResource] });
+        const events = yield* registry.connect({ name: "bach" });
+        yield* Stream.runForEach(events, (event) =>
+          event.type === "readResource"
+            ? registry.respondReadResource({
+                connectionId: event.connectionId,
+                requestId: event.request.requestId,
+                contents: [{ type: "text", uri: event.request.uri, text: '{"agents":2}' }],
+              })
+            : Effect.void,
+        ).pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
+        yield* registry.markSourcesResolved;
+
+        yield* HttpRouter.serve(
+          Layer.mergeAll(catalogueLayer, resourcesLayer).pipe(
+            Layer.provideMerge(
+              McpServer.layerHttp({
+                name: "T3 Code",
+                version: "0.0.38",
+                path: "/mcp",
+                protocols: [McpProtocol.v2025_06_18],
+                // The same getter `McpHttpServer` installs: MCP reads it while
+                // answering `initialize`, so the value is whatever the
+                // catalogue sync composed for this session.
+                get instructions() {
+                  return bridge.mcpInstructions();
+                },
+              }),
+            ),
+            Layer.provide(
+              Layer.mergeAll(
+                Layer.succeed(ExtensionRegistry.ExtensionRegistry, registry),
+                Layer.succeed(ExtensionMcp, bridge),
+              ),
+            ),
+          ),
+          { disableListenLog: true, disableLogger: true },
+        ).pipe(Layer.build);
+
+        yield* bridge.prepareForSession({ threadId: invocation.threadId });
+
+        const httpClient = yield* HttpClient.HttpClient;
+        const initialize = yield* httpClient.post("/mcp", {
+          headers: { accept: "application/json, text/event-stream" },
+          body: HttpBody.text(
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t3-test","version":"1.0.0"}}}',
+            "application/json",
+          ),
+        });
+        const sessionId = initialize.headers["mcp-session-id"] ?? "";
+        const initialized = yield* initialize.text;
+        expect(initialized).toContain("## bach");
+        expect(initialized).toContain("never by hand");
+
+        const send = (body: string) =>
+          httpClient
+            .post("/mcp", {
+              headers: {
+                accept: "application/json, text/event-stream",
+                "mcp-session-id": sessionId,
+                "mcp-protocol-version": "2025-06-18",
+              },
+              body: HttpBody.text(body, "application/json"),
+            })
+            .pipe(Effect.flatMap((response) => response.text));
+        yield* send('{"jsonrpc":"2.0","method":"notifications/initialized"}');
+
+        // Listed beside the host's own three, and read through to the extension.
+        const listed = yield* send(
+          '{"jsonrpc":"2.0","id":2,"method":"resources/list","params":{}}',
+        );
+        expect(listed).toContain("bach://notes");
+        expect(listed).toContain(EXTENSION_GUIDE_URI);
+
+        const read = yield* send(
+          '{"jsonrpc":"2.0","id":3,"method":"resources/read","params":{"uri":"bach://notes"}}',
+        );
+        expect(read).toContain('{\\"agents\\":2}');
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpServer.layerTest))),
   );
 });
