@@ -35,6 +35,66 @@ fork's operational half and does not restate it.
 
 What each merge actually cost, so the next one can be estimated rather than guessed at.
 
+### 2026-09-24 — `upstream/main` at `f3cb2a1fe` (255 commits)
+
+**Five conflicts, and none of them was the expensive part.** Three were import
+blocks where both sides had added a line (`apps/server/src/config.ts`,
+`apps/server/src/cli/config.ts`, `packages/contracts/src/settings.ts`), resolved by
+keeping both; the fourth was `pnpm-lock.yaml`, every hunk an effect version bump, so
+upstream's side won in all 44 and `pnpm install` regenerated the patch hash. The fifth
+was the effect patch, renamed `rc.112` → `rc.115` with its context moved — **the recipe
+in the 2026-09-09 entry worked unchanged** and is now twice-proven: `npm pack`, unpack as
+`pristine` and `edited`, `git apply` upstream's patch to `edited`, re-make the fork's
+hunks, `git diff` the two. The fork's five `instructions` hunks went back on in about ten
+minutes.
+
+**The cost was in the silent breaks again, and this time there were three kinds.**
+Effect rc.115 capitalised its constructor names — `Flag.string`, `Flag.keyValuePair`,
+`Config.string` are now `Flag.String`, `Flag.KeyValuePair`, `Config.String` — and
+replaced `HttpServer.address`'s `TcpAddress { hostname }` with `NetAddress` variants
+carrying an `Ipv4Address`/`Ipv6Address` value. Upstream migrated its own copy of the
+wildcard-bind helper in `McpSessionRegistry.ts`; the fork's identical copy in
+`ExtensionsRuntime.ts` was left behind and now calls upstream's `NetAddress.isUnspecified`
+and `formatUrlHostString` rather than re-deriving them. `nodeSqliteClient.layerMemory`
+was deleted as obsolete, so the migration-guard test opens `:memory:` through `layer`.
+**None of this conflicted; only the typecheck caught it.**
+
+**Two generated-artifact surprises, both effect's JSON Schema emission.** Every struct
+now emits `additionalProperties: true` where it emitted `false`, which silently loosens
+the published extension protocol schema; and `Schema.Struct({})` encodes as
+`{"not":{"type":"null"}}` rather than an object/array union, a node the protocol
+generator threw on before any typecheck ran. The generator now reads it as TypeScript's
+`{}`. `extensions/reference/protocol/` had to be re-vendored after
+(`scripts/vendoredProtocol.test.ts` is what says so).
+
+**Upstream added `@shadcn/lint`, and its component-ownership rules had never seen the
+fork's extension UI.** Twelve errors across three fork-only files: colour and shape
+classes on `SidebarInset` and `ScrollArea`, arbitrary text sizes that belong on the
+`text-2xs`/`text-3xs` scale, and spacing overrides on `SidebarMenuButton` and
+`AutocompleteItem`. All fixed in the fork's own files rather than by adding fork entries
+to the allowlist in `vite.config.ts`, which would have been a new host-file touch point.
+The one judgement call: `SidebarMenuButton`'s `ps-2` was dropped rather than carried as a
+new size variant — upstream now drives the row inset from
+`--sidebar-row-content-inset`, so the fork's rows line up with every other sidebar row
+without the override.
+
+**The hand checks found nothing.** `ElectronProtocol.ts` changed only cosmetically
+(`Mime` moved to `effect/unstable/http` and returns an `Option`; `blob:` joined the CSP
+connect sources for a 3D viewer), and both the `/__ext-remote/…` and `/ext-assets/…`
+bridges still dispatch ahead of the serving-mode branch. `DesktopApp.ts` did not change
+at all, so the answer to "can a page-relative path still reach the local backend, and by
+what route" is the same as last uptake: only through those two bridged prefixes. The
+`vite:preloadError` listener and the cooldown floor are untouched. Slice F survived
+whole: `McpHttpServer.ts`, `ExtensionMcp.ts`, `ExtensionRegistry.ts` and
+`packages/contracts/src/extensions.ts` took no upstream edits.
+
+**What the next uptake should check:** whether effect has settled its JSON Schema
+emission, because two uptakes in a row have moved the published protocol artifact
+without anyone asking; whether upstream's `@shadcn/lint` rule set grows again, since it
+reaches every fork-owned file under `apps/web/src/` and no fork file has ever been
+written against it; and the two desktop seam files, as before. Still open from
+2026-09-09, and still not decided: the Linux screen-capture identity literals.
+
 ### 2026-09-17 — `upstream/main` at `3fd5d6439`
 
 **The expensive part conflicted with nothing and only showed up in a packaged build.**
