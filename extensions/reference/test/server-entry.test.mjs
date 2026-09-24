@@ -103,3 +103,32 @@ NodeTest.test(
     );
   },
 );
+
+NodeTest.test("a resource read is answered from the store without a caller identity", async () => {
+  // The read path is pure, so it is checkable without a host: a resource
+  // carries no `ExtensionToolCaller`, which is exactly what separates it from
+  // a tool invocation.
+  const dataDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3ref-"));
+  const { EchoStore } = await import("../src/server/store.ts");
+  const { readEchoResource } = await import("../src/server/resources.ts");
+  const { ECHO_RESOURCE_URI } = await import("../src/server/manifest.ts");
+
+  const store = new EchoStore(dataDir);
+  try {
+    store.record("thread-1", "hello");
+    const result = readEchoResource(store, { requestId: "read-1", uri: ECHO_RESOURCE_URI });
+    NodeAssert.equal(result.requestId, "read-1");
+    NodeAssert.equal(result.contents.length, 1);
+    NodeAssert.equal(result.contents[0].uri, ECHO_RESOURCE_URI);
+    const parsed = JSON.parse(result.contents[0].text);
+    NodeAssert.equal(parsed.echoCount, 1);
+    NodeAssert.equal(parsed.lastEcho.message, "hello");
+
+    // The answer quotes the URI it was asked for, which is what lets the same
+    // handler serve more than one without a table of its own.
+    const other = readEchoResource(store, { requestId: "read-2", uri: "reference://other" });
+    NodeAssert.equal(other.contents[0].uri, "reference://other");
+  } finally {
+    store.close();
+  }
+});

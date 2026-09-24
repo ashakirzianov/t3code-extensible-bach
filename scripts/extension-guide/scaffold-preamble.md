@@ -1,8 +1,8 @@
 # Extension scaffold
 
 Every file of the reference extension, the worked example that exercises each seam of the
-protocol exactly once: a tool, an HTTP route, a web entry, a badge, and its own SQLite
-database. Copy it and delete what you do not need.
+protocol exactly once: a tool, a resource, its standing instructions, an HTTP route, a web
+entry, a badge, and its own SQLite database. Copy it and delete what you do not need.
 
 The reference extension is **standalone on purpose**. It has ordinary dependencies, its own
 build, and belongs to no workspace, so everything below works the same in a repository of

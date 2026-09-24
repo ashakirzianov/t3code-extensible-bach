@@ -71,3 +71,34 @@ NodeTest.test("the registered tool definition validates against the host's schem
     );
   }
 });
+
+NodeTest.test(
+  "the registered resource definition validates against the host's schema",
+  async () => {
+    const validate = validatorFor("ExtensionResourceDefinition");
+    const { RESOURCES } = await import("../src/server/manifest.ts");
+    NodeAssert.ok(RESOURCES.length >= 1, "the reference extension should register a resource");
+    for (const resource of RESOURCES) {
+      NodeAssert.ok(
+        validate(resource),
+        `resource "${resource.uri}" is not a valid ExtensionResourceDefinition: ${JSON.stringify(validate.errors)}`,
+      );
+    }
+  },
+);
+
+NodeTest.test("the declared instructions fit the slot the host publishes them in", async () => {
+  const validate = validatorFor("ExtensionRegisterToolsInput");
+  const { INSTRUCTIONS, TOOLS } = await import("../src/server/manifest.ts");
+  NodeAssert.ok(
+    validate({ tools: TOOLS, instructions: INSTRUCTIONS }),
+    `registerTools payload is invalid: ${JSON.stringify(validate.errors)}`,
+  );
+  // The whole server-level string is shared with the host's own paragraph and
+  // with every other extension, and a client cuts it at about 2,500
+  // characters. A few hundred is what survives a second extension.
+  NodeAssert.ok(
+    INSTRUCTIONS.length <= 500,
+    `instructions are ${INSTRUCTIONS.length} characters; keep an example's share small`,
+  );
+});

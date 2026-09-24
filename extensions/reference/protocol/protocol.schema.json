@@ -29,6 +29,16 @@
         "EnvironmentAuthorizationError"
       ]
     },
+    "extensions.registerResources": {
+      "direction": "extension-to-host",
+      "summary": "Declares the complete MCP resource surface. Answered per resource.",
+      "payload": "ExtensionRegisterResourcesInput",
+      "success": "ExtensionRegisterResourcesResult",
+      "errors": [
+        "ExtensionHandshakeRequiredError",
+        "EnvironmentAuthorizationError"
+      ]
+    },
     "extensions.registerHttpPrefix": {
       "direction": "extension-to-host",
       "summary": "Claims one path prefix under the host's own origin and auth.",
@@ -88,6 +98,14 @@
       "direction": "extension-to-host",
       "summary": "Answers one toolsForThread event with the tools that thread may see.",
       "payload": "ExtensionToolsForThreadResult",
+      "errors": [
+        "EnvironmentAuthorizationError"
+      ]
+    },
+    "extensions.respondReadResource": {
+      "direction": "extension-to-host",
+      "summary": "Answers one readResource event with the resource's contents.",
+      "payload": "ExtensionReadResourceResult",
       "errors": [
         "EnvironmentAuthorizationError"
       ]
@@ -233,6 +251,12 @@
         },
         {
           "$ref": "#/$defs/ExtensionUnknownToolError"
+        },
+        {
+          "$ref": "#/$defs/ExtensionResourceUriCollisionError"
+        },
+        {
+          "$ref": "#/$defs/ExtensionUnknownResourceError"
         },
         {
           "$ref": "#/$defs/ExtensionUnavailableError"
@@ -851,6 +875,50 @@
       "type": "integer",
       "minimum": 1
     },
+    "ExtensionReadResourceRequest": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "$ref": "#/$defs/ExtensionReadResourceRequestId"
+        },
+        "uri": {
+          "$ref": "#/$defs/ExtensionResourceUri"
+        }
+      },
+      "required": [
+        "requestId",
+        "uri"
+      ],
+      "additionalProperties": false
+    },
+    "ExtensionReadResourceRequestId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "ExtensionReadResourceResult": {
+      "type": "object",
+      "properties": {
+        "connectionId": {
+          "$ref": "#/$defs/ExtensionConnectionId"
+        },
+        "requestId": {
+          "$ref": "#/$defs/ExtensionReadResourceRequestId"
+        },
+        "contents": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ExtensionResourceContents"
+          }
+        }
+      },
+      "required": [
+        "connectionId",
+        "requestId",
+        "contents"
+      ],
+      "additionalProperties": false
+    },
     "ExtensionRegisterHttpPrefixInput": {
       "type": "object",
       "properties": {
@@ -881,6 +949,37 @@
       ],
       "additionalProperties": false
     },
+    "ExtensionRegisterResourcesInput": {
+      "type": "object",
+      "properties": {
+        "resources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ExtensionResourceDefinition"
+          },
+          "maxItems": 64
+        }
+      },
+      "required": [
+        "resources"
+      ],
+      "additionalProperties": false
+    },
+    "ExtensionRegisterResourcesResult": {
+      "type": "object",
+      "properties": {
+        "resources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ExtensionResourceRegistration"
+          }
+        }
+      },
+      "required": [
+        "resources"
+      ],
+      "additionalProperties": false
+    },
     "ExtensionRegisterToolsInput": {
       "type": "object",
       "properties": {
@@ -893,6 +992,11 @@
         },
         "filterToolsPerThread": {
           "type": "boolean"
+        },
+        "instructions": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
         }
       },
       "required": [
@@ -932,6 +1036,184 @@
       "minLength": 1,
       "maxLength": 512,
       "pattern": "^(?!.*(?:^|\\/)\\.\\.(?:\\/|$))[A-Za-z0-9._-]+(?:\\/[A-Za-z0-9._-]+)*$"
+    },
+    "ExtensionResourceContents": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "text"
+              ]
+            },
+            "uri": {
+              "$ref": "#/$defs/ExtensionResourceUri"
+            },
+            "mimeType": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 1048576
+            }
+          },
+          "required": [
+            "type",
+            "uri",
+            "text"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "blob"
+              ]
+            },
+            "uri": {
+              "$ref": "#/$defs/ExtensionResourceUri"
+            },
+            "mimeType": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "blob": {
+              "type": "string",
+              "maxLength": 8388608
+            }
+          },
+          "required": [
+            "type",
+            "uri",
+            "blob"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ExtensionResourceDefinition": {
+      "type": "object",
+      "properties": {
+        "uri": {
+          "$ref": "#/$defs/ExtensionResourceUri"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "mimeType": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        }
+      },
+      "required": [
+        "uri",
+        "name",
+        "description",
+        "mimeType"
+      ],
+      "additionalProperties": false
+    },
+    "ExtensionResourceRegistration": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "accepted"
+              ]
+            },
+            "uri": {
+              "$ref": "#/$defs/ExtensionResourceUri"
+            }
+          },
+          "required": [
+            "status",
+            "uri"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "rejected"
+              ]
+            },
+            "uri": {
+              "$ref": "#/$defs/ExtensionResourceUri"
+            },
+            "reason": {
+              "$ref": "#/$defs/ExtensionResourceRejectionReason"
+            },
+            "message": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
+          },
+          "required": [
+            "status",
+            "uri",
+            "reason",
+            "message"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ExtensionResourceRejectionReason": {
+      "type": "string",
+      "enum": [
+        "uri-collision",
+        "unsupported"
+      ]
+    },
+    "ExtensionResourceUri": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "ExtensionResourceUriCollisionError": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": [
+            "ExtensionResourceUriCollisionError"
+          ]
+        },
+        "uri": {
+          "$ref": "#/$defs/ExtensionResourceUri"
+        },
+        "owner": {
+          "$ref": "#/$defs/ExtensionName"
+        }
+      },
+      "required": [
+        "_tag",
+        "uri"
+      ],
+      "additionalProperties": false
     },
     "ExtensionServerEntry": {
       "type": "object",
@@ -1038,6 +1320,29 @@
             },
             "request": {
               "$ref": "#/$defs/ExtensionToolsForThreadRequest"
+            }
+          },
+          "required": [
+            "type",
+            "connectionId",
+            "request"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "readResource"
+              ]
+            },
+            "connectionId": {
+              "$ref": "#/$defs/ExtensionConnectionId"
+            },
+            "request": {
+              "$ref": "#/$defs/ExtensionReadResourceRequest"
             }
           },
           "required": [
@@ -1386,6 +1691,9 @@
         },
         "toolName": {
           "$ref": "#/$defs/ExtensionToolName"
+        },
+        "resourceUri": {
+          "$ref": "#/$defs/ExtensionResourceUri"
         }
       },
       "required": [
@@ -1403,6 +1711,28 @@
         "restarting",
         "timeout"
       ]
+    },
+    "ExtensionUnknownResourceError": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": [
+            "ExtensionUnknownResourceError"
+          ]
+        },
+        "uri": {
+          "$ref": "#/$defs/ExtensionResourceUri"
+        },
+        "extensionName": {
+          "$ref": "#/$defs/ExtensionName"
+        }
+      },
+      "required": [
+        "_tag",
+        "uri"
+      ],
+      "additionalProperties": false
     },
     "ExtensionUnknownToolError": {
       "type": "object",

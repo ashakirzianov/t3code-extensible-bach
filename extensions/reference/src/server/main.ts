@@ -12,7 +12,9 @@ import type {
   ExtensionHelloAck,
   ExtensionHttpRequest,
   ExtensionManifest,
+  ExtensionReadResourceRequest,
   ExtensionRegisterHttpPrefixResult,
+  ExtensionRegisterResourcesResult,
   ExtensionRegisterToolsResult,
   ExtensionStreamEvent,
   ExtensionToolInvocation,
@@ -20,8 +22,9 @@ import type {
 import { readHostEnvironment, MissingHostEnvironmentError } from "./env.js";
 import { RpcClient, RpcConnectionClosedError } from "./rpc.js";
 import { EchoStore } from "./store.js";
-import { MANIFEST, HTTP_PREFIX, TOOLS, WEB_ENTRY } from "./manifest.js";
+import { MANIFEST, HTTP_PREFIX, INSTRUCTIONS, RESOURCES, TOOLS, WEB_ENTRY } from "./manifest.js";
 import { handleHttpRequest } from "./http.js";
+import { readEchoResource } from "./resources.js";
 import { runEchoTool } from "./tools.js";
 
 /** Reconnect backoff. The host supervises the process; this only covers a socket blip. */
@@ -66,8 +69,12 @@ async function main(): Promise<void> {
     );
 
     // 2. Declarative registrations. Each is answered; a rejection is not fatal.
+    // `instructions` rides with the tools because it is the same declaration:
+    // what this extension is, and what its tools are for. The host appends it
+    // to the MCP server's own instructions for every agent in the environment.
     const registered = await client.call<ExtensionRegisterToolsResult>("extensions.registerTools", {
       tools: TOOLS,
+      instructions: INSTRUCTIONS,
     });
     for (const entry of registered.tools) {
       if (entry.status === "rejected") {
@@ -75,6 +82,19 @@ async function main(): Promise<void> {
         // and Settings shows the reason. Do not exit.
         console.error(
           `[reference] tool "${entry.name}" rejected (${entry.reason}): ${entry.message}`,
+        );
+      }
+    }
+
+    // Resources are answered per URI, the same way tools are answered per name.
+    const registeredResources = await client.call<ExtensionRegisterResourcesResult>(
+      "extensions.registerResources",
+      { resources: RESOURCES },
+    );
+    for (const entry of registeredResources.resources) {
+      if (entry.status === "rejected") {
+        console.error(
+          `[reference] resource "${entry.uri}" rejected (${entry.reason}): ${entry.message}`,
         );
       }
     }
@@ -113,6 +133,9 @@ async function main(): Promise<void> {
               return;
             case "proxyHttp":
               void respondToHttp(client, store, connectionId, startedAt, event.request);
+              return;
+            case "readResource":
+              void respondToReadResource(client, store, connectionId, event.request);
               return;
           }
         },
@@ -172,6 +195,27 @@ async function respondToTool(
         isError: true,
       })
       .catch(() => undefined);
+  }
+}
+
+/**
+ * Answers one `readResource`. There is no `isError` shape for a resource, so a
+ * failure has to be a *missing* answer: the host times the call out and turns
+ * it into an MCP protocol error carrying its own sentence. Nothing useful can
+ * be sent back here, which is why this only logs.
+ */
+async function respondToReadResource(
+  client: RpcClient,
+  store: EchoStore,
+  connectionId: string | undefined,
+  request: ExtensionReadResourceRequest,
+): Promise<void> {
+  if (!connectionId) return;
+  try {
+    const result = readEchoResource(store, request);
+    await client.call("extensions.respondReadResource", { connectionId, ...result });
+  } catch (error) {
+    console.error(`[reference] failed to read ${request.uri}: ${String(error)}`);
   }
 }
 

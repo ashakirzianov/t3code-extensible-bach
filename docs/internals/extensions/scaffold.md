@@ -4,8 +4,8 @@
 # Extension scaffold
 
 Every file of the reference extension, the worked example that exercises each seam of the
-protocol exactly once: a tool, an HTTP route, a web entry, a badge, and its own SQLite
-database. Copy it and delete what you do not need.
+protocol exactly once: a tool, a resource, its standing instructions, an HTTP route, a web
+entry, a badge, and its own SQLite database. Copy it and delete what you do not need.
 
 The reference extension is **standalone on purpose**. It has ordinary dependencies, its own
 build, and belongs to no workspace, so everything below works the same in a repository of
@@ -400,7 +400,9 @@ import type {
   ExtensionHelloAck,
   ExtensionHttpRequest,
   ExtensionManifest,
+  ExtensionReadResourceRequest,
   ExtensionRegisterHttpPrefixResult,
+  ExtensionRegisterResourcesResult,
   ExtensionRegisterToolsResult,
   ExtensionStreamEvent,
   ExtensionToolInvocation,
@@ -408,8 +410,9 @@ import type {
 import { readHostEnvironment, MissingHostEnvironmentError } from "./env.js";
 import { RpcClient, RpcConnectionClosedError } from "./rpc.js";
 import { EchoStore } from "./store.js";
-import { MANIFEST, HTTP_PREFIX, TOOLS, WEB_ENTRY } from "./manifest.js";
+import { MANIFEST, HTTP_PREFIX, INSTRUCTIONS, RESOURCES, TOOLS, WEB_ENTRY } from "./manifest.js";
 import { handleHttpRequest } from "./http.js";
+import { readEchoResource } from "./resources.js";
 import { runEchoTool } from "./tools.js";
 
 /** Reconnect backoff. The host supervises the process; this only covers a socket blip. */
@@ -454,8 +457,12 @@ async function main(): Promise<void> {
     );
 
     // 2. Declarative registrations. Each is answered; a rejection is not fatal.
+    // `instructions` rides with the tools because it is the same declaration:
+    // what this extension is, and what its tools are for. The host appends it
+    // to the MCP server's own instructions for every agent in the environment.
     const registered = await client.call<ExtensionRegisterToolsResult>("extensions.registerTools", {
       tools: TOOLS,
+      instructions: INSTRUCTIONS,
     });
     for (const entry of registered.tools) {
       if (entry.status === "rejected") {
@@ -463,6 +470,19 @@ async function main(): Promise<void> {
         // and Settings shows the reason. Do not exit.
         console.error(
           `[reference] tool "${entry.name}" rejected (${entry.reason}): ${entry.message}`,
+        );
+      }
+    }
+
+    // Resources are answered per URI, the same way tools are answered per name.
+    const registeredResources = await client.call<ExtensionRegisterResourcesResult>(
+      "extensions.registerResources",
+      { resources: RESOURCES },
+    );
+    for (const entry of registeredResources.resources) {
+      if (entry.status === "rejected") {
+        console.error(
+          `[reference] resource "${entry.uri}" rejected (${entry.reason}): ${entry.message}`,
         );
       }
     }
@@ -501,6 +521,9 @@ async function main(): Promise<void> {
               return;
             case "proxyHttp":
               void respondToHttp(client, store, connectionId, startedAt, event.request);
+              return;
+            case "readResource":
+              void respondToReadResource(client, store, connectionId, event.request);
               return;
           }
         },
@@ -563,6 +586,27 @@ async function respondToTool(
   }
 }
 
+/**
+ * Answers one `readResource`. There is no `isError` shape for a resource, so a
+ * failure has to be a *missing* answer: the host times the call out and turns
+ * it into an MCP protocol error carrying its own sentence. Nothing useful can
+ * be sent back here, which is why this only logs.
+ */
+async function respondToReadResource(
+  client: RpcClient,
+  store: EchoStore,
+  connectionId: string | undefined,
+  request: ExtensionReadResourceRequest,
+): Promise<void> {
+  if (!connectionId) return;
+  try {
+    const result = readEchoResource(store, request);
+    await client.call("extensions.respondReadResource", { connectionId, ...result });
+  } catch (error) {
+    console.error(`[reference] failed to read ${request.uri}: ${String(error)}`);
+  }
+}
+
 /** Answers one `proxyHttp`. Same rule: an error is a 500 response, not a crash. */
 async function respondToHttp(
   client: RpcClient,
@@ -613,6 +657,7 @@ main().catch((error: unknown) => {
 import type {
   ExtensionHttpPrefix,
   ExtensionManifest,
+  ExtensionResourceDefinition,
   ExtensionToolDefinition,
   ExtensionWebEntry,
 } from "../../protocol/protocol.js";
@@ -639,6 +684,39 @@ export const TOOLS: ReadonlyArray<ExtensionToolDefinition> = [
   },
 ];
 
+/** Unique across the environment, like a tool name; the host's own `t3code://` URIs are taken. */
+export const ECHO_RESOURCE_URI = "reference://echoes";
+
+export const RESOURCES: ReadonlyArray<ExtensionResourceDefinition> = [
+  {
+    uri: ECHO_RESOURCE_URI,
+    name: "reference-echoes",
+    description:
+      "Everything reference_echo has recorded, newest first. Read it to see what an " +
+      "extension-owned resource looks like: the host lists it beside its own and forwards " +
+      "the read here.",
+    mimeType: "application/json",
+  },
+];
+
+/**
+ * Standing guidance for every agent in the environment, appended to the MCP
+ * server's own instructions.
+ *
+ * Kept to a few sentences on purpose. It is billed on every turn of every
+ * thread and the whole server-level string is shared with the host's own
+ * paragraph and with any other extension, so an extension that writes a page
+ * here is an extension that pushes the next one out. What belongs here is what
+ * an agent cannot work out from a tool description: what this extension *is*,
+ * and when not to reach for it.
+ */
+export const INSTRUCTIONS = [
+  "The `reference` extension is a worked example of the extension protocol, not a working tool.",
+  `Its \`${ECHO_TOOL_NAME}\` tool echoes a message back with the caller identity the host resolved,`,
+  `and \`${ECHO_RESOURCE_URI}\` lists what it has recorded.`,
+  "Neither changes anything in a project, so do not reach for them to get work done.",
+].join(" ");
+
 export const WEB_ENTRY: ExtensionWebEntry = {
   entry: "web/entry.js",
   css: "web/entry.css",
@@ -652,6 +730,56 @@ export const MANIFEST: ExtensionManifest = {
   server: { entry: "server.mjs" },
   web: WEB_ENTRY,
 };
+```
+
+### `src/server/resources.ts`
+
+```ts
+/**
+ * The one resource this extension registers.
+ *
+ * A resource is the read-only half of what an extension contributes to MCP:
+ * the host lists it beside its own `t3code://` resources and forwards each
+ * `resources/read` here over the stream. Unlike a tool invocation it carries
+ * **no caller** — MCP reads a resource by URI and tells the server nothing
+ * about who asked — so anything that has to be scoped to a thread belongs in a
+ * tool, which does get `invocation.caller`.
+ *
+ * The other asymmetry worth knowing: there is no `isError` result. A read that
+ * cannot be answered has to go unanswered, and the host turns that into an MCP
+ * protocol error. So answer with whatever is true — an empty list is a real
+ * answer — and save failing for an actual failure.
+ *
+ * The answer quotes the URI it was asked for rather than a constant of its
+ * own. The host routes by URI and only ever sends one this extension
+ * registered, so re-deriving it here would only be a second place to keep in
+ * step with the manifest.
+ */
+import type {
+  ExtensionReadResourceRequest,
+  ExtensionReadResourceResult,
+} from "../../protocol/protocol.js";
+import type { EchoStore } from "./store.js";
+
+export type ReadResourceResult = Omit<ExtensionReadResourceResult, "connectionId">;
+
+export function readEchoResource(
+  store: EchoStore,
+  request: ExtensionReadResourceRequest,
+): ReadResourceResult {
+  const latest = store.latest();
+  return {
+    requestId: request.requestId,
+    contents: [
+      {
+        type: "text",
+        uri: request.uri,
+        mimeType: "application/json",
+        text: JSON.stringify({ echoCount: store.count(), lastEcho: latest ?? null }, null, 2),
+      },
+    ],
+  };
+}
 ```
 
 ### `src/server/rpc.ts`

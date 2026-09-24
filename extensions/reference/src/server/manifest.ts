@@ -8,6 +8,7 @@
 import type {
   ExtensionHttpPrefix,
   ExtensionManifest,
+  ExtensionResourceDefinition,
   ExtensionToolDefinition,
   ExtensionWebEntry,
 } from "../../protocol/protocol.js";
@@ -33,6 +34,39 @@ export const TOOLS: ReadonlyArray<ExtensionToolDefinition> = [
     },
   },
 ];
+
+/** Unique across the environment, like a tool name; the host's own `t3code://` URIs are taken. */
+export const ECHO_RESOURCE_URI = "reference://echoes";
+
+export const RESOURCES: ReadonlyArray<ExtensionResourceDefinition> = [
+  {
+    uri: ECHO_RESOURCE_URI,
+    name: "reference-echoes",
+    description:
+      "Everything reference_echo has recorded, newest first. Read it to see what an " +
+      "extension-owned resource looks like: the host lists it beside its own and forwards " +
+      "the read here.",
+    mimeType: "application/json",
+  },
+];
+
+/**
+ * Standing guidance for every agent in the environment, appended to the MCP
+ * server's own instructions.
+ *
+ * Kept to a few sentences on purpose. It is billed on every turn of every
+ * thread and the whole server-level string is shared with the host's own
+ * paragraph and with any other extension, so an extension that writes a page
+ * here is an extension that pushes the next one out. What belongs here is what
+ * an agent cannot work out from a tool description: what this extension *is*,
+ * and when not to reach for it.
+ */
+export const INSTRUCTIONS = [
+  "The `reference` extension is a worked example of the extension protocol, not a working tool.",
+  `Its \`${ECHO_TOOL_NAME}\` tool echoes a message back with the caller identity the host resolved,`,
+  `and \`${ECHO_RESOURCE_URI}\` lists what it has recorded.`,
+  "Neither changes anything in a project, so do not reach for them to get work done.",
+].join(" ");
 
 export const WEB_ENTRY: ExtensionWebEntry = {
   entry: "web/entry.js",

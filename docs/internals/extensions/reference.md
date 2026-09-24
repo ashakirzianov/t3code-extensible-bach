@@ -527,6 +527,15 @@ Declares the complete MCP tool surface. Answered per tool.
 - Success: [`ExtensionRegisterToolsResult`](#extensionregistertoolsresult)
 - Errors: [`ExtensionHandshakeRequiredError`](#extensionhandshakerequirederror), [`EnvironmentAuthorizationError`](#environmentauthorizationerror)
 
+### `extensions.registerResources`
+
+Declares the complete MCP resource surface. Answered per resource.
+
+- Direction: extension-to-host
+- Input: [`ExtensionRegisterResourcesInput`](#extensionregisterresourcesinput)
+- Success: [`ExtensionRegisterResourcesResult`](#extensionregisterresourcesresult)
+- Errors: [`ExtensionHandshakeRequiredError`](#extensionhandshakerequirederror), [`EnvironmentAuthorizationError`](#environmentauthorizationerror)
+
 ### `extensions.registerHttpPrefix`
 
 Claims one path prefix under the host's own origin and auth.
@@ -587,6 +596,15 @@ Answers one toolsForThread event with the tools that thread may see.
 
 - Direction: extension-to-host
 - Input: [`ExtensionToolsForThreadResult`](#extensiontoolsforthreadresult)
+- Success: acknowledgement only
+- Errors: [`EnvironmentAuthorizationError`](#environmentauthorizationerror)
+
+### `extensions.respondReadResource`
+
+Answers one readResource event with the resource's contents.
+
+- Direction: extension-to-host
+- Input: [`ExtensionReadResourceResult`](#extensionreadresourceresult)
 - Success: acknowledgement only
 - Errors: [`EnvironmentAuthorizationError`](#environmentauthorizationerror)
 
@@ -921,7 +939,7 @@ One of 3 shapes.
 
 ### ExtensionError
 
-One of 8 shapes.
+One of 10 shapes.
 
 **variant 1**
 
@@ -952,6 +970,14 @@ No fields.
 No fields.
 
 **variant 8**
+
+No fields.
+
+**variant 9**
+
+No fields.
+
+**variant 10**
 
 No fields.
 
@@ -1140,6 +1166,25 @@ No fields.
 
 `integer`. Constraints: min 1.
 
+### ExtensionReadResourceRequest
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `requestId` | [`ExtensionReadResourceRequestId`](#extensionreadresourcerequestid) | yes |
+| `uri` | [`ExtensionResourceUri`](#extensionresourceuri) | yes |
+
+### ExtensionReadResourceRequestId
+
+`string`. Constraints: min length 1, max length 128.
+
+### ExtensionReadResourceResult
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `connectionId` | [`ExtensionConnectionId`](#extensionconnectionid) | yes |
+| `requestId` | [`ExtensionReadResourceRequestId`](#extensionreadresourcerequestid) | yes |
+| `contents` | array of [`ExtensionResourceContents`](#extensionresourcecontents) | yes |
+
 ### ExtensionRegisterHttpPrefixInput
 
 | Field | Type | Required |
@@ -1153,12 +1198,25 @@ No fields.
 | `prefix` | [`ExtensionHttpPrefix`](#extensionhttpprefix) | yes |  |
 | `basePath` | string | yes | min length 1, max length 512 |
 
+### ExtensionRegisterResourcesInput
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `resources` | array of [`ExtensionResourceDefinition`](#extensionresourcedefinition) | yes | max items 64 |
+
+### ExtensionRegisterResourcesResult
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `resources` | array of [`ExtensionResourceRegistration`](#extensionresourceregistration) | yes |
+
 ### ExtensionRegisterToolsInput
 
 | Field | Type | Required | Constraints |
 | --- | --- | --- | --- |
 | `tools` | array of [`ExtensionToolDefinition`](#extensiontooldefinition) | yes | max items 64 |
 | `filterToolsPerThread` | boolean | no |  |
+| `instructions` | string | no | min length 1, max length 2000 |
 
 ### ExtensionRegisterToolsResult
 
@@ -1176,6 +1234,73 @@ No fields.
 
 `string`. Constraints: min length 1, max length 512, pattern `^(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$`.
 
+### ExtensionResourceContents
+
+One of 2 shapes.
+
+**type = `"text"`**
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `type` | `"text"` | yes |  |
+| `uri` | [`ExtensionResourceUri`](#extensionresourceuri) | yes |  |
+| `mimeType` | string | no | min length 1, max length 100 |
+| `text` | string | yes | max length 1048576 |
+
+**type = `"blob"`**
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `type` | `"blob"` | yes |  |
+| `uri` | [`ExtensionResourceUri`](#extensionresourceuri) | yes |  |
+| `mimeType` | string | no | min length 1, max length 100 |
+| `blob` | string | yes | max length 8388608 |
+
+### ExtensionResourceDefinition
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `uri` | [`ExtensionResourceUri`](#extensionresourceuri) | yes |  |
+| `name` | string | yes | min length 1, max length 128 |
+| `description` | string | yes | min length 1, max length 4096 |
+| `mimeType` | string | yes | min length 1, max length 100 |
+
+### ExtensionResourceRegistration
+
+One of 2 shapes.
+
+**variant 1**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `status` | `"accepted"` | yes |
+| `uri` | [`ExtensionResourceUri`](#extensionresourceuri) | yes |
+
+**variant 2**
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `status` | `"rejected"` | yes |  |
+| `uri` | [`ExtensionResourceUri`](#extensionresourceuri) | yes |  |
+| `reason` | [`ExtensionResourceRejectionReason`](#extensionresourcerejectionreason) | yes |  |
+| `message` | string | yes | min length 1, max length 512 |
+
+### ExtensionResourceRejectionReason
+
+`string`. One of: `"uri-collision"`, `"unsupported"`.
+
+### ExtensionResourceUri
+
+`string`. Constraints: min length 1, max length 512.
+
+### ExtensionResourceUriCollisionError
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `_tag` | `"ExtensionResourceUriCollisionError"` | yes |
+| `uri` | [`ExtensionResourceUri`](#extensionresourceuri) | yes |
+| `owner` | [`ExtensionName`](#extensionname) | no |
+
 ### ExtensionServerEntry
 
 | Field | Type | Required |
@@ -1190,7 +1315,7 @@ No fields.
 
 ### ExtensionStreamEvent
 
-One of 4 shapes.
+One of 5 shapes.
 
 **type = `"attached"`**
 
@@ -1222,6 +1347,14 @@ One of 4 shapes.
 | `type` | `"toolsForThread"` | yes |
 | `connectionId` | [`ExtensionConnectionId`](#extensionconnectionid) | yes |
 | `request` | [`ExtensionToolsForThreadRequest`](#extensiontoolsforthreadrequest) | yes |
+
+**type = `"readResource"`**
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `type` | `"readResource"` | yes |
+| `connectionId` | [`ExtensionConnectionId`](#extensionconnectionid) | yes |
+| `request` | [`ExtensionReadResourceRequest`](#extensionreadresourcerequest) | yes |
 
 ### ExtensionTextGenerationFailedError
 
@@ -1354,10 +1487,19 @@ One of 2 shapes.
 | `extensionName` | [`ExtensionName`](#extensionname) | yes |
 | `reason` | [`ExtensionUnavailableReason`](#extensionunavailablereason) | yes |
 | `toolName` | [`ExtensionToolName`](#extensiontoolname) | no |
+| `resourceUri` | [`ExtensionResourceUri`](#extensionresourceuri) | no |
 
 ### ExtensionUnavailableReason
 
 `string`. One of: `"not-connected"`, `"stopped"`, `"restarting"`, `"timeout"`.
+
+### ExtensionUnknownResourceError
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `_tag` | `"ExtensionUnknownResourceError"` | yes |
+| `uri` | [`ExtensionResourceUri`](#extensionresourceuri) | yes |
+| `extensionName` | [`ExtensionName`](#extensionname) | no |
 
 ### ExtensionUnknownToolError
 
