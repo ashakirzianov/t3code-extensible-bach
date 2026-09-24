@@ -259,7 +259,7 @@ export type ExtensionProjectIconOverride =
       readonly colorCss: ExtensionProjectIconColorCss;
     };
 
-export type ExtensionProjectIconsInput = Readonly<Record<string, unknown>> | ReadonlyArray<unknown>;
+export type ExtensionProjectIconsInput = {};
 
 export type ExtensionProjectIconsResult = {
   readonly projects: ReadonlyArray<{

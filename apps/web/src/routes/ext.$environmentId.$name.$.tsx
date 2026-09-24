@@ -23,7 +23,7 @@ function ExtensionRoute() {
   // route is the closest sibling): bounded to the viewport and clipped, so the
   // extension's own container below is the one thing that scrolls.
   return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">
       <ExtensionHostView
         environmentId={environmentId as EnvironmentId}
         name={name}

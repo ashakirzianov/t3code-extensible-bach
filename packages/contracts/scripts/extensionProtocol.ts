@@ -293,6 +293,10 @@ const toTypeScript = (schema: JsonSchema, indent: string, prefixWidth: number): 
   if (Array.isArray(schema.enum)) {
     return renderUnion(schema.enum.map(literal), indent, prefixWidth);
   }
+  // Effect encodes `Schema.Struct({})` as "anything but null", which is what
+  // TypeScript's `{}` means. A method whose input carries no fields is the only
+  // thing that reaches here.
+  if (isSchema(schema.not) && schema.not.type === "null") return "{}";
   if (Array.isArray(schema.anyOf)) {
     const members = schema.anyOf.filter(isSchema);
     return renderUnion(

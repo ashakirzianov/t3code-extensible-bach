@@ -154,11 +154,13 @@ function ExtensionLogsPanel({ row }: { row: ExtensionSettingsRow }) {
           // One `pre` rather than a list: log lines repeat verbatim, so they have
           // no key that is not the index, and a single block is what someone
           // selects and pastes into a bug report.
-          <ScrollArea className="mt-1 max-h-64 rounded-md border border-border/60 bg-muted/20">
-            <pre className="p-2 font-mono text-[11px] leading-[1.5] whitespace-pre-wrap break-words">
-              {entries.map((entry) => entry.line).join("\n")}
-            </pre>
-          </ScrollArea>
+          <div className="mt-1 overflow-hidden rounded-md border border-border/60 bg-muted/20">
+            <ScrollArea className="max-h-64">
+              <pre className="p-2 font-mono text-2xs whitespace-pre-wrap break-words">
+                {entries.map((entry) => entry.line).join("\n")}
+              </pre>
+            </ScrollArea>
+          </div>
         )}
       </CollapsibleContent>
     </Collapsible>
@@ -297,7 +299,7 @@ function ExtensionCard({ row }: { row: ExtensionSettingsRow }) {
           {row.problems.map((problem, index) => (
             <li
               key={`${problem.kind}-${problem.subject ?? index}`}
-              className="text-xs leading-[1.45] text-destructive-foreground"
+              className="text-xs leading-normal text-destructive-foreground"
             >
               {problem.message}
             </li>
@@ -437,7 +439,7 @@ function ExtensionFolderPicker({
           <AutocompletePopup>
             <AutocompleteList className="max-h-72">
               {visibleEntries.map((entry) => (
-                <AutocompleteItem key={entry.fullPath} value={entry} className="gap-2">
+                <AutocompleteItem key={entry.fullPath} value={entry}>
                   <FolderIcon aria-hidden="true" className="size-3.5 shrink-0" />
                   <span className="min-w-0 truncate">{entry.name}</span>
                 </AutocompleteItem>

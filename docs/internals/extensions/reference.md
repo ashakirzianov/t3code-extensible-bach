@@ -731,7 +731,7 @@ Your token carries `orchestration:read`, `orchestration:operate`, `extension`. T
 anything gated on a scope you were not granted — terminals, review, relay — answers
 with an authorization error rather than silently doing nothing.
 
-142 methods. This is an index, not a reference: payload and result shapes are
+144 methods. This is an index, not a reference: payload and result shapes are
 listed by name where they have one and by their fields or tags where they do not, and the
 full schemas live in the host's `packages/contracts`. A method marked **stream** returns a
 stream of the listed element rather than a single result.
@@ -743,14 +743,14 @@ stream of the listed element rather than a single result.
 | `server.probe` | — | — | `EnvironmentAuthorizationError` |
 | `server.getConfig` | — | `{environment, auth, cwd, +16}` | `KeybindingsConfigParseError` \| `ServerSettingsError` \| `EnvironmentAuthorizationError` |
 | `server.refreshProviders` | `{instanceId, cwd, refreshModels}` | `{providers}` | `EnvironmentAuthorizationError` \| `ProviderSetupError` |
-| `server.updateProvider` | `{provider, instanceId}` | `{providers}` | `ServerProviderUpdateError` \| `EnvironmentAuthorizationError` |
+| `server.updateProvider` | `{provider, targetVersion, instanceId}` | `{providers}` | `ServerProviderUpdateError` \| `EnvironmentAuthorizationError` |
 | `server.updateServer` | `{targetVersion, continueRunningThreads}` | `{targetVersion, method, updateId, +1}` | `ServerSelfUpdateError` \| `EnvironmentAuthorizationError` |
 | `server.updateServerWithProgress` **stream** | `{targetVersion, continueRunningThreads}` | `progress` \| `complete` | `ServerSelfUpdateError` \| `EnvironmentAuthorizationError` |
 | `server.commitDesktopUpdate` | `{requestId}` | `{targetVersion, method, updateId, +1}` | `ServerSelfUpdateError` \| `EnvironmentAuthorizationError` |
 | `server.upsertKeybinding` | `{key, command, when, +1}` | `{keybindings, issues}` | `KeybindingsConfigParseError` \| `EnvironmentAuthorizationError` |
 | `server.removeKeybinding` | `{key, command, when}` | `{keybindings, issues}` | `KeybindingsConfigParseError` \| `EnvironmentAuthorizationError` |
-| `server.getSettings` | — | `{worktreeCleanup, storageCleanup, responseStreamingMode, +38}` | `ServerSettingsError` \| `EnvironmentAuthorizationError` |
-| `server.updateSettings` | `{patch}` | `{worktreeCleanup, storageCleanup, responseStreamingMode, +38}` | `ServerSettingsError` \| `EnvironmentAuthorizationError` |
+| `server.getSettings` | — | `{worktreeCleanup, storageCleanup, responseStreamingMode, +39}` | `ServerSettingsError` \| `EnvironmentAuthorizationError` |
+| `server.updateSettings` | `{patch}` | `{worktreeCleanup, storageCleanup, responseStreamingMode, +39}` | `ServerSettingsError` \| `EnvironmentAuthorizationError` |
 | `server.discoverSourceControl` | — | `{versionControlSystems, sourceControlProviders}` | `EnvironmentAuthorizationError` |
 | `server.getTraceDiagnostics` | — | `{traceFilePath, scannedFilePaths, readAt, +16}` | `EnvironmentAuthorizationError` |
 | `server.getProcessDiagnostics` | — | `{serverPid, readAt, processCount, +4}` | `EnvironmentAuthorizationError` |
@@ -770,11 +770,12 @@ stream of the listed element rather than a single result.
 | Method | Payload | Result | Errors |
 | --- | --- | --- | --- |
 | `provider.consumeResetCredit` | union of 2 | `{outcome, warning}` | `ProviderSetupError` \| `UsageLimitSourceError` \| `EnvironmentAuthorizationError` |
-| `provider.auth.start` | `{instanceId}` | `{instanceId, phase, flowId, +3}` | `ProviderSetupError` \| `EnvironmentAuthorizationError` |
-| `provider.auth.complete` | `{instanceId, flowId, callbackUrl}` | `{instanceId, phase, flowId, +3}` | `ProviderSetupError` \| `EnvironmentAuthorizationError` |
-| `provider.auth.cancel` | `{instanceId, flowId}` | `{instanceId, phase, flowId, +3}` | `ProviderSetupError` \| `EnvironmentAuthorizationError` |
-| `provider.auth.logout` | `{instanceId}` | `{instanceId, phase, flowId, +3}` | `ProviderSetupError` \| `EnvironmentAuthorizationError` |
-| `provider.auth.subscribe` **stream** | `{instanceId}` | `{instanceId, phase, flowId, +3}` | `ProviderSetupError` \| `EnvironmentAuthorizationError` |
+| `provider.auth.start` | `{instanceId, methodId}` | `{instanceId, phase, flowId, +6}` | `ProviderSetupError` \| `EnvironmentAuthorizationError` |
+| `provider.auth.complete` | `{instanceId, flowId, callbackUrl}` | `{instanceId, phase, flowId, +6}` | `ProviderSetupError` \| `EnvironmentAuthorizationError` |
+| `provider.auth.respond` | `{instanceId, flowId, interactionId, +1}` | `{instanceId, phase, flowId, +6}` | `ProviderSetupError` \| `EnvironmentAuthorizationError` |
+| `provider.auth.cancel` | `{instanceId, flowId}` | `{instanceId, phase, flowId, +6}` | `ProviderSetupError` \| `EnvironmentAuthorizationError` |
+| `provider.auth.logout` | `{instanceId}` | `{instanceId, phase, flowId, +6}` | `ProviderSetupError` \| `EnvironmentAuthorizationError` |
+| `provider.auth.subscribe` **stream** | `{instanceId}` | `{instanceId, phase, flowId, +6}` | `ProviderSetupError` \| `EnvironmentAuthorizationError` |
 | `provider.install.start` | `{instanceId}` | `{driver, operationId, phase, +6}` | `ProviderSetupError` \| `EnvironmentAuthorizationError` |
 | `provider.install.cancel` | `{instanceId, operationId}` | `{driver, operationId, phase, +6}` | `ProviderSetupError` \| `EnvironmentAuthorizationError` |
 | `provider.install.subscribe` **stream** | `{instanceId}` | `{driver, operationId, phase, +6}` | `ProviderSetupError` \| `EnvironmentAuthorizationError` |
@@ -794,12 +795,13 @@ stream of the listed element rather than a single result.
 | --- | --- | --- | --- |
 | `pullRequests.list` | `{state, involvement, filters, +6}` | `{viewers, providers, entries, +3}` | `PullRequestUnavailableError` \| `PullRequestOperationError` \| `EnvironmentAuthorizationError` |
 | `pullRequests.listStats` | `{refs}` | `{stats}` | `PullRequestUnavailableError` \| `PullRequestOperationError` \| `EnvironmentAuthorizationError` |
-| `pullRequests.summary` | `{projectId, host, expectedAccountId, +3}` | `{provider, projectId, repository, +17}` | `PullRequestUnavailableError` \| `PullRequestOperationError` \| `EnvironmentAuthorizationError` |
+| `pullRequests.summary` | `{projectId, host, expectedAccountId, +3}` | `{provider, projectId, repository, +18}` | `PullRequestUnavailableError` \| `PullRequestOperationError` \| `EnvironmentAuthorizationError` |
 | `pullRequests.routing` | `{projectId, host, expectedAccountId, +3}` | `{accountId, host, provider, +3}` | `PullRequestUnavailableError` \| `PullRequestOperationError` \| `EnvironmentAuthorizationError` |
 | `pullRequests.routingIdentity` | `{host}` | `{accountId, host, provider, +1}` | `PullRequestUnavailableError` \| `PullRequestOperationError` \| `EnvironmentAuthorizationError` |
 | `pullRequests.stack` | `{projectId, host, expectedAccountId, +3}` | union of 2 | `PullRequestUnavailableError` \| `PullRequestOperationError` \| `EnvironmentAuthorizationError` |
 | `pullRequests.linkedThreads` | `{projectId, host, expectedAccountId, +3}` | `{threads}` | `PullRequestUnavailableError` \| `PullRequestOperationError` \| `EnvironmentAuthorizationError` |
-| `pullRequests.detail` | `{projectId, host, expectedAccountId, +3}` | `{provider, capabilities, viewerPermissions, +32}` | `PullRequestUnavailableError` \| `PullRequestOperationError` \| `EnvironmentAuthorizationError` |
+| `pullRequests.detail` | `{projectId, host, expectedAccountId, +3}` | `{provider, capabilities, viewerPermissions, +33}` | `PullRequestUnavailableError` \| `PullRequestOperationError` \| `EnvironmentAuthorizationError` |
+| `pullRequests.preview` | `{projectId, host, expectedAccountId, +3}` | `{projectId, repository, number, +6}` | `PullRequestUnavailableError` \| `PullRequestOperationError` \| `EnvironmentAuthorizationError` |
 | `pullRequests.activity` | `{projectId, host, expectedAccountId, +3}` | `{author, reviewers, comments, +5}` | `PullRequestUnavailableError` \| `PullRequestOperationError` \| `EnvironmentAuthorizationError` |
 | `pullRequests.threadComments` | `{projectId, host, expectedAccountId, +5}` | `{comments, nextCursor}` | `PullRequestUnavailableError` \| `PullRequestOperationError` \| `EnvironmentAuthorizationError` |
 | `pullRequests.diffFileContents` | `{projectId, host, expectedAccountId, +7}` | `{oldContents, newContents}` | `PullRequestUnavailableError` \| `PullRequestOperationError` \| `EnvironmentAuthorizationError` |
@@ -847,7 +849,7 @@ stream of the listed element rather than a single result.
 | `subscribeTerminalMetadata` **stream** | — | `snapshot` \| `upsert` \| `remove` | `EnvironmentAuthorizationError` |
 | `subscribePreviewEvents` **stream** | — | `opened` \| `navigated` \| `resized` \| +2 | `EnvironmentAuthorizationError` |
 | `subscribeDiscoveredLocalServers` **stream** | `{configuredUrls}` | `{servers, scannedAt, configuredUrlProbing}` | `EnvironmentAuthorizationError` |
-| `subscribeDeviceState` **stream** | — | `{hosts, hostStatus, hostStatusDetail, +8}` | `EnvironmentAuthorizationError` |
+| `subscribeDeviceState` **stream** | — | `{supportsHostRetry, supportsToolUpdate, supportsToolInspection, +11}` | `EnvironmentAuthorizationError` |
 | `subscribeServerConfig` **stream** | `{environmentThemes, usageLimitSources, usageLimitsCommand}` | `snapshot` \| `keybindingsUpdated` \| `providerStatuses` \| +3 | `KeybindingsConfigParseError` \| `ServerSettingsError` \| `EnvironmentAuthorizationError` |
 | `subscribeServerLifecycle` **stream** | — | `welcome` \| `ready` | `EnvironmentAuthorizationError` |
 | `subscribeAuthAccess` **stream** | — | `snapshot` \| `pairingLinkUpserted` \| `pairingLinkRemoved` \| +2 | `AuthAccessStreamError` \| `EnvironmentAuthorizationError` |
@@ -960,15 +962,15 @@ stream of the listed element rather than a single result.
 | --- | --- | --- | --- |
 | `previewAutomation.connect` **stream** | `{clientId, environmentId, supportedOperations}` | `connected` \| `request` | union of 2 |
 | `previewAutomation.respond` | `{clientId, connectionId, requestId, +3}` | — | union of 2 |
-| `previewAutomation.focusHost` | `{clientId, environmentId, connectionId, +1}` | — | `EnvironmentAuthorizationError` |
+| `previewAutomation.focusHost` | `{clientId, environmentId, connectionId, +2}` | — | `EnvironmentAuthorizationError` |
 
 ### `device.`
 
 | Method | Payload | Result | Errors |
 | --- | --- | --- | --- |
-| `device.configure` | `{enabled, agentAccessEnabled, onboardingCompleted}` | `{hosts, hostStatus, hostStatusDetail, +8}` | union of 2 |
-| `device.list` | — | `{hosts, hostStatus, hostStatusDetail, +8}` | union of 2 |
-| `device.testHost` | `{id, label, target, +2}` | `{id, kind, label, +3}` | union of 2 |
+| `device.configure` | `{enabled, agentAccessEnabled, onboardingCompleted}` | `{supportsHostRetry, supportsToolUpdate, supportsToolInspection, +11}` | union of 2 |
+| `device.list` | `{updateTool, inspectOnly, retryHostId}` | `{supportsHostRetry, supportsToolUpdate, supportsToolInspection, +11}` | union of 2 |
+| `device.testHost` | `{id, label, target, +2}` | `{id, kind, label, +5}` | union of 2 |
 | `device.open` | `{threadId, hostId, deviceId, +2}` | `{threadId, hostId, deviceId, +2}` | union of 2 |
 | `device.close` | `{hostId, threadId, deviceId, +1}` | — | union of 2 |
 | `device.shutdown` | `{hostId, deviceId, platform}` | — | union of 2 |
@@ -1231,15 +1233,7 @@ One of 3 shapes.
 
 ### ExtensionProjectIconsInput
 
-One of 2 shapes.
-
-**variant 1**
-
-No fields.
-
-**variant 2**
-
-No fields.
+`unknown`.
 
 ### ExtensionProjectIconsResult
 

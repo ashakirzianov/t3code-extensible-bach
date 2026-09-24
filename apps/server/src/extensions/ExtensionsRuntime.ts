@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import { HttpServer } from "effect/unstable/http";
+import * as NetAddress from "effect/unstable/net/NetAddress";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
@@ -29,15 +30,18 @@ import * as ExtensionSupervisor from "./ExtensionSupervisor.ts";
 
 type HttpServerAddress = (typeof HttpServer.HttpServer)["Service"]["address"];
 
-const websocketUrlFrom = (address: HttpServerAddress): string => {
-  if (address._tag === "UnixPathAddress") return "ws://127.0.0.1/ws";
-  // A wildcard bind is not a dialable host; an extension always reaches the
-  // server it was spawned by over loopback.
-  const literal = address.address.toString();
-  if (literal === "0.0.0.0" || literal === "::") return `ws://127.0.0.1:${address.port}/ws`;
-  const host = address._tag === "InetAddressV6" ? `[${literal}]` : literal;
-  return `ws://${host}:${address.port}/ws`;
-};
+// A wildcard bind is reachable on loopback, which is where the extension
+// subprocesses run; anything else is announced as the address it bound. Mirrors
+// `McpSessionRegistry`'s endpoint host, for the same reason.
+const websocketHostFrom = (address: NetAddress.IpAddress): string =>
+  NetAddress.isUnspecified(address)
+    ? "127.0.0.1"
+    : NetAddress.formatUrlHostString(NetAddress.formatIp(address));
+
+const websocketUrlFrom = (address: HttpServerAddress): string =>
+  NetAddress.isInetAddress(address)
+    ? `ws://${websocketHostFrom(address.address)}:${address.port}/ws`
+    : "ws://127.0.0.1/ws";
 
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
