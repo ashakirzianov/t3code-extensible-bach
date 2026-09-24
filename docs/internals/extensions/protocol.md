@@ -24,6 +24,36 @@ arrives before the provider has done anything — read
 extension that treats a command acknowledgement as completion will look broken in exactly the
 ways that document explains.
 
+### Sending a message to a thread that is busy
+
+There is no host-side message queue, and an extension asking for one is asking for something
+that does not exist. Worth saying plainly, because the app looks like it has one: the web
+composer holds a message back while a turn runs, and the mobile app has an outbox. Both live
+in the client — a browser tab's memory, a device's filesystem — and the
+`followUpBehavior: "queue" | "steer"` setting they read has no server-side reader at all. An
+extension is a process beside the host, not a client with a composer, so none of that is
+reachable from `extensions.*` or from the client API.
+
+What the host actually does with `thread.turn.start` is dispatch it: the decider accepts it
+without looking at the session status, the active turn, or pending approvals, and the
+reactor sends it to the provider. Mid-turn that is a **steer** — every adapter reuses the
+running turn rather than opening a new one — so a second message joins the turn in flight
+instead of waiting behind it. If you want "after this turn", watch the thread and send when
+it completes; the host will not hold it for you.
+
+Two consequences an extension that steers should know:
+
+- **A thread waiting on a permission prompt still takes the message.** It lands on the
+  provider SDK's own prompt queue and is simply not consumed until the blocked approval
+  resolves. Nothing in the host is holding it, so nothing in the host can show it or take it
+  back.
+- **The one host-side hold is invisible and not yours.** A turn start dispatched while the
+  thread is compacting its context is parked in the provider reactor and replayed after the
+  compaction, reusing the original message id. That queue is an in-process map: an interrupt
+  or a session stop cancels it with a "Queued message was not sent" activity, and a server
+  restart drops it silently, leaving a user message that never produced a turn. It is not
+  listed or withdrawable by anything, including the UI.
+
 ## The connection
 
 1. **`extensions.hello`** — the extension sends its manifest and the protocol version it was
@@ -31,16 +61,17 @@ ways that document explains.
    host app version, the environment id, and two absolute paths: the folder the extension was
    started from, and the data directory it owns. A version the host does not speak fails with
    `ExtensionProtocolMismatchError`, which Settings shows.
-2. **`extensions.registerTools`, `.registerHttpPrefix`, `.registerWebEntry`, `.setBadge`** —
-   declarative and idempotent. Each re-send replaces what came before, so an extension repeats
-   them verbatim after a reconnect rather than diffing.
+2. **`extensions.registerTools`, `.registerResources`, `.registerHttpPrefix`,
+   `.registerWebEntry`, `.setBadge`** — declarative and idempotent. Each re-send replaces what
+   came before, so an extension repeats them verbatim after a reconnect rather than diffing.
 3. **`extensions.connect`** — opens the stream the host pushes calls on. Its first event,
    `attached`, carries a `connectionId`. **Opening this stream is the readiness signal**: the
    host may invoke tools only once it exists, so an extension that opens it last has finished
    registering.
-4. **`extensions.respondTool`, `.respondHttp`** — the answers, correlated by the invocation or
-   request id together with the `connectionId`. A reconnect mints a new id, which is how an
-   answer from a dead process gets dropped instead of applied.
+4. **`extensions.respondTool`, `.respondHttp`, `.respondReadResource`,
+   `.respondToolsForThread`** — the answers, correlated by the invocation or request id
+   together with the `connectionId`. A reconnect mints a new id, which is how an answer from a
+   dead process gets dropped instead of applied.
 
 ### What a version number promises, before 1.0
 
@@ -87,6 +118,69 @@ appears later is invisible to a running agent
 the whole tool surface is registered before agent sessions start, and **availability is
 expressed in results, not in the catalogue**. A tool whose extension is down does not vanish;
 it answers with `ExtensionUnavailableError`, whose message reaches the agent verbatim.
+
+## Instructions
+
+`registerTools` carries an optional `instructions` string: standing guidance for every agent
+in the environment, which the host appends to the **MCP server's own `instructions`** — the
+one server-level slot MCP gives a server, and the thing clients that honour it put in the
+model's context.
+
+What the host publishes is its own short paragraph, then one `## <name>` section per
+**connected** extension, in start order. Connected rather than merely registered: a stopped
+extension's guidance would point an agent at tools that can only answer
+`ExtensionUnavailableError`. The order is stable so the string does not shuffle between
+sessions.
+
+**There is a hard budget and it is small.** Claude Code truncates a server's instructions at
+roughly **2,500 characters** — mid-sentence, with nothing said about it. So the host composes
+under that number itself: it keeps its own paragraph, takes as many whole extension sections
+as fit, and appends a line naming the ones it left out. An agent that can see guidance is
+missing can ask for it; one reading a sentence that stops halfway just believes it. The wire
+caps one extension at `EXTENSION_INSTRUCTIONS_MAX_CHARS`, but the useful number is far
+smaller: the budget is shared with the host's paragraph and with every other extension, so a
+few hundred characters is what survives a second extension being installed.
+
+Write what an agent cannot work out from a tool description — what the extension _is_, and
+when not to reach for it. Per-tool guidance belongs in that tool's `description`, which costs
+nothing until the tool is listed.
+
+The same catalogue-at-connect caveat applies, for the same reason: MCP publishes
+`instructions` once, during `initialize`, which happens when a provider process connects. A
+redeploy that rewrote them reaches the **next** agent session, not a running one. Re-sending
+`registerTools` without `instructions` clears them, because registration is a complete
+replacement rather than a patch.
+
+## Resources
+
+`extensions.registerResources` claims MCP resource URIs — `{ uri, name, description,
+mimeType }` — and the host lists them beside its own `t3code://extensions/*` ones. A
+`resources/read` for a claimed URI becomes a `readResource` event on the extension's stream,
+answered with `extensions.respondReadResource`. Contents are `text` or base64 `blob`, the
+same split a tool result's content has and for the same reason: this is a JSON wire.
+
+Registration is answered per resource, like the tools: a URI another extension or the host
+already owns is rejected with a reason Settings shows, and the extension keeps running with
+the ones that were accepted. The catalogue caveat is the tools' caveat unchanged — a URI that
+appears after a provider process connected is invisible to that agent, so the whole resource
+surface is registered before agent sessions start.
+
+Two things differ from a tool, and both follow from what MCP hands the host:
+
+- **A read carries no caller.** MCP reads a resource by URI and says nothing about who asked,
+  so the host has no identity to attach and does not invent one. Anything that has to be
+  scoped to a thread belongs in a tool, which does carry `ExtensionToolCaller`.
+- **A failure is a protocol error, not a result.** `tools/call` has `isError`, so an
+  unavailable extension answers with a readable sentence and the agent carries on.
+  `resources/read` has no such shape: an extension that is stopped, silent past the call
+  timeout, or no longer registers the URI produces a JSON-RPC `InternalError` carrying the
+  same sentence. Legible, but it is an error rather than an answer, so do not model a normal
+  "nothing to say" as a failure — an empty `contents` is a real answer.
+
+A resource is also not _retired_ the way a tool is. The host hides a dropped tool from the
+next `tools/list` because MCP consults a visibility predicate the host owns; there is no such
+predicate here, so a dropped URI stays listed and the broker answers
+`ExtensionUnknownResourceError` when an agent reads it.
 
 ## Per-thread tool sets
 
