@@ -164,7 +164,7 @@
         "message",
         "requiredScope"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionBadge": {
       "anyOf": [
@@ -181,7 +181,7 @@
           "required": [
             "kind"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         },
         {
           "type": "object",
@@ -196,7 +196,7 @@
           "required": [
             "kind"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         },
         {
           "type": "object",
@@ -217,7 +217,7 @@
             "kind",
             "count"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         }
       ]
     },
@@ -231,7 +231,7 @@
       "required": [
         "name"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionConnectionId": {
       "type": "string",
@@ -289,7 +289,7 @@
       "required": [
         "prompt"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionGenerateTextResult": {
       "type": "object",
@@ -302,7 +302,7 @@
       "required": [
         "text"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionHandshakeRequiredError": {
       "type": "object",
@@ -323,7 +323,7 @@
         "_tag",
         "method"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionHelloAck": {
       "type": "object",
@@ -360,7 +360,7 @@
         "extensionPath",
         "dataDirectory"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionHelloInput": {
       "type": "object",
@@ -376,7 +376,7 @@
         "protocolVersion",
         "manifest"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionHostPath": {
       "type": "string",
@@ -402,7 +402,7 @@
         "encoding",
         "data"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionHttpHeaders": {
       "type": "object",
@@ -448,7 +448,7 @@
         "_tag",
         "prefix"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionHttpRequest": {
       "type": "object",
@@ -485,7 +485,7 @@
         "headers",
         "environmentId"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionHttpRequestId": {
       "type": "string",
@@ -519,7 +519,7 @@
         "status",
         "headers"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionInvocationId": {
       "type": "string",
@@ -558,7 +558,7 @@
         "protocolVersion",
         "server"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionName": {
       "type": "string",
@@ -583,7 +583,7 @@
         "_tag",
         "extensionName"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionProjectIcon": {
       "type": "object",
@@ -650,7 +650,7 @@
             "color",
             "colorCss"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         }
       },
       "required": [
@@ -658,7 +658,7 @@
         "faviconUrl",
         "automatic"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionProjectIconColorCss": {
       "type": "object",
@@ -678,7 +678,7 @@
         "light",
         "dark"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionProjectIconOverride": {
       "anyOf": [
@@ -730,7 +730,7 @@
             "color",
             "colorCss"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         },
         {
           "type": "object",
@@ -751,7 +751,7 @@
             "kind",
             "emoji"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         },
         {
           "type": "object",
@@ -800,19 +800,14 @@
             "color",
             "colorCss"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         }
       ]
     },
     "ExtensionProjectIconsInput": {
-      "anyOf": [
-        {
-          "type": "object"
-        },
-        {
-          "type": "array"
-        }
-      ]
+      "not": {
+        "type": "null"
+      }
     },
     "ExtensionProjectIconsResult": {
       "type": "object",
@@ -833,14 +828,14 @@
               "projectId",
               "icon"
             ],
-            "additionalProperties": false
+            "additionalProperties": true
           }
         }
       },
       "required": [
         "projects"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionProtocolMismatchError": {
       "type": "object",
@@ -869,7 +864,7 @@
         "requestedVersion",
         "supportedVersions"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionProtocolVersion": {
       "type": "integer",
@@ -889,7 +884,7 @@
         "requestId",
         "uri"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionReadResourceRequestId": {
       "type": "string",
@@ -917,7 +912,7 @@
         "requestId",
         "contents"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionRegisterHttpPrefixInput": {
       "type": "object",
@@ -929,7 +924,7 @@
       "required": [
         "prefix"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionRegisterHttpPrefixResult": {
       "type": "object",
@@ -947,7 +942,7 @@
         "prefix",
         "basePath"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionRegisterResourcesInput": {
       "type": "object",
@@ -963,7 +958,7 @@
       "required": [
         "resources"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionRegisterResourcesResult": {
       "type": "object",
@@ -978,7 +973,7 @@
       "required": [
         "resources"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionRegisterToolsInput": {
       "type": "object",
@@ -1002,7 +997,7 @@
       "required": [
         "tools"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionRegisterToolsResult": {
       "type": "object",
@@ -1017,7 +1012,7 @@
       "required": [
         "tools"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionRegisterWebEntryInput": {
       "type": "object",
@@ -1029,7 +1024,7 @@
       "required": [
         "web"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionRelativePath": {
       "type": "string",
@@ -1066,7 +1061,7 @@
             "uri",
             "text"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         },
         {
           "type": "object",
@@ -1095,7 +1090,7 @@
             "uri",
             "blob"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         }
       ]
     },
@@ -1127,7 +1122,7 @@
         "description",
         "mimeType"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionResourceRegistration": {
       "anyOf": [
@@ -1148,7 +1143,7 @@
             "status",
             "uri"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         },
         {
           "type": "object",
@@ -1177,7 +1172,7 @@
             "reason",
             "message"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         }
       ]
     },
@@ -1213,7 +1208,7 @@
         "_tag",
         "uri"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionServerEntry": {
       "type": "object",
@@ -1225,7 +1220,7 @@
       "required": [
         "entry"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionSetBadgeInput": {
       "type": "object",
@@ -1237,7 +1232,7 @@
       "required": [
         "badge"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionStreamEvent": {
       "anyOf": [
@@ -1258,7 +1253,7 @@
             "type",
             "connectionId"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         },
         {
           "type": "object",
@@ -1281,7 +1276,7 @@
             "connectionId",
             "invocation"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         },
         {
           "type": "object",
@@ -1304,7 +1299,7 @@
             "connectionId",
             "request"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         },
         {
           "type": "object",
@@ -1327,7 +1322,7 @@
             "connectionId",
             "request"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         },
         {
           "type": "object",
@@ -1350,7 +1345,7 @@
             "connectionId",
             "request"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         }
       ]
     },
@@ -1373,7 +1368,7 @@
         "_tag",
         "detail"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionTextGenerationUnavailableError": {
       "type": "object",
@@ -1388,7 +1383,7 @@
       "required": [
         "_tag"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionToolCaller": {
       "type": "object",
@@ -1414,7 +1409,7 @@
         "providerSessionId",
         "providerInstanceId"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionToolContent": {
       "anyOf": [
@@ -1436,7 +1431,7 @@
             "type",
             "text"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         },
         {
           "type": "object",
@@ -1462,7 +1457,7 @@
             "data",
             "mimeType"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         }
       ]
     },
@@ -1486,7 +1481,7 @@
         "description",
         "inputSchema"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionToolInvocation": {
       "type": "object",
@@ -1510,7 +1505,7 @@
         "arguments",
         "caller"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionToolName": {
       "type": "string",
@@ -1538,7 +1533,7 @@
         "_tag",
         "toolName"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionToolRegistration": {
       "anyOf": [
@@ -1559,7 +1554,7 @@
             "status",
             "name"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         },
         {
           "type": "object",
@@ -1588,7 +1583,7 @@
             "reason",
             "message"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         }
       ]
     },
@@ -1627,7 +1622,7 @@
         "invocationId",
         "content"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionToolsForThreadRequest": {
       "type": "object",
@@ -1643,7 +1638,7 @@
         "requestId",
         "threadId"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionToolsForThreadResult": {
       "type": "object",
@@ -1667,7 +1662,7 @@
         "requestId",
         "tools"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionToolsRequestId": {
       "type": "string",
@@ -1701,7 +1696,7 @@
         "extensionName",
         "reason"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionUnavailableReason": {
       "type": "string",
@@ -1732,7 +1727,7 @@
         "_tag",
         "uri"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionUnknownToolError": {
       "type": "object",
@@ -1754,7 +1749,7 @@
         "_tag",
         "toolName"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ExtensionWebEntry": {
       "type": "object",
@@ -1778,7 +1773,7 @@
         "entry",
         "label"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     }
   }
 }
