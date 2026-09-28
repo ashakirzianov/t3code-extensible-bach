@@ -219,6 +219,7 @@ export function readThread(ref: ScopedThreadRef): EnvironmentThread | null {
     appAtomRegistry.get(environmentThreadDetails.detailAtom(ref)),
     readThreadShell(ref),
   );
+}
 
 /** Whether the environment's server understands thread.settle/unsettle.
     False for pre-settlement servers (capability defaults false on decode),
