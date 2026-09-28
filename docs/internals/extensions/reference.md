@@ -749,8 +749,8 @@ stream of the listed element rather than a single result.
 | `server.commitDesktopUpdate` | `{requestId}` | `{targetVersion, method, updateId, +1}` | `ServerSelfUpdateError` \| `EnvironmentAuthorizationError` |
 | `server.upsertKeybinding` | `{key, command, when, +1}` | `{keybindings, issues}` | `KeybindingsConfigParseError` \| `EnvironmentAuthorizationError` |
 | `server.removeKeybinding` | `{key, command, when}` | `{keybindings, issues}` | `KeybindingsConfigParseError` \| `EnvironmentAuthorizationError` |
-| `server.getSettings` | — | `{worktreeCleanup, storageCleanup, responseStreamingMode, +39}` | `ServerSettingsError` \| `EnvironmentAuthorizationError` |
-| `server.updateSettings` | `{patch}` | `{worktreeCleanup, storageCleanup, responseStreamingMode, +39}` | `ServerSettingsError` \| `EnvironmentAuthorizationError` |
+| `server.getSettings` | — | `{worktreeCleanup, storageCleanup, responseStreamingMode, +40}` | `ServerSettingsError` \| `EnvironmentAuthorizationError` |
+| `server.updateSettings` | `{patch}` | `{worktreeCleanup, storageCleanup, responseStreamingMode, +40}` | `ServerSettingsError` \| `EnvironmentAuthorizationError` |
 | `server.discoverSourceControl` | — | `{versionControlSystems, sourceControlProviders}` | `EnvironmentAuthorizationError` |
 | `server.getTraceDiagnostics` | — | `{traceFilePath, scannedFilePaths, readAt, +16}` | `EnvironmentAuthorizationError` |
 | `server.getProcessDiagnostics` | — | `{serverPid, readAt, processCount, +4}` | `EnvironmentAuthorizationError` |
@@ -981,7 +981,7 @@ stream of the listed element rather than a single result.
 
 | Method | Payload | Result | Errors |
 | --- | --- | --- | --- |
-| `orchestration.dispatchCommand` | `project.create` \| `project.meta.update` \| `project.delete` \| +25 | `{sequence}` | `OrchestrationDispatchCommandError` \| `EnvironmentAuthorizationError` |
+| `orchestration.dispatchCommand` | `project.create` \| `project.meta.update` \| `project.delete` \| +26 | `{sequence}` | `OrchestrationDispatchCommandError` \| `EnvironmentAuthorizationError` |
 | `orchestration.getWorkflowScript` | `{threadId, scriptPath}` | `{scriptPath, contents, truncated}` | `OrchestrationGetWorkflowScriptError` \| `EnvironmentAuthorizationError` |
 | `orchestration.getTurnDiff` | `OrchestrationTurnDiffRange` | `OrchestrationTurnDiffRange` | `OrchestrationGetTurnDiffError` \| `EnvironmentAuthorizationError` |
 | `orchestration.getFullThreadDiff` | `{threadId, toTurnCount, ignoreWhitespace}` | `OrchestrationTurnDiffRange` | `OrchestrationGetFullThreadDiffError` \| `EnvironmentAuthorizationError` |
