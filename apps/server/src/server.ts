@@ -175,6 +175,7 @@ import {
   makePersistedServerRuntimeState,
   persistServerRuntimeState,
 } from "./serverRuntimeState.ts";
+import { acquireServerStateDirLock } from "./serverStateDirLock.ts";
 import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
 import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
@@ -1010,9 +1011,22 @@ const reportFatalStartup = (failure: FatalStartup.FatalStartupFailure) =>
     process.stderr.write(`${FatalStartup.formatFatalStartupLine(failure)}\n`);
   });
 
-// The CLI supplies configuration.
-export const runServer = Layer.launch(makeServerLayer).pipe(
+// The CLI supplies configuration. The state directory's lock is taken before
+// anything opens the database and released after everything has closed it.
+export const runServer = Effect.scoped(
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    yield* acquireServerStateDirLock({
+      stateDir: config.stateDir,
+      runtimeStatePath: config.serverRuntimeStatePath,
+    });
+    return yield* Layer.launch(makeServerLayer);
+  }),
+).pipe(
   Effect.tapErrorTag("DatabaseMigratedAheadError", (error) =>
+    reportFatalStartup({ tag: error._tag, message: error.message }),
+  ),
+  Effect.tapErrorTag("ServerStateDirHeldError", (error) =>
     reportFatalStartup({ tag: error._tag, message: error.message }),
   ),
 );
