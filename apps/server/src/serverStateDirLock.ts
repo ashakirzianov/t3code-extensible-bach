@@ -1,4 +1,5 @@
-import * as NodeOS from "node:os";
+// @effect-diagnostics nodeBuiltinImport:off - one synchronous `ps` at startup.
+import * as NodeChildProcess from "node:child_process";
 
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -7,6 +8,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Random from "effect/Random";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
@@ -22,13 +24,15 @@ import { isProcessAlive, readPersistedServerRuntimeState } from "./serverRuntime
  * world from the stale side. The lock turns that into a refusal that names the
  * holder.
  *
- * It is a file created exclusively and holding the owner's pid, not an OS lock
- * (Node has none), so a crash leaves it behind. A lock is therefore only
- * honoured while its owner is demonstrably alive: its pid runs, it is not this
- * process's own pid, and it was written during this boot — the last check is
- * what keeps a pid reused after a reboot from bricking startup. Anything else
- * about the lock that goes wrong is logged and startup continues without it:
- * the lock guards against a rare accident and must never become one.
+ * It is a file holding the owner's pid and process start time, not an OS lock
+ * (Node has none), so a crash — or the desktop killing a slow server — leaves
+ * it behind, and that is routine. A lock is therefore honoured only while its
+ * owner is demonstrably the same process that wrote it: not this process's own
+ * pid, and a pid that is alive *with the start time the lock recorded*. A pid
+ * reused by anything else has a different start time. When the start time
+ * cannot be read at all (no `ps`, Windows), the lock fails open. Anything else
+ * that goes wrong with it is logged and startup continues without it: the lock
+ * guards against a rare accident and must never become one.
  */
 
 export const SERVER_STATE_DIR_LOCK_FILE = "server.lock";
@@ -36,8 +40,11 @@ export const SERVER_STATE_DIR_LOCK_FILE = "server.lock";
 const LockContents = Schema.Struct({
   version: Schema.Literal(1),
   pid: Schema.Int,
-  /** Wall-clock boot time of the machine that wrote it, in epoch millis. */
-  bootTime: Schema.Number,
+  /**
+   * The owner's start time as `processStartTime` reads it, compared verbatim.
+   * `null` when it could not be read, which no reader can verify.
+   */
+  processStart: Schema.NullOr(Schema.String),
   startedAt: Schema.String,
 });
 type LockContents = typeof LockContents.Type;
@@ -65,25 +72,38 @@ export class ServerStateDirHeldError extends Schema.TaggedError<ServerStateDirHe
   }
 }
 
+/**
+ * A process's start time as `ps` prints it — pinned to the C locale and UTC so
+ * the writer and a later reader render the same instant identically — or
+ * `null` when it cannot be read: no such process, no `ps`, or Windows.
+ */
+export const processStartTime = (pid: number): string | null => {
+  if (process.platform === "win32") return null;
+  try {
+    const output = NodeChildProcess.execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+      encoding: "utf8",
+      env: { ...process.env, LC_ALL: "C", TZ: "UTC" },
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 2_000,
+    }).trim();
+    return output === "" ? null : output;
+  } catch {
+    return null;
+  }
+};
+
 /** What the lock asks of the machine; replaced in tests. */
 export interface ServerStateDirLockProbe {
   readonly pid: number;
   readonly isProcessAlive: (pid: number) => boolean;
-  readonly bootTime: Effect.Effect<number>;
+  readonly processStartTime: (pid: number) => string | null;
 }
 
 const defaultProbe: ServerStateDirLockProbe = {
   pid: process.pid,
   isProcessAlive,
-  bootTime: Clock.currentTimeMillis.pipe(Effect.map((now) => now - NodeOS.uptime() * 1000)),
+  processStartTime,
 };
-
-/**
- * Boot times are derived from the wall clock, which drifts and gets corrected.
- * Two readings within this of each other are the same boot; the slack only
- * ever makes a lock look *live*, never stale, so it errs toward refusing.
- */
-const SAME_BOOT_TOLERANCE_MS = 60_000;
 
 /** How long a live holder gets to finish exiting, e.g. during an app relaunch. */
 const DEFAULT_HOLDER_GRACE = Duration.seconds(5);
@@ -93,6 +113,47 @@ type AttemptResult =
   | { readonly _tag: "Acquired"; readonly contents: string }
   | { readonly _tag: "Held"; readonly holder: LockContents }
   | { readonly _tag: "Stale" };
+
+/** A sibling of the lock no other writer can pick, for staging and takeover. */
+const siblingPath = Effect.fn("serverStateDirLock.siblingPath")(function* (
+  lockPath: string,
+  purpose: "new" | "stale",
+) {
+  const nonce = yield* Random.nextIntBetween(0, 2 ** 31 - 1);
+  return `${lockPath}.${purpose}.${process.pid}.${nonce}`;
+});
+
+/**
+ * Remove the lock only if it still holds exactly `expected`.
+ *
+ * Re-reading and then removing would leave a window in which another server
+ * replaces a stale lock with its own fresh one and this removes *that*. So the
+ * file is first moved aside — an atomic step that takes whatever is there at
+ * that instant — and only then checked: the stale lock is deleted, and anything
+ * else is linked back into place. Returns whether it removed the lock.
+ */
+export const removeLockIfUnchanged = Effect.fn("serverStateDirLock.removeLockIfUnchanged")(
+  function* (lockPath: string, expected: string) {
+    const fs = yield* FileSystem.FileSystem;
+    const aside = yield* siblingPath(lockPath, "stale");
+    const moved = yield* fs.rename(lockPath, aside).pipe(
+      Effect.as(true),
+      // Already gone: whoever held it released it, which is what we wanted.
+      Effect.catchIf(
+        (error) => error.reason._tag === "NotFound",
+        () => Effect.succeed(false),
+      ),
+    );
+    if (!moved) return false;
+    const current = yield* fs.readFileString(aside).pipe(Effect.orElseSucceed(() => null));
+    if (current !== expected) {
+      // Someone else's lock. Put it back unless yet another one has appeared.
+      yield* fs.link(aside, lockPath).pipe(Effect.ignore);
+    }
+    yield* fs.remove(aside, { force: true }).pipe(Effect.ignore);
+    return current === expected;
+  },
+);
 
 /**
  * Take the state directory's lock for the life of the current scope, or fail
@@ -109,30 +170,49 @@ export const acquireServerStateDirLock = Effect.fn("acquireServerStateDirLock")(
   const probe = input.probe ?? defaultProbe;
   const lockPath = path.join(input.stateDir, SERVER_STATE_DIR_LOCK_FILE);
 
-  const bootTime = Math.round(yield* probe.bootTime);
-  const isLive = (holder: LockContents) =>
-    holder.pid !== probe.pid &&
-    Math.abs(holder.bootTime - bootTime) <= SAME_BOOT_TOLERANCE_MS &&
-    probe.isProcessAlive(holder.pid);
+  /** Whether the lock's writer is the process running under its pid now. */
+  const isLive = Effect.fn("serverStateDirLock.isLive")(function* (holder: LockContents) {
+    if (holder.pid === probe.pid) return false;
+    if (!probe.isProcessAlive(holder.pid)) return false;
+    const running = probe.processStartTime(holder.pid);
+    if (holder.processStart === null || running === null) {
+      yield* Effect.logWarning("Cannot verify the server lock's holder; ignoring the lock.", {
+        lockPath,
+        pid: holder.pid,
+      });
+      return false;
+    }
+    return running === holder.processStart;
+  });
 
-  const attempt = Effect.gen(function* (): Effect.fn.Return<
-    AttemptResult,
-    PlatformError.PlatformError
-  > {
-    const contents = yield* encodeLockContents({
-      version: 1,
-      pid: probe.pid,
-      bootTime,
-      startedAt: DateTime.formatIso(yield* DateTime.now),
-    }).pipe(Effect.orDie);
-    const created = yield* fs.writeFileString(lockPath, contents, { flag: "wx" }).pipe(
+  const contents = yield* encodeLockContents({
+    version: 1,
+    pid: probe.pid,
+    processStart: probe.processStartTime(probe.pid),
+    startedAt: DateTime.formatIso(yield* DateTime.now),
+  }).pipe(Effect.orDie);
+
+  // Staged in a sibling and hard-linked into place: the link either creates the
+  // lock with its contents already in it or fails because one exists, so no
+  // reader ever sees a lock that is empty because its writer is mid-write.
+  const create = Effect.gen(function* () {
+    const staged = yield* siblingPath(lockPath, "new");
+    yield* fs.writeFileString(staged, contents, { flag: "wx" });
+    return yield* fs.link(staged, lockPath).pipe(
       Effect.as(true),
       Effect.catchIf(
         (error) => error.reason._tag === "AlreadyExists",
         () => Effect.succeed(false),
       ),
+      Effect.ensuring(fs.remove(staged, { force: true }).pipe(Effect.ignore)),
     );
-    if (created) return { _tag: "Acquired", contents } as const;
+  });
+
+  const attempt = Effect.gen(function* (): Effect.fn.Return<
+    AttemptResult,
+    PlatformError.PlatformError
+  > {
+    if (yield* create) return { _tag: "Acquired", contents } as const;
 
     const existing = yield* fs.readFileString(lockPath).pipe(
       Effect.asSome,
@@ -144,13 +224,16 @@ export const acquireServerStateDirLock = Effect.fn("acquireServerStateDirLock")(
     );
     if (Option.isNone(existing)) return { _tag: "Stale" } as const;
     const holder = yield* decodeLockContents(existing.value).pipe(Effect.option);
-    if (Option.isSome(holder) && isLive(holder.value)) {
+    if (Option.isSome(holder) && (yield* isLive(holder.value))) {
       return { _tag: "Held", holder: holder.value } as const;
     }
-    // Dead owner, an earlier boot, this process's own pid, or unreadable:
-    // nobody is behind it. Remove it and let the next attempt create ours.
+    // A dead or different process, this one's own pid, or unreadable: nobody
+    // is behind it. Remove exactly what was read and let the next attempt
+    // create ours.
     yield* Effect.logInfo("Taking over a stale server lock.", { lockPath });
-    yield* fs.remove(lockPath, { force: true });
+    yield* removeLockIfUnchanged(lockPath, existing.value).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+    );
     return { _tag: "Stale" } as const;
   });
 
@@ -197,10 +280,8 @@ export const acquireServerStateDirLock = Effect.fn("acquireServerStateDirLock")(
   // Released only if it is still ours: a lock someone else took over after
   // deciding this process was gone is theirs to remove.
   yield* Effect.addFinalizer(() =>
-    fs.readFileString(lockPath).pipe(
-      Effect.flatMap((current) =>
-        current === ours ? fs.remove(lockPath, { force: true }) : Effect.void,
-      ),
+    removeLockIfUnchanged(lockPath, ours).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
       Effect.catchCause((cause) =>
         Effect.logWarning("Failed to release the server lock", { cause }),
       ),
