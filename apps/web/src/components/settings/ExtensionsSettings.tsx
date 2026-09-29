@@ -227,6 +227,12 @@ function ExtensionCard({ row }: { row: ExtensionSettingsRow }) {
             <span aria-hidden="true">·</span>
             <StartTruncatedPath className="max-w-full" path={row.path} />
 
+            {row.hasInstructions ? (
+              <>
+                <span aria-hidden="true">·</span>
+                <span>Adds MCP instructions</span>
+              </>
+            ) : null}
             {row.restartCount > 0 ? (
               <>
                 <span aria-hidden="true">·</span>
@@ -289,6 +295,17 @@ function ExtensionCard({ row }: { row: ExtensionSettingsRow }) {
           {row.tools.map((tool) => (
             <Badge key={tool} size="sm" variant="outline">
               {tool}
+            </Badge>
+          ))}
+        </div>
+      ) : null}
+
+      {row.resources.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-xs text-muted-foreground">Resources</span>
+          {row.resources.map((uri) => (
+            <Badge key={uri} size="sm" variant="outline">
+              {uri}
             </Badge>
           ))}
         </div>

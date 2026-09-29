@@ -445,6 +445,8 @@ const toStatus = (record: ExtensionRecord): ExtensionStatus => ({
     record.folderHash !== undefined &&
     record.runningHash !== record.folderHash,
   tools: record.tools.map((tool) => tool.name),
+  resources: record.resources.map((resource) => resource.uri),
+  hasInstructions: record.instructions !== undefined,
   rejections: record.rejections,
   ...(record.httpPrefix === undefined ? {} : { httpPrefix: record.httpPrefix }),
   ...(record.web === undefined ? {} : { web: record.web }),

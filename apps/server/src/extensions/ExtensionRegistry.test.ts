@@ -724,9 +724,12 @@ describe("instructions", () => {
           instructions: "Bach runs the fleet.",
         });
         expect(yield* registry.listInstructions).toHaveLength(1);
+        // Settings says so too, not only the MCP server.
+        expect((yield* registry.get("bach")).hasInstructions).toBe(true);
 
         yield* registry.registerTools({ name: "bach", tools: [spawnTool] });
         expect(yield* registry.listInstructions).toStrictEqual([]);
+        expect((yield* registry.get("bach")).hasInstructions).toBe(false);
       }),
     ),
   );
@@ -881,6 +884,9 @@ describe("resources", () => {
         { status: "rejected", uri: "t3code://extensions/guide", reason: "uri-collision" },
         { status: "accepted", uri: "bach://notes" },
       ]);
+      // The status carries the accepted URI as well as the refused one, so
+      // Settings can show both.
+      expect((yield* registry.get("bach")).resources).toStrictEqual(["bach://notes"]);
 
       yield* withSecondExtension(registry, "notes");
       const collided = yield* registry.registerResources({

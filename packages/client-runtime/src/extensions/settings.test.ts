@@ -59,6 +59,31 @@ describe("extension settings rows", () => {
     });
   });
 
+  it("shows the resources and instructions that were accepted, not only the refusals", () => {
+    const [group] = groupsOf(
+      status({
+        name: "bach",
+        resources: ["bach://notes"],
+        hasInstructions: true,
+        rejections: [
+          {
+            kind: "resource",
+            subject: "t3code://extensions/guide",
+            message: "Resource t3code://extensions/guide is already provided by T3 Code.",
+          },
+        ],
+      }),
+      // A host older than the fields leaves them out; the row still reads.
+      status({ name: "older-host" }),
+    );
+
+    expect(group?.rows[0]).toMatchObject({ resources: ["bach://notes"], hasInstructions: true });
+    expect(group?.rows[0]?.problems.map((problem) => problem.subject)).toEqual([
+      "t3code://extensions/guide",
+    ]);
+    expect(group?.rows[1]).toMatchObject({ resources: [], hasInstructions: false });
+  });
+
   it("offers Deploy only for a changed extension that is still enabled", () => {
     const [group] = groupsOf(
       status({ name: "unchanged" }),

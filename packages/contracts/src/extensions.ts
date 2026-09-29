@@ -1165,6 +1165,18 @@ export const ExtensionStatus = Schema.Struct({
   /** The two hashes differ: a build landed and Deploy will pick it up. */
   changed: Schema.Boolean,
   tools: Schema.Array(ExtensionToolName),
+  /**
+   * URIs of the resources it registered and was granted; a refused one is in
+   * `rejections`. Optional only so a client can read a host older than the
+   * field, which leaves it out.
+   */
+  resources: Schema.optionalKey(Schema.Array(ExtensionResourceUri)),
+  /**
+   * Its registration declared instructions for the MCP server. Whether they
+   * reach an agent is `composeMcpInstructions`'s call, made per session.
+   * Optional for the same reason as `resources`.
+   */
+  hasInstructions: Schema.optionalKey(Schema.Boolean),
   /** What it asked for and did not get, in the words Settings shows. */
   rejections: Schema.Array(ExtensionRejection),
   httpPrefix: Schema.optionalKey(ExtensionHttpPrefix),

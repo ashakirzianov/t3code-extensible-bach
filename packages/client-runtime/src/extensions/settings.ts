@@ -50,6 +50,10 @@ export interface ExtensionSettingsRow {
   /** A newer build is on disk than the running process was started from. */
   readonly changed: boolean;
   readonly tools: ReadonlyArray<string>;
+  /** Resource URIs it was granted. Empty from a host too old to say. */
+  readonly resources: ReadonlyArray<string>;
+  /** It declared MCP instructions. False from a host too old to say. */
+  readonly hasInstructions: boolean;
   readonly problems: ReadonlyArray<ExtensionProblem>;
   readonly restartCount: number;
   readonly hasWebEntry: boolean;
@@ -128,6 +132,8 @@ export function extensionSettingsRow(
     stateView: { state: status.state, ...STATE_VIEWS[status.state] },
     changed: status.changed,
     tools: [...status.tools],
+    resources: [...(status.resources ?? [])],
+    hasInstructions: status.hasInstructions === true,
     problems: toProblems(status),
     restartCount: status.restartCount,
     hasWebEntry: status.web !== undefined,
