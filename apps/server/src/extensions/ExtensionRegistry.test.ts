@@ -10,11 +10,13 @@ import {
   type ExtensionStreamEvent,
   type ExtensionToolCaller,
 } from "@t3tools/contracts";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import { EXTENSION_SUBJECT_PREFIX } from "./ExtensionIdentity.ts";
 import { make, type ExtensionRegistryShape } from "./ExtensionRegistry.ts";
@@ -755,6 +757,77 @@ describe("resources", () => {
       expect(unavailable.message).toContain("bach://notes");
       expect((yield* registry.listResources).length).toBe(1);
     }),
+  );
+
+  it.effect("times out a read nobody answers, and ignores the answer that comes late", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeRegistry({ callTimeoutMs: 1_000 });
+        yield* withHandshake(registry);
+        yield* registry.registerResources({ name: "bach", resources: [notesResource] });
+        const asked: Array<{ readonly connectionId: string; readonly requestId: string }> = [];
+        const events = attach(yield* registry.connect({ name: "bach" }), () => undefined);
+        // The extension hears the first read and never answers it; it answers
+        // every read after that.
+        yield* Stream.runForEach(events, (event) => {
+          if (event.type !== "readResource") return Effect.void;
+          asked.push({ connectionId: event.connectionId, requestId: event.request.requestId });
+          if (asked.length === 1) return Effect.void;
+          return registry.respondReadResource({
+            connectionId: event.connectionId,
+            requestId: event.request.requestId,
+            contents: [{ type: "text", uri: event.request.uri, text: "fresh" }],
+          });
+        }).pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
+
+        const read = yield* Effect.forkChild(registry.readResource({ uri: "bach://notes" }));
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust(Duration.millis(1_000));
+        const error = yield* Fiber.join(read).pipe(Effect.flip);
+        expect(error).toMatchObject({
+          _tag: "ExtensionUnavailableError",
+          reason: "timeout",
+          resourceUri: "bach://notes",
+        });
+
+        // The pending entry went with the timeout, so the late answer settles
+        // nothing, and the next read is a request of its own.
+        expect(asked).toHaveLength(1);
+        yield* registry.respondReadResource({
+          ...asked[0]!,
+          contents: [{ type: "text", uri: "bach://notes", text: "late" }],
+        });
+        const result = yield* registry.readResource({ uri: "bach://notes" });
+        expect(asked[1]?.requestId).not.toBe(asked[0]?.requestId);
+        expect(result.contents[0]).toMatchObject({ text: "fresh" });
+      }),
+    ),
+  );
+
+  it.effect("fails an in-flight read when the extension reconnects under it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeRegistry();
+        yield* withHandshake(registry);
+        yield* registry.registerResources({ name: "bach", resources: [notesResource] });
+        const first = yield* registry.connect({ name: "bach" });
+        yield* Stream.runForEach(first, () => Effect.void).pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
+
+        const read = yield* Effect.forkChild(registry.readResource({ uri: "bach://notes" }));
+        yield* Effect.yieldNow;
+        const second = yield* registry.connect({ name: "bach" });
+        yield* Stream.runForEach(second, () => Effect.void).pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
+        const error = yield* Fiber.join(read).pipe(Effect.flip);
+        // Failed by the reconnect itself, not left to run out the timeout.
+        expect(error).toMatchObject({
+          _tag: "ExtensionUnavailableError",
+          reason: "restarting",
+        });
+      }),
+    ),
   );
 
   it.effect("refuses a URI the host or another extension already owns", () =>
