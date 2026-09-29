@@ -691,17 +691,19 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           }
           case "click": {
             const ready = await requireReadyTab();
-            return await ready.bridge.automation.click(
-              ready.runtimeTabId,
-              request.input as Parameters<typeof ready.bridge.automation.click>[1],
-            );
+            const input = request.input as Parameters<typeof ready.bridge.automation.click>[1];
+            return await ready.bridge.automation.click(ready.runtimeTabId, {
+              ...input,
+              timeoutMs: remainingHostBudgetMs(hostDeadlineMs),
+            });
           }
           case "type": {
             const ready = await requireReadyTab();
-            return await ready.bridge.automation.type(
-              ready.runtimeTabId,
-              request.input as Parameters<typeof ready.bridge.automation.type>[1],
-            );
+            const input = request.input as Parameters<typeof ready.bridge.automation.type>[1];
+            return await ready.bridge.automation.type(ready.runtimeTabId, {
+              ...input,
+              timeoutMs: remainingHostBudgetMs(hostDeadlineMs),
+            });
           }
           case "press": {
             const ready = await requireReadyTab();
