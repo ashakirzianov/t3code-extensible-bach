@@ -1,6 +1,9 @@
 import * as NodeVM from "node:vm";
 import { it as effectIt } from "@effect/vitest";
-import { DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER } from "@t3tools/contracts";
+import {
+  DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER,
+  PREVIEW_AUTOMATION_RENDERING_LINGER_MS,
+} from "@t3tools/contracts";
 import type {
   DesktopPreviewRecordingFrame,
   DesktopPreviewRecordingInputEvent,
@@ -2661,6 +2664,38 @@ describe("PreviewManager", () => {
           cause: { _tag: "TimeoutError" },
         });
         expect(yield* Fiber.join(evaluate)).toBe(42);
+      }),
+    ),
+  );
+
+  effectIt.effect("keeps an automated tab unthrottled until the agent goes idle", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const wc = makeTestPreviewWebContents(async () => {
+          throw new Error("unexpected capture");
+        });
+        Object.assign(wc, { isDevToolsOpened: () => false });
+        Object.assign(wc.debugger, {
+          sendCommand: vi.fn(async (method: string) =>
+            method === "Runtime.evaluate" ? { result: { value: 2 } } : undefined,
+          ),
+        });
+        fromId.mockReturnValue(wc);
+        yield* manager.createTab("tab_1");
+        yield* manager.registerWebview("tab_1", 42);
+        expect(wc.setBackgroundThrottling).not.toHaveBeenCalled();
+
+        yield* manager.automationEvaluate("tab_1", { expression: "1+1" });
+        expect(wc.setBackgroundThrottling.mock.calls).toEqual([[false]]);
+
+        // A later action restarts the idle period rather than inheriting the first.
+        yield* TestClock.adjust(PREVIEW_AUTOMATION_RENDERING_LINGER_MS - 1_000);
+        yield* manager.automationEvaluate("tab_1", { expression: "1+1" });
+        yield* TestClock.adjust(1_000);
+        expect(wc.setBackgroundThrottling.mock.calls).toEqual([[false]]);
+
+        yield* TestClock.adjust(PREVIEW_AUTOMATION_RENDERING_LINGER_MS);
+        expect(wc.setBackgroundThrottling.mock.calls).toEqual([[false], [true]]);
       }),
     ),
   );

@@ -9,6 +9,7 @@ import * as NodeCrypto from "node:crypto";
 import {
   DesktopPreviewRecordingInputSchema,
   DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER,
+  PREVIEW_AUTOMATION_RENDERING_LINGER_MS,
 } from "@t3tools/contracts";
 import type {
   DesktopPreviewAnnotationTheme,
@@ -445,7 +446,11 @@ interface ManagedListeners {
   readonly webContents: Electron.WebContents;
 }
 
-type FrameCaptureConsumer = "picture-in-picture" | "recording";
+/**
+ * Each consumer keeps the tab's guest, and the app window, painting while the
+ * app is hidden or occluded. `automation` is held while an agent drives the tab.
+ */
+type FrameCaptureConsumer = "automation" | "picture-in-picture" | "recording";
 
 interface FrameCaptureSession {
   readonly recordingInputOptions?: RecordingInputOptions;
@@ -687,6 +692,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   let pendingRecording: PendingRecording | null = null;
   const displayMediaHandlerSessions = new WeakSet<Session>();
   let frameCaptureWindowOpen = true;
+  const automationRenderingGenerations = new Map<string, number>();
   let currentMainWindow: BrowserWindow | undefined;
   let mainWindowCleanupFiber: Fiber.Fiber<void, never> | undefined;
   const tabLifecycleLocks = new Map<
@@ -1485,6 +1491,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       startedAt,
     };
     yield* pushAction(tabId, actionEvent);
+    yield* keepAutomationRendering(tabId);
     const epoch = (yield* Ref.get(controlEpochRef)).get(tabId) ?? 0;
     const control = yield* ensureControlSession(wc);
     const execute = Effect.fn("PreviewManager.executeControlAction")(function* () {
@@ -2161,9 +2168,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         cancelPickElement(tabId),
         closePictureInPicture(tabId),
         stopFrameCapture(tabId, "recording"),
+        stopAutomationRendering(tabId),
       ],
       {
-        concurrency: 3,
+        concurrency: 4,
         discard: true,
       },
     );
@@ -3126,6 +3134,42 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         }),
       ),
     );
+  });
+
+  // Agents drive tabs the user is usually not watching, often while the app
+  // window is occluded. Chromium then stops producing frames for the guest, so
+  // requestAnimationFrame never fires and paint-dependent state never appears.
+  // Hold the tab unthrottled from each automation action until it has been idle
+  // for the linger period; a newer action supersedes an older release.
+  const keepAutomationRendering = Effect.fn("PreviewManager.keepAutomationRendering")(function* (
+    tabId: string,
+  ) {
+    const generation = (automationRenderingGenerations.get(tabId) ?? 0) + 1;
+    automationRenderingGenerations.set(tabId, generation);
+    yield* startFrameCapture(tabId, "automation").pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Failed to keep an automated preview tab rendering.", { tabId, error }),
+      ),
+    );
+    yield* Effect.forkIn(
+      Effect.sleep(PREVIEW_AUTOMATION_RENDERING_LINGER_MS).pipe(
+        Effect.andThen(
+          Effect.suspend(() =>
+            automationRenderingGenerations.get(tabId) === generation
+              ? stopAutomationRendering(tabId)
+              : Effect.void,
+          ),
+        ),
+      ),
+      parentScope,
+    );
+  });
+
+  const stopAutomationRendering = Effect.fn("PreviewManager.stopAutomationRendering")(function* (
+    tabId: string,
+  ) {
+    automationRenderingGenerations.delete(tabId);
+    yield* stopFrameCapture(tabId, "automation");
   });
 
   const releasePictureInPicture = Effect.fn("PreviewManager.releasePictureInPicture")(function* (

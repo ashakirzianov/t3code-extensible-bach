@@ -555,6 +555,13 @@ export type PreviewAutomationRecordingStatus = typeof PreviewAutomationRecording
 
 export const PREVIEW_RECORDING_STOP_TIMEOUT_MS = 120_000;
 
+/**
+ * How long a preview tab keeps rendering like a visible tab after an agent's
+ * last automation call. Without it, a tab the user is not looking at gets no
+ * animation frames between calls, so paint-dependent state never appears.
+ */
+export const PREVIEW_AUTOMATION_RENDERING_LINGER_MS = 30_000;
+
 export const PreviewAutomationRecordingArtifact = Schema.Struct({
   id: Schema.String,
   tabId: PreviewTabId,
