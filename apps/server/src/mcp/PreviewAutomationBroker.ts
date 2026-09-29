@@ -1,4 +1,5 @@
 import {
+  PREVIEW_AUTOMATION_DEFAULT_TIMEOUT_MS,
   PREVIEW_AUTOMATION_V1_OPERATIONS,
   PreviewAutomationClientDisconnectedError,
   PreviewAutomationControlInterruptedError,
@@ -473,7 +474,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
   const invoke = Effect.fn("PreviewAutomationBroker.invoke")(function* <A = unknown>(
     input: Parameters<PreviewAutomationBroker["Service"]["invoke"]>[0],
   ): Effect.fn.Return<A, PreviewAutomationError> {
-    const timeoutMs = input.timeoutMs ?? 15_000;
+    const timeoutMs = input.timeoutMs ?? PREVIEW_AUTOMATION_DEFAULT_TIMEOUT_MS;
     const deferred = yield* Deferred.make<unknown, PreviewAutomationError>();
     const route = yield* SynchronizedRef.modify(state, (current) => {
       const assignments = new Map(

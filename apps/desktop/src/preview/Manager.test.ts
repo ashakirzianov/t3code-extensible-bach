@@ -2,6 +2,7 @@ import * as NodeVM from "node:vm";
 import { it as effectIt } from "@effect/vitest";
 import {
   DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER,
+  PREVIEW_AUTOMATION_DEFAULT_TIMEOUT_MS,
   PREVIEW_AUTOMATION_RENDERING_LINGER_MS,
 } from "@t3tools/contracts";
 import type {
@@ -2664,6 +2665,49 @@ describe("PreviewManager", () => {
           cause: { _tag: "TimeoutError" },
         });
         expect(yield* Fiber.join(evaluate)).toBe(42);
+      }),
+    ),
+  );
+
+  effectIt.effect("gives up on an evaluation that never settles and frees the tab", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const wc = makeTestPreviewWebContents(async () => {
+          throw new Error("unexpected capture");
+        });
+        Object.assign(wc, { isDevToolsOpened: () => false });
+        Object.assign(wc.debugger, {
+          sendCommand: vi.fn(async (method: string, params?: Record<string, unknown>) => {
+            if (method !== "Runtime.evaluate") return undefined;
+            // An awaited promise that never settles, e.g. a frame that never comes.
+            if (params?.["expression"] === "new Promise(requestAnimationFrame)") {
+              return new Promise(() => {});
+            }
+            return { result: { value: 2 } };
+          }),
+        });
+        fromId.mockReturnValue(wc);
+        yield* manager.createTab("tab_1");
+        yield* manager.registerWebview("tab_1", 42);
+
+        const stalled = yield* Effect.exit(
+          manager.automationEvaluate("tab_1", { expression: "new Promise(requestAnimationFrame)" }),
+        ).pipe(Effect.forkChild({ startImmediately: true }));
+        const next = yield* manager
+          .automationEvaluate("tab_1", { expression: "1+1" })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        expect(next.pollUnsafe()).toBeUndefined();
+
+        yield* TestClock.adjust(PREVIEW_AUTOMATION_DEFAULT_TIMEOUT_MS);
+        const exit = yield* Fiber.join(stalled);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isSuccess(exit)) return;
+        expect(Option.getOrThrow(Cause.findErrorOption(exit.cause))).toMatchObject({
+          _tag: "PreviewOperationError",
+          operation: "automationEvaluate.await",
+          cause: { _tag: "TimeoutError" },
+        });
+        expect(yield* Fiber.join(next)).toBe(2);
       }),
     ),
   );

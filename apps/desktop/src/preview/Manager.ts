@@ -9,6 +9,7 @@ import * as NodeCrypto from "node:crypto";
 import {
   DesktopPreviewRecordingInputSchema,
   DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER,
+  PREVIEW_AUTOMATION_DEFAULT_TIMEOUT_MS,
   PREVIEW_AUTOMATION_RENDERING_LINGER_MS,
 } from "@t3tools/contracts";
 import type {
@@ -132,6 +133,9 @@ const ZOOM_LEVELS: ReadonlyArray<number> = [
 const DEFAULT_ZOOM_FACTOR = 1.0;
 const ZOOM_EPSILON = 0.001;
 const MAX_EVALUATION_BYTES = 64_000;
+// Evaluate takes no timeout of its own, so its request gets the broker default.
+// Give up early enough for the failure to reach the broker inside that window.
+const AUTOMATION_EVALUATE_TIMEOUT_MS = PREVIEW_AUTOMATION_DEFAULT_TIMEOUT_MS - 3_000;
 const MAX_VISIBLE_TEXT_LENGTH = 20_000;
 const MAX_INTERACTIVE_ELEMENTS = 200;
 /**
@@ -4492,6 +4496,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         input.expression,
         input.returnByValue ?? true,
         input.awaitPromise ?? true,
+      ).pipe(
+        Effect.timeout(AUTOMATION_EVALUATE_TIMEOUT_MS),
+        Effect.catchTags({
+          TimeoutError: (cause) =>
+            Effect.fail(
+              new PreviewOperationError({ operation: "automationEvaluate.await", tabId, cause }),
+            ),
+        }),
       );
       const serialized = yield* encodeJson(
         { operation: "automationEvaluate.encodeResult", tabId },
@@ -4524,7 +4536,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     input: PreviewAutomationWaitForInput,
     send: SendCommand,
   ) {
-    const timeoutMs = input.timeoutMs ?? 15_000;
+    const timeoutMs = input.timeoutMs ?? PREVIEW_AUTOMATION_DEFAULT_TIMEOUT_MS;
     yield* send("Runtime.enable");
     const locator = automationLocator(input);
     if (locator) yield* ensurePlaywrightInjected(tabId, send);

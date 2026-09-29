@@ -16,6 +16,9 @@ const BoundedUrl = Schema.String.check(Schema.isTrimmed())
   .check(Schema.isMaxLength(2048));
 const URL_GUIDANCE =
   "Absolute http(s) URL or a schemeless host such as t3.chat or localhost:5173. Schemeless public hosts use https; loopback hosts use http.";
+/** The time an automation request gets when the caller states no timeout. */
+export const PREVIEW_AUTOMATION_DEFAULT_TIMEOUT_MS = 15_000;
+
 const OptionalTimeoutMs = Schema.optional(
   Schema.Int.check(Schema.isGreaterThan(0))
     .check(Schema.isLessThanOrEqualTo(60_000))
