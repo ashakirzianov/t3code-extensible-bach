@@ -161,8 +161,8 @@ answered with `extensions.respondReadResource`. Contents are `text` or base64 `b
 same split a tool result's content has and for the same reason: this is a JSON wire.
 
 Registration is answered per resource, like the tools: a URI another extension or the host
-already owns is rejected with a reason Settings shows, and the extension keeps running with
-the ones that were accepted. The catalogue caveat is the tools' caveat unchanged — a URI that
+already owns, or one the same payload already declared, is rejected with a reason Settings
+shows, and the extension keeps running with the ones that were accepted. The catalogue caveat is the tools' caveat unchanged — a URI that
 appears after a provider process connected is invisible to that agent, so the whole resource
 surface is registered before agent sessions start.
 

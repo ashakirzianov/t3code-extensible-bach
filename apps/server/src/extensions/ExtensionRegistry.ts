@@ -631,6 +631,17 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
           });
           continue;
         }
+        // A payload cannot collide with itself either: the first declaration
+        // wins and a repeat is refused, or MCP would be handed both.
+        if (accepted.some((kept) => kept.name === tool.name)) {
+          results.push({
+            status: "rejected",
+            name: tool.name,
+            reason: "name-collision",
+            message: `Tool ${tool.name} is declared more than once in this registration; the first is kept.`,
+          });
+          continue;
+        }
         accepted.push(tool);
         results.push({ status: "accepted", name: tool.name });
       }
@@ -689,6 +700,16 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
             uri: resource.uri,
             reason: "uri-collision",
             message: new ExtensionResourceUriCollisionError({ uri: resource.uri, owner }).message,
+          });
+          continue;
+        }
+        // The same rule as a repeated tool name: the first declaration wins.
+        if (accepted.some((kept) => kept.uri === resource.uri)) {
+          results.push({
+            status: "rejected",
+            uri: resource.uri,
+            reason: "uri-collision",
+            message: `Resource ${resource.uri} is declared more than once in this registration; the first is kept.`,
           });
           continue;
         }

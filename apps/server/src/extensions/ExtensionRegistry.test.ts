@@ -241,6 +241,25 @@ describe("registration", () => {
     }),
   );
 
+  it.effect("keeps the first of a name declared twice in one payload and refuses the repeat", () =>
+    Effect.gen(function* () {
+      const registry = yield* makeRegistry();
+      yield* withHandshake(registry);
+      const result = yield* registry.registerTools({
+        name: "bach",
+        tools: [spawnTool, { ...spawnTool, description: "A second spawn." }],
+      });
+      expect(result.tools).toMatchObject([
+        { status: "accepted", name: "spawn_agent" },
+        { status: "rejected", name: "spawn_agent", reason: "name-collision" },
+      ]);
+      const tools = yield* registry.listTools;
+      expect(tools.map((tool) => tool.definition.description)).toStrictEqual([
+        "Spawn a Bach agent.",
+      ]);
+    }),
+  );
+
   it.effect("re-registering replaces the previous set, so a redeploy can drop a tool", () =>
     Effect.gen(function* () {
       const registry = yield* makeRegistry();
@@ -828,6 +847,26 @@ describe("resources", () => {
         });
       }),
     ),
+  );
+
+  it.effect("keeps the first of a URI declared twice in one payload and refuses the repeat", () =>
+    Effect.gen(function* () {
+      const registry = yield* makeRegistry();
+      yield* withHandshake(registry);
+      const result = yield* registry.registerResources({
+        name: "bach",
+        resources: [notesResource, { ...notesResource, name: "bach-notes-again" }],
+      });
+      expect(result.resources).toMatchObject([
+        { status: "accepted", uri: "bach://notes" },
+        { status: "rejected", uri: "bach://notes", reason: "uri-collision" },
+      ]);
+      // One entry for MCP, not two.
+      const resources = yield* registry.listResources;
+      expect(resources.map((resource) => resource.definition.name)).toStrictEqual(["bach-notes"]);
+      const status = yield* registry.get("bach");
+      expect(status.rejections).toMatchObject([{ kind: "resource", subject: "bach://notes" }]);
+    }),
   );
 
   it.effect("refuses a URI the host or another extension already owns", () =>
