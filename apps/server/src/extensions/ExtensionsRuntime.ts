@@ -19,11 +19,7 @@ import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { PreviewToolkit } from "../mcp/toolkits/preview/tools.ts";
 import { EXTENSION_SUBJECT_PREFIX, EXTENSION_TOKEN_SCOPES } from "./ExtensionIdentity.ts";
-import {
-  EXTENSION_GUIDE_URI,
-  EXTENSION_INSTALLED_URI,
-  EXTENSION_SCAFFOLD_URI,
-} from "./ExtensionMcp.ts";
+import { HOST_RESOURCE_URIS } from "./ExtensionMcp.ts";
 import * as ExtensionFolderWatcher from "./ExtensionFolderWatcher.ts";
 import * as ExtensionRegistry from "./ExtensionRegistry.ts";
 import * as ExtensionSupervisor from "./ExtensionSupervisor.ts";
@@ -92,11 +88,9 @@ export const layer = Layer.unwrap(
           hostVersion: packageJson.version,
           dataRoot,
           reservedToolNames: hostToolNames,
-          reservedResourceUris: [
-            EXTENSION_GUIDE_URI,
-            EXTENSION_SCAFFOLD_URI,
-            EXTENSION_INSTALLED_URI,
-          ],
+          // Derived the same way, from the list the host serves its own
+          // resources from.
+          reservedResourceUris: HOST_RESOURCE_URIS,
         }),
       ),
     );

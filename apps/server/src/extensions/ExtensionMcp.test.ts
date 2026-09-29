@@ -34,6 +34,7 @@ import {
   EXTENSION_INSTALLED_URI,
   EXTENSION_MCP_INSTRUCTIONS,
   EXTENSION_SCAFFOLD_URI,
+  HOST_RESOURCE_URIS,
   addExtensionResource,
   addExtensionTool,
   composeMcpInstructions,
@@ -75,7 +76,12 @@ const spawnTool = {
   inputSchema: { type: "object" },
 };
 
-const makeRegistry = (options: { readonly reservedToolNames?: ReadonlyArray<string> } = {}) =>
+const makeRegistry = (
+  options: {
+    readonly reservedToolNames?: ReadonlyArray<string>;
+    readonly reservedResourceUris?: ReadonlyArray<string>;
+  } = {},
+) =>
   ExtensionRegistry.make({
     environmentId,
     hostVersion: "0.0.38",
@@ -281,6 +287,27 @@ describe("resources", () => {
         path: "/opt/bach",
         tools: ["spawn_agent"],
       });
+    }),
+  );
+
+  it.effect("reserves every resource it serves, so no extension can register one", () =>
+    Effect.gen(function* () {
+      const registry = yield* makeRegistry({ reservedResourceUris: HOST_RESOURCE_URIS });
+      yield* withTool(registry);
+      const served = extensionResourceDefinitions(registry).map((entry) => entry.resource.uri);
+      const result = yield* registry.registerResources({
+        name: "bach",
+        resources: served.map((uri) => ({
+          uri,
+          name: "impostor",
+          description: "Not the host's.",
+          mimeType: "text/plain",
+        })),
+      });
+      expect(result.resources).toHaveLength(served.length);
+      for (const answer of result.resources) {
+        expect(answer).toMatchObject({ status: "rejected", reason: "uri-collision" });
+      }
     }),
   );
 

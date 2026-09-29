@@ -708,13 +708,15 @@ export const catalogueLayer = Layer.effectDiscard(
   }),
 );
 
-/** The three resources from design §13, as definitions a caller registers. */
-export const extensionResourceDefinitions = (
-  registry: ExtensionRegistryShape,
-): ReadonlyArray<{
+/**
+ * The three resources from design §13. The one list the host serves from and
+ * reserves from, so a resource added here is refused to extensions without
+ * anyone remembering to update a second list.
+ */
+const hostResources: ReadonlyArray<{
   readonly resource: McpSchema.Resource;
-  readonly handle: Effect.Effect<McpSchema.ReadResourceResult>;
-}> => [
+  readonly read: (registry: ExtensionRegistryShape) => Effect.Effect<McpSchema.ReadResourceResult>;
+}> = [
   {
     resource: new McpSchema.Resource({
       uri: EXTENSION_GUIDE_URI,
@@ -723,9 +725,8 @@ export const extensionResourceDefinitions = (
         "How T3 Code extensions work: the protocol, the manifest, and the host web API. Read this to modify an existing extension.",
       mimeType: "text/markdown",
     }),
-    handle: Effect.succeed(
-      readResource(EXTENSION_GUIDE_URI, "text/markdown", EXTENSION_GUIDE_MARKDOWN),
-    ),
+    read: () =>
+      Effect.succeed(readResource(EXTENSION_GUIDE_URI, "text/markdown", EXTENSION_GUIDE_MARKDOWN)),
   },
   {
     resource: new McpSchema.Resource({
@@ -735,9 +736,10 @@ export const extensionResourceDefinitions = (
         "A complete reference extension with build and deploy steps. Read this to build a new extension.",
       mimeType: "text/markdown",
     }),
-    handle: Effect.succeed(
-      readResource(EXTENSION_SCAFFOLD_URI, "text/markdown", EXTENSION_SCAFFOLD_MARKDOWN),
-    ),
+    read: () =>
+      Effect.succeed(
+        readResource(EXTENSION_SCAFFOLD_URI, "text/markdown", EXTENSION_SCAFFOLD_MARKDOWN),
+      ),
   },
   {
     resource: new McpSchema.Resource({
@@ -749,13 +751,27 @@ export const extensionResourceDefinitions = (
     }),
     // Read on demand, so the URI is stable while what it says is not. The
     // resource *set* is as frozen as the tool set; only contents can move.
-    handle: registry.list.pipe(
-      Effect.map((list) =>
-        readResource(EXTENSION_INSTALLED_URI, "application/json", installedResourceJson(list)),
+    read: (registry) =>
+      registry.list.pipe(
+        Effect.map((list) =>
+          readResource(EXTENSION_INSTALLED_URI, "application/json", installedResourceJson(list)),
+        ),
       ),
-    ),
   },
 ];
+
+/** Every URI the host serves itself, which no extension may register. */
+export const HOST_RESOURCE_URIS: ReadonlyArray<string> = hostResources.map(
+  (entry) => entry.resource.uri,
+);
+
+/** The host's resources, as definitions a caller registers. */
+export const extensionResourceDefinitions = (
+  registry: ExtensionRegistryShape,
+): ReadonlyArray<{
+  readonly resource: McpSchema.Resource;
+  readonly handle: Effect.Effect<McpSchema.ReadResourceResult>;
+}> => hostResources.map(({ resource, read }) => ({ resource, handle: read(registry) }));
 
 /**
  * Registered as a layer so the resources exist before the transport starts
