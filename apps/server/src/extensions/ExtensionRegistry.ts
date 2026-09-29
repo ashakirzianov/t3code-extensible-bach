@@ -613,6 +613,7 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
     const result = yield* modifyState((current) => {
       const accepted: ExtensionToolDefinition[] = [];
       const results: ExtensionToolRegistration[] = [];
+      const repeats: ExtensionRejection[] = [];
       for (const tool of input.tools) {
         if (reservedToolNames.has(tool.name)) {
           results.push({
@@ -634,12 +635,14 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
           continue;
         }
         // A payload cannot collide with itself either: the first declaration
-        // wins and a repeat is refused, or MCP would be handed both.
+        // wins, or MCP would be handed both. The repeat is refused where
+        // Settings shows it but not in the answer, which stays one entry per
+        // name — an extension that keys the answer by name must find the
+        // live tool accepted, not overwritten by its own duplicate.
         if (accepted.some((kept) => kept.name === tool.name)) {
-          results.push({
-            status: "rejected",
-            name: tool.name,
-            reason: "name-collision",
+          repeats.push({
+            kind: "tool",
+            subject: tool.name,
             message: `Tool ${tool.name} is declared more than once in this registration; the first is kept.`,
           });
           continue;
@@ -650,11 +653,14 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
       // The same refusals the extension is told, kept where a human can read
       // them: registration is idempotent, so this replaces the previous set
       // rather than accumulating one entry per reconnect.
-      const rejections = results.flatMap((result) =>
-        result.status === "rejected"
-          ? [{ kind: "tool" as const, subject: result.name, message: result.message }]
-          : [],
-      );
+      const rejections = [
+        ...results.flatMap((result) =>
+          result.status === "rejected"
+            ? [{ kind: "tool" as const, subject: result.name, message: result.message }]
+            : [],
+        ),
+        ...repeats,
+      ];
       return [
         { tools: results } satisfies ExtensionRegisterToolsResult,
         withRecord(current, input.name, (record) => {
@@ -685,6 +691,7 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
     return yield* modifyState((current) => {
       const accepted: ExtensionResourceDefinition[] = [];
       const results: ExtensionResourceRegistration[] = [];
+      const repeats: ExtensionRejection[] = [];
       for (const resource of input.resources) {
         if (reservedResourceUris.has(resource.uri)) {
           results.push({
@@ -705,12 +712,12 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
           });
           continue;
         }
-        // The same rule as a repeated tool name: the first declaration wins.
+        // The same rule as a repeated tool name: the first declaration wins,
+        // and the answer stays one entry per URI.
         if (accepted.some((kept) => kept.uri === resource.uri)) {
-          results.push({
-            status: "rejected",
-            uri: resource.uri,
-            reason: "uri-collision",
+          repeats.push({
+            kind: "resource",
+            subject: resource.uri,
             message: `Resource ${resource.uri} is declared more than once in this registration; the first is kept.`,
           });
           continue;
@@ -718,11 +725,14 @@ export const make = Effect.fnUntraced(function* (options: ExtensionRegistryOptio
         accepted.push(resource);
         results.push({ status: "accepted", uri: resource.uri });
       }
-      const rejections = results.flatMap((result) =>
-        result.status === "rejected"
-          ? [{ kind: "resource" as const, subject: result.uri, message: result.message }]
-          : [],
-      );
+      const rejections = [
+        ...results.flatMap((result) =>
+          result.status === "rejected"
+            ? [{ kind: "resource" as const, subject: result.uri, message: result.message }]
+            : [],
+        ),
+        ...repeats,
+      ];
       return [
         { resources: results } satisfies ExtensionRegisterResourcesResult,
         withRecord(current, input.name, (record) => ({

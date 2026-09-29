@@ -241,7 +241,7 @@ describe("registration", () => {
     }),
   );
 
-  it.effect("keeps the first of a name declared twice in one payload and refuses the repeat", () =>
+  it.effect("keeps the first of a name declared twice in one payload and answers it once", () =>
     Effect.gen(function* () {
       const registry = yield* makeRegistry();
       yield* withHandshake(registry);
@@ -249,14 +249,14 @@ describe("registration", () => {
         name: "bach",
         tools: [spawnTool, { ...spawnTool, description: "A second spawn." }],
       });
-      expect(result.tools).toMatchObject([
-        { status: "accepted", name: "spawn_agent" },
-        { status: "rejected", name: "spawn_agent", reason: "name-collision" },
-      ]);
+      // One entry per name, so an answer keyed by name reads the live tool.
+      expect(result.tools).toStrictEqual([{ status: "accepted", name: "spawn_agent" }]);
       const tools = yield* registry.listTools;
       expect(tools.map((tool) => tool.definition.description)).toStrictEqual([
         "Spawn a Bach agent.",
       ]);
+      const status = yield* registry.get("bach");
+      expect(status.rejections).toMatchObject([{ kind: "tool", subject: "spawn_agent" }]);
     }),
   );
 
@@ -852,7 +852,7 @@ describe("resources", () => {
     ),
   );
 
-  it.effect("keeps the first of a URI declared twice in one payload and refuses the repeat", () =>
+  it.effect("keeps the first of a URI declared twice in one payload and answers it once", () =>
     Effect.gen(function* () {
       const registry = yield* makeRegistry();
       yield* withHandshake(registry);
@@ -860,10 +860,7 @@ describe("resources", () => {
         name: "bach",
         resources: [notesResource, { ...notesResource, name: "bach-notes-again" }],
       });
-      expect(result.resources).toMatchObject([
-        { status: "accepted", uri: "bach://notes" },
-        { status: "rejected", uri: "bach://notes", reason: "uri-collision" },
-      ]);
+      expect(result.resources).toStrictEqual([{ status: "accepted", uri: "bach://notes" }]);
       // One entry for MCP, not two.
       const resources = yield* registry.listResources;
       expect(resources.map((resource) => resource.definition.name)).toStrictEqual(["bach-notes"]);

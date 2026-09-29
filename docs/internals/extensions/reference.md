@@ -114,8 +114,11 @@ Registered tool names are **unprefixed** and must be unique across the environme
 attaches the caller's resolved identity — thread, environment, provider instance — to every
 invocation, so an agent cannot claim to be someone else by writing it into the arguments.
 
-Registration is answered per tool: a name that collides is rejected with a reason the
-Settings screen shows, and the extension keeps running with the tools that were accepted.
+Registration is answered per tool: a name the host or another extension already owns is
+rejected with a reason the Settings screen shows, and the extension keeps running with the
+tools that were accepted. A name repeated within one payload keeps its first declaration; the
+repeat is listed in Settings but not in the answer, which carries exactly one entry per name,
+so an answer keyed by name reads the tool that is live.
 
 MCP clients cache the tool catalogue when their provider process connects, so a tool that
 appears later is invisible to a running agent
@@ -166,8 +169,9 @@ answered with `extensions.respondReadResource`. Contents are `text` or base64 `b
 same split a tool result's content has and for the same reason: this is a JSON wire.
 
 Registration is answered per resource, like the tools: a URI another extension or the host
-already owns, or one the same payload already declared, is rejected with a reason Settings
-shows, and the extension keeps running with the ones that were accepted. The catalogue caveat is the tools' caveat unchanged — a URI that
+already owns is rejected with a reason Settings shows, and the extension keeps running with
+the ones that were accepted. A URI repeated within one payload follows the tools' rule — the
+first declaration is kept, and the answer still has one entry per URI. The catalogue caveat is the tools' caveat unchanged — a URI that
 appears after a provider process connected is invisible to that agent, so the whole resource
 surface is registered before agent sessions start.
 
