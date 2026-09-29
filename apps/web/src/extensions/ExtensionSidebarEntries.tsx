@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { ExtensionNavEntry } from "@t3tools/client-runtime/extensions";
 import { PuzzleIcon, RefreshCwIcon } from "lucide-react";
-import { memo, useCallback } from "react";
+import { memo, useCallback, useMemo } from "react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/unstable/reactivity";
@@ -146,7 +146,15 @@ function ExtensionSidebarRow({ entry }: { entry: ExtensionNavEntry }) {
 }
 
 export const ExtensionSidebarEntries = memo(function ExtensionSidebarEntries() {
-  const entries = useExtensionNavEntries();
+  const allEntries = useExtensionNavEntries();
+  // A disabled extension gets no row: turning it off is a deliberate choice,
+  // and Settings → Extensions is where it is turned back on. Only the sidebar
+  // drops it — the route still resolves it, to say it is turned off. A stopped
+  // or crashed extension keeps its dimmed row, because nobody chose that.
+  const entries = useMemo(
+    () => allEntries.filter((entry) => entry.state !== "disabled"),
+    [allEntries],
+  );
   if (entries.length === 0) return null;
   return (
     <SidebarMenu>
