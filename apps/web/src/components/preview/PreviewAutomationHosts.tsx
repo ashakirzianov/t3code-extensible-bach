@@ -6,6 +6,7 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import {
   FILL_PREVIEW_VIEWPORT,
   PREVIEW_AUTOMATION_OPERATIONS,
+  PREVIEW_AUTOMATION_RENDERING_LINGER_MS,
   type EnvironmentId,
   type PreviewAutomationNavigateInput,
   type PreviewAutomationOpenInput,
@@ -796,7 +797,13 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           cause,
         });
       } finally {
-        browserActivity.release?.();
+        // Keep the guest composited between an agent's calls: a guest parked
+        // outside the window gets no animation frames while still reporting
+        // itself visible, so rAF-driven paint would silently never happen.
+        const release = browserActivity.release;
+        if (release !== null) {
+          window.setTimeout(() => release?.(), PREVIEW_AUTOMATION_RENDERING_LINGER_MS);
+        }
       }
     },
     [environmentId, listPreviews, open, registry, resize],
