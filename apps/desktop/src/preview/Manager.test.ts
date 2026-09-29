@@ -2704,10 +2704,57 @@ describe("PreviewManager", () => {
         if (Exit.isSuccess(exit)) return;
         expect(Option.getOrThrow(Cause.findErrorOption(exit.cause))).toMatchObject({
           _tag: "PreviewOperationError",
-          operation: "automationEvaluate.await",
+          operation: "evaluate.timeout",
           cause: { _tag: "TimeoutError" },
         });
         expect(yield* Fiber.join(next)).toBe(2);
+      }),
+    ),
+  );
+
+  effectIt.effect("bounds an evaluate's wait for a busy tab by its own timeout", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const wc = makeTestPreviewWebContents(async () => {
+          throw new Error("unexpected capture");
+        });
+        Object.assign(wc, { isDevToolsOpened: () => false });
+        Object.assign(wc.debugger, {
+          sendCommand: vi.fn(async (method: string, params?: Record<string, unknown>) =>
+            method === "Runtime.evaluate"
+              ? {
+                  result: {
+                    value:
+                      params?.["expression"] === "Boolean(globalThis.__t3PlaywrightInjected)"
+                        ? true
+                        : { matched: false },
+                  },
+                }
+              : undefined,
+          ),
+        });
+        fromId.mockReturnValue(wc);
+        yield* manager.createTab("tab_1");
+        yield* manager.registerWebview("tab_1", 42);
+
+        const wait = yield* Effect.exit(
+          manager.automationWaitFor("tab_1", { locator: "css=.never", timeoutMs: 60_000 }),
+        ).pipe(Effect.forkChild({ startImmediately: true }));
+        const evaluate = yield* Effect.exit(
+          manager.automationEvaluate("tab_1", { expression: "1+1", timeoutMs: 2_000 }),
+        ).pipe(Effect.forkChild({ startImmediately: true }));
+
+        yield* TestClock.adjust(3_000);
+        const exit = yield* Fiber.join(evaluate);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isSuccess(exit)) return;
+        expect(Option.getOrThrow(Cause.findErrorOption(exit.cause))).toMatchObject({
+          _tag: "PreviewOperationError",
+          operation: "evaluate.acquireControl",
+        });
+        expect(wait.pollUnsafe()).toBeUndefined();
+        yield* TestClock.adjust(60_000);
+        yield* Fiber.join(wait);
       }),
     ),
   );

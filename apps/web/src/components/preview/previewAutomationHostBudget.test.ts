@@ -1,7 +1,7 @@
+import { PREVIEW_AUTOMATION_RESPONSE_MARGIN_MS } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
-  PREVIEW_HOST_RESPONSE_MARGIN_MS,
   remainingHostBudgetMs,
   resolveHostWaitBudgetMs,
   waitForHostReadiness,
@@ -9,8 +9,8 @@ import {
 
 describe("resolveHostWaitBudgetMs", () => {
   it("reserves the full response margin once the request budget allows it", () => {
-    expect(resolveHostWaitBudgetMs(15_000)).toBe(15_000 - PREVIEW_HOST_RESPONSE_MARGIN_MS);
-    expect(resolveHostWaitBudgetMs(60_000)).toBe(60_000 - PREVIEW_HOST_RESPONSE_MARGIN_MS);
+    expect(resolveHostWaitBudgetMs(15_000)).toBe(15_000 - PREVIEW_AUTOMATION_RESPONSE_MARGIN_MS);
+    expect(resolveHostWaitBudgetMs(60_000)).toBe(60_000 - PREVIEW_AUTOMATION_RESPONSE_MARGIN_MS);
   });
 
   it("keeps most of a short request budget instead of collapsing it", () => {
@@ -33,7 +33,7 @@ describe("remainingHostBudgetMs", () => {
     // Readiness work already spent part of the budget.
     const nowMs = startMs + 400;
     const waitMs = remainingHostBudgetMs(deadlineMs, nowMs);
-    expect(waitMs).toBe(15_000 - PREVIEW_HOST_RESPONSE_MARGIN_MS - 400);
+    expect(waitMs).toBe(15_000 - PREVIEW_AUTOMATION_RESPONSE_MARGIN_MS - 400);
     expect(nowMs + waitMs).toBeLessThan(startMs + requestTimeoutMs);
   });
 

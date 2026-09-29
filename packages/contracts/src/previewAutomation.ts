@@ -19,6 +19,14 @@ const URL_GUIDANCE =
 /** The time an automation request gets when the caller states no timeout. */
 export const PREVIEW_AUTOMATION_DEFAULT_TIMEOUT_MS = 15_000;
 
+/**
+ * What each hop of an automation request keeps back from its deadline, so its
+ * own failure reaches the broker before the broker times the request out. The
+ * web host keeps one margin; the desktop, when it has to assume the default
+ * timeout, keeps one more for the host's readiness work.
+ */
+export const PREVIEW_AUTOMATION_RESPONSE_MARGIN_MS = 1_500;
+
 const OptionalTimeoutMs = Schema.optional(
   Schema.Int.check(Schema.isGreaterThan(0))
     .check(Schema.isLessThanOrEqualTo(60_000))
@@ -441,6 +449,7 @@ export const PreviewAutomationEvaluateInput = Schema.Struct({
         "Serialize and return the value instead of a remote object reference. Defaults to true.",
     }),
   ),
+  timeoutMs: OptionalTimeoutMs,
 }).annotate({
   description:
     "Evaluates JavaScript in the page. Prefer snapshot and semantic actions; use evaluate for inspection or unsupported interactions.",

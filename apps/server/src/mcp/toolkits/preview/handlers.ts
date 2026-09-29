@@ -207,7 +207,7 @@ const handlers = {
   preview_press: (input) => invokeTargeted<object>("press", input),
   preview_scroll: (input) => invokeTargeted<object>("scroll", input),
   preview_evaluate: ({ tabId, ...input }) =>
-    invoke<unknown>("evaluate", input, undefined, tabId).pipe(
+    invoke<unknown>("evaluate", input, input.timeoutMs, tabId).pipe(
       Effect.map(({ result, toolIcon }) => ({
         value: result ?? null,
         ...(toolIcon ? { toolIcon } : {}),

@@ -11,6 +11,7 @@ import {
   DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER,
   PREVIEW_AUTOMATION_DEFAULT_TIMEOUT_MS,
   PREVIEW_AUTOMATION_RENDERING_LINGER_MS,
+  PREVIEW_AUTOMATION_RESPONSE_MARGIN_MS,
 } from "@t3tools/contracts";
 import type {
   DesktopPreviewAnnotationTheme,
@@ -133,9 +134,13 @@ const ZOOM_LEVELS: ReadonlyArray<number> = [
 const DEFAULT_ZOOM_FACTOR = 1.0;
 const ZOOM_EPSILON = 0.001;
 const MAX_EVALUATION_BYTES = 64_000;
-// Evaluate takes no timeout of its own, so its request gets the broker default.
-// Give up early enough for the failure to reach the broker inside that window.
-const AUTOMATION_EVALUATE_TIMEOUT_MS = PREVIEW_AUTOMATION_DEFAULT_TIMEOUT_MS - 3_000;
+// For hosts that predate passing evaluate its remaining budget: assume the
+// broker default, less the host's margin and one more for its readiness work.
+const AUTOMATION_EVALUATE_TIMEOUT_MS =
+  PREVIEW_AUTOMATION_DEFAULT_TIMEOUT_MS - 2 * PREVIEW_AUTOMATION_RESPONSE_MARGIN_MS;
+// Room after a bounded action's deadline for its own timeout to finish
+// cleaning up before the lock wait's outer bound interrupts it.
+const AUTOMATION_TIMEOUT_CLEANUP_GRACE_MS = 750;
 const MAX_VISIBLE_TEXT_LENGTH = 20_000;
 const MAX_INTERACTIVE_ELEMENTS = 200;
 /**
@@ -1487,7 +1492,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       sendCleanup: SendCommand,
       checkControl: Effect.Effect<void, PreviewManagerError>,
     ) => Effect.Effect<A, PreviewManagerError>,
+    /** Bounds the wait for the tab's control lock and the action together. */
+    timeoutMs?: number,
   ) {
+    const deadlineMs = timeoutMs === undefined ? undefined : (yield* currentMillis) + timeoutMs;
     const sequence = yield* nextCounter(actionSequenceRef);
     const startedAt = yield* currentIso;
     const millis = yield* currentMillis;
@@ -1544,7 +1552,22 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           );
         },
       );
-      return yield* use(send, sendCleanup, checkControl);
+      const performed = use(send, sendCleanup, checkControl);
+      if (deadlineMs === undefined) return yield* performed;
+      return yield* performed.pipe(
+        Effect.timeout(Math.max(1, deadlineMs - (yield* currentMillis))),
+        Effect.catchTags({
+          TimeoutError: (cause) =>
+            Effect.fail(
+              new PreviewOperationError({
+                operation: `${action}.timeout`,
+                tabId,
+                webContentsId: wc.id,
+                cause,
+              }),
+            ),
+        }),
+      );
     });
     const finalize = Effect.fn("PreviewManager.finalizeControlAction")(function* (
       exit: Exit.Exit<A, PreviewManagerError>,
@@ -1578,9 +1601,43 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       const tabs = yield* SynchronizedRef.get(tabsRef);
       if (tabs.has(tabId)) yield* update(tabId, { controller: "none" });
     });
+    let started = false;
+    const run = control.semaphore.withPermit(
+      Effect.suspend(() => {
+        started = true;
+        return execute().pipe(Effect.onExit(finalize));
+      }),
+    );
+    // The action bounds itself once it holds the lock; this outer bound covers
+    // the wait for the lock, with grace for the action's own timeout to land.
+    const bounded =
+      timeoutMs === undefined
+        ? run
+        : run.pipe(
+            Effect.timeout(timeoutMs + AUTOMATION_TIMEOUT_CLEANUP_GRACE_MS),
+            Effect.catchTags({
+              TimeoutError: (cause) =>
+                Effect.gen(function* () {
+                  if (!started) {
+                    yield* replaceAction(tabId, {
+                      ...actionEvent,
+                      status: "failed",
+                      completedAt: yield* currentIso,
+                      error: "Timed out waiting for another action on this tab.",
+                    });
+                  }
+                  return yield* new PreviewOperationError({
+                    operation: `${action}.${started ? "timeout" : "acquireControl"}`,
+                    tabId,
+                    webContentsId: wc.id,
+                    cause,
+                  });
+                }),
+            }),
+          );
     return yield* Effect.acquireUseRelease(
       holdAutomationRendering(tabId),
-      () => control.semaphore.withPermit(execute().pipe(Effect.onExit(finalize))),
+      () => bounded,
       () => releaseAutomationRendering(tabId),
     );
   });
@@ -4520,14 +4577,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         input.expression,
         input.returnByValue ?? true,
         input.awaitPromise ?? true,
-      ).pipe(
-        Effect.timeout(AUTOMATION_EVALUATE_TIMEOUT_MS),
-        Effect.catchTags({
-          TimeoutError: (cause) =>
-            Effect.fail(
-              new PreviewOperationError({ operation: "automationEvaluate.await", tabId, cause }),
-            ),
-        }),
       );
       const serialized = yield* encodeJson(
         { operation: "automationEvaluate.encodeResult", tabId },
@@ -4550,8 +4599,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     input: PreviewAutomationEvaluateInput,
   ) {
     const wc = yield* requireWebContents(tabId);
-    return yield* withControlSession(tabId, wc, "evaluate", (send) =>
-      performAutomationEvaluate(tabId, input, send),
+    return yield* withControlSession(
+      tabId,
+      wc,
+      "evaluate",
+      (send) => performAutomationEvaluate(tabId, input, send),
+      input.timeoutMs ?? AUTOMATION_EVALUATE_TIMEOUT_MS,
     );
   });
 
