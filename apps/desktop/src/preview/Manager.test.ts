@@ -19,6 +19,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import { TestClock } from "effect/testing";
+import { JSDOM } from "jsdom";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -2660,6 +2661,48 @@ describe("PreviewManager", () => {
           cause: { _tag: "TimeoutError" },
         });
         expect(yield* Fiber.join(evaluate)).toBe(42);
+      }),
+    ),
+  );
+
+  effectIt.live("fails a locator wait whose locator never matches", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        // The guest page is a real DOM, and the Playwright runtime is installed
+        // into it through the same Runtime.evaluate path the preview uses.
+        const page = new JSDOM(`<body><button>Send</button></body>`, {
+          url: "https://example.test/",
+          runScripts: "outside-only",
+        });
+        const wc = makeTestPreviewWebContents(async () => {
+          throw new Error("unexpected capture");
+        });
+        Object.assign(wc, { isDevToolsOpened: () => false });
+        Object.assign(wc.debugger, {
+          sendCommand: vi.fn(async (method: string, params?: Record<string, unknown>) =>
+            method === "Runtime.evaluate"
+              ? { result: { value: page.window.eval(String(params?.["expression"])) } }
+              : undefined,
+          ),
+        });
+        fromId.mockReturnValue(wc);
+        yield* manager.createTab("tab_1");
+        yield* manager.registerWebview("tab_1", 42);
+
+        yield* manager.automationWaitFor("tab_1", { locator: "role=button[name='Send']" });
+        const exit = yield* Effect.exit(
+          manager.automationWaitFor("tab_1", {
+            locator: ".t3ref-this-class-does-not-exist",
+            timeoutMs: 250,
+          }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isSuccess(exit)) return;
+        expect(Option.getOrThrow(Cause.findErrorOption(exit.cause))).toMatchObject({
+          _tag: "PreviewAutomationTimeoutError",
+          tabId: "tab_1",
+          timeoutMs: 250,
+        });
       }),
     ),
   );
