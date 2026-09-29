@@ -69,6 +69,24 @@ describe("extension nav entries", () => {
     expect(findExtensionNavEntry(both, { environmentId: "env-2", name: "bach" })).toBe(both[1]);
   });
 
+  it("leaves the primary environment's rows bare and labels only the remote ones", () => {
+    // An SSH environment on the same machine: both lists carry the machine name.
+    const entries = extensionNavEntries([
+      {
+        environmentId: environmentId("local"),
+        environmentLabel: "Anton's MacBook Air",
+        primary: true,
+        extensions: [status({ name: "bach", web: web("Bach") })],
+      },
+      {
+        environmentId: environmentId("ssh"),
+        environmentLabel: "Anton's MacBook Air",
+        extensions: [status({ name: "bach", web: web("Bach") })],
+      },
+    ]);
+    expect(entries.map((entry) => entry.environmentLabel)).toEqual([null, "Anton's MacBook Air"]);
+  });
+
   it("normalises badges that draw nothing away", () => {
     const entries = extensionNavEntries([
       {

@@ -43,6 +43,7 @@ export const extensionEnvironmentListsAtom = Atom.make(
       lists.push({
         environmentId,
         environmentLabel: presentation?.entry.target.label ?? environmentId,
+        primary: presentation?.entry.target._tag === "PrimaryConnectionTarget",
         extensions: list.extensions,
       });
     }

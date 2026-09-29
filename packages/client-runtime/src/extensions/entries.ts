@@ -21,7 +21,10 @@ import type {
  *
  * `environmentLabel` is only filled in when more than one environment is
  * connected — a single-environment client would just repeat the same word on
- * every row.
+ * every row — and never on the primary environment's rows: those are the
+ * unmarked default, and the label is what sets a remote row apart. (An SSH
+ * environment on the same machine carries the same machine name, so labelling
+ * both rows would label neither.)
  */
 export interface ExtensionNavEntry {
   readonly environmentId: EnvironmentId;
@@ -42,6 +45,8 @@ export interface ExtensionNavEntry {
 export interface ExtensionEnvironmentList {
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
+  /** The client's own backend (the desktop's local environment), not a remote one. */
+  readonly primary?: boolean;
   readonly extensions: ReadonlyArray<ExtensionStatus>;
 }
 
@@ -93,7 +98,7 @@ export function extensionNavEntries(
       const entry = toNavEntry(
         status,
         list.environmentId,
-        showEnvironment ? list.environmentLabel : null,
+        showEnvironment && list.primary !== true ? list.environmentLabel : null,
       );
       if (entry !== null) entries.push(entry);
     }
