@@ -135,7 +135,8 @@ sessions.
 **There is a hard budget and it is small.** Claude Code truncates a server's instructions at
 roughly **2,500 characters** — mid-sentence, with nothing said about it. So the host composes
 under that number itself: it keeps its own paragraph, takes as many whole extension sections
-as fit, and appends a line naming the ones it left out. An agent that can see guidance is
+as fit, and appends a line naming the ones it left out (or counting them, when the names
+themselves would not fit). An agent that can see guidance is
 missing can ask for it; one reading a sentence that stops halfway just believes it. The wire
 caps one extension at `EXTENSION_INSTRUCTIONS_MAX_CHARS`, but the useful number is far
 smaller: the budget is shared with the host's paragraph and with every other extension, so a

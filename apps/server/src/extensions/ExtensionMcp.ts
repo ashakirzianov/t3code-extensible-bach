@@ -147,25 +147,30 @@ export const composeMcpInstructions = (
   const rendered = sections.map(
     (section) => `## ${section.extensionName}\n${section.instructions.trim()}`,
   );
-  const compose = (keep: number): string => {
-    const parts = [host, ...rendered.slice(0, keep)];
-    if (keep < sections.length) {
-      const left = sections.slice(keep).map((section) => section.extensionName);
-      parts.push(
-        `Instructions from ${left.join(", ")} did not fit and were left out; read ${EXTENSION_INSTALLED_URI} to see what is installed.`,
-      );
-    }
-    return parts.join("\n\n");
+  const notice = (left: ReadonlyArray<string>, named: boolean): string =>
+    `Instructions from ${named ? left.join(", ") : `${left.length} more extension${left.length === 1 ? "" : "s"}`} did not fit and were left out; read ${EXTENSION_INSTALLED_URI} to see what is installed.`;
+  // Every way to keep the first `keep` sections, best first: the notice names
+  // what it left out, or — when a long list of names would itself cost a
+  // section — only counts it.
+  const candidates = (keep: number): ReadonlyArray<string> => {
+    const base = [host, ...rendered.slice(0, keep)];
+    if (keep === sections.length) return [base.join("\n\n")];
+    const left = sections.slice(keep).map((section) => section.extensionName);
+    return [true, false].map((named) => [...base, notice(left, named)].join("\n\n"));
   };
   // Longest prefix that fits, notice included. Sections are dropped from the
   // end so the order is the start order whatever gets left out, and the count
   // is small enough that trying each length is cheaper than reasoning about
   // how much the notice itself will cost.
-  for (let keep = sections.length; keep > 0; keep -= 1) {
-    const text = compose(keep);
-    if (text.length <= budget) return text;
+  for (let keep = sections.length; keep >= 0; keep -= 1) {
+    for (const text of candidates(keep)) {
+      if (text.length <= budget) return text;
+    }
   }
-  return compose(0);
+  // Not even a notice fits beside the host's paragraph. The budget is the one
+  // promise here that holds unconditionally, so the paragraph goes alone, and
+  // is cut only if it is itself over — which only a caller-supplied host can be.
+  return host.slice(0, budget);
 };
 
 /** MCP-shaped content from the extension's answer, mapped one for one. */

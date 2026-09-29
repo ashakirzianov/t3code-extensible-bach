@@ -1070,10 +1070,46 @@ describe("server instructions", () => {
   it("keeps the host's own paragraph even when nothing else fits", () => {
     const composed = composeMcpInstructions([section("bach", "a".repeat(400))], {
       host: "host.",
-      budget: 50,
+      budget: 150,
     });
+    expect(composed.length).toBeLessThanOrEqual(150);
     expect(composed.startsWith("host.")).toBe(true);
     expect(composed).toContain("Instructions from bach did not fit");
+  });
+
+  it("holds the budget when the notice itself is what would overrun it", () => {
+    const many = Array.from({ length: 40 }, (_, index) =>
+      section(`extension-with-a-long-name-${index}`, "a".repeat(100)),
+    );
+    const budget = 200;
+
+    // Too many names to list: the notice counts them instead.
+    const counted = composeMcpInstructions(many, { host: "host.", budget });
+    expect(counted.length).toBeLessThanOrEqual(budget);
+    expect(counted).toContain("Instructions from 40 more extensions did not fit");
+
+    // Not even a counting notice fits: the host's paragraph goes alone.
+    const bare = composeMcpInstructions(many, { host: "host.", budget: 20 });
+    expect(bare).toBe("host.");
+
+    // A host paragraph over the budget by itself is the one thing that is cut.
+    const cut = composeMcpInstructions(many, { host: "h".repeat(30), budget: 20 });
+    expect(cut).toBe("h".repeat(20));
+  });
+
+  it("counts rather than names when naming would cost a section that otherwise fits", () => {
+    const composed = composeMcpInstructions(
+      [
+        section("bach", "a".repeat(50)),
+        ...Array.from({ length: 10 }, (_, index) =>
+          section(`extension-with-a-long-name-${index}`, "b".repeat(400)),
+        ),
+      ],
+      { host: "host.", budget: 250 },
+    );
+    expect(composed.length).toBeLessThanOrEqual(250);
+    expect(composed).toContain("## bach");
+    expect(composed).toContain("Instructions from 10 more extensions did not fit");
   });
 });
 
