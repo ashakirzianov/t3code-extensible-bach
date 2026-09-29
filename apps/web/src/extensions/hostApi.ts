@@ -1,4 +1,5 @@
 import { extensionFetch } from "@t3tools/client-runtime/extensions";
+import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import type {
   EnvironmentId,
   ExtensionHostApi,
@@ -74,6 +75,12 @@ export function createExtensionHostApi(input: ExtensionHostApiInput): ExtensionH
         );
       }
       return extensionFetch({ prepared, environmentId, prefix, path, init });
+    },
+    // The same resolution the host's own sidebar gives a favicon, so an
+    // extension draws what the sidebar draws on every client.
+    resolveAssetUrl: (environmentId, path) => {
+      const prepared = readPreparedConnection(environmentId);
+      return prepared === null ? null : resolveAssetUrl(prepared.httpBaseUrl, path);
     },
     navigateToThread: (threadId, environmentId) =>
       input.navigateToThread(threadId, environmentId ?? input.environmentId),

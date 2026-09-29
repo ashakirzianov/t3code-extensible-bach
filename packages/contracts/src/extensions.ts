@@ -552,13 +552,13 @@ export type ExtensionProjectIconOverride = typeof ExtensionProjectIconOverride.T
  * - `override`: what the user chose. When present, draw it and ignore the rest.
  * - `faviconUrl`: the project's own favicon, as a signed root-relative path,
  *   valid for about an hour — ask again rather than keep it. `null` when the
- *   project has none. **Resolve it against the environment's own HTTP base, not
- *   the page's origin.** They are the same thing on every client whose page the
- *   environment served, and they are not the same thing in a packaged desktop
- *   renderer, which loads `t3code://app` from a directory of static files with
- *   only `/ext-assets/…` bridged to the local backend. An `<img>` handed the
- *   bare path there misses and falls through to `automatic`, which is why this
- *   is a wrong picture rather than a broken one.
+ *   project has none. **Pass it through the web host API's `resolveAssetUrl`
+ *   before loading it; do not use the bare path.** The page's origin is the
+ *   environment's HTTP base only on clients whose page the environment served;
+ *   a packaged desktop renderer loads `t3code://app` from a directory of static
+ *   files with only `/ext-assets/…` bridged to the local backend. An `<img>`
+ *   handed the bare path there misses and falls through to `automatic`, which
+ *   is why the mistake is a wrong picture rather than a broken one.
  * - `automatic`: what the host draws when there is neither, and what to fall
  *   back to if the favicon fails to load. Always present.
  *
@@ -1457,6 +1457,15 @@ export interface ExtensionHostApi {
     path: string,
     init?: RequestInit,
   ) => Promise<Response>;
+  /**
+   * A root-relative asset path the host minted on one environment — a
+   * `faviconUrl` from `extensions.projectIcons` — as a URL this page can load,
+   * resolved against that environment's HTTP base the way the host resolves
+   * its own. The page's origin is not that base on every client (a packaged
+   * desktop renderer is a static `t3code://app`), which is why the path cannot
+   * be used as is. `null` when the client is not connected to the environment.
+   */
+  readonly resolveAssetUrl: (environmentId: EnvironmentId, path: string) => string | null;
   /** Opens a thread in the host's chat view, leaving the extension's route. */
   readonly navigateToThread: (threadId: ThreadId, environmentId?: EnvironmentId) => void;
 }

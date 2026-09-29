@@ -266,9 +266,10 @@ picture:
 
 - `override` — what the user chose in Project settings: an emoji, a Lucide icon and colour,
   or a monogram and colour. When it is set, draw it and ignore the rest.
-- `faviconUrl` — the project's own favicon as a signed, same-origin path an `<img>` loads as
-  is, the same URL the sidebar uses. `null` when the project has none. It expires in about an
-  hour, so ask again when you render rather than keeping it.
+- `faviconUrl` — the project's own favicon as a signed, root-relative path, the same one the
+  sidebar uses. `null` when the project has none. Hand it to the web host API's
+  `resolveAssetUrl` before loading it (see below). It expires in about an hour, so ask again
+  when you render rather than keeping it.
 - `automatic` — a monogram and a colour. Always present: it is what to draw when there is
   neither of the others, and what to fall back to if the favicon fails to load.
 
@@ -284,10 +285,12 @@ surrounding whitespace. A project whose name has no letters or digits at all get
 Colours come twice: `color` is the palette name, and `colorCss` is the CSS value the host
 draws it in — `light` on light themes, `dark` when the host's root element has the `dark`
 class — so a consumer needs no colour table of its own. The rule behind those values, for a consumer that builds its own table: they are Tailwind v4's default palette at shade 600 on light themes and 400 on dark — the shades the host's own classes use — given as Tailwind's `oklch()` values, not hex. The `faviconUrl` is root-relative
-(`/api/assets/…`), never an absolute origin, so it belongs to the environment that answered
-rather than to whatever origin the consumer happens to be on. Resolve it against that
-environment's HTTP base: in a packaged desktop renderer the page's own origin is a directory
-of static files, and only `/ext-assets/…` is bridged from there to the local backend. The answer is keyed by the same project ids
+(`/api/assets/…`), never an absolute origin, because only the client knows the address it
+reaches the environment at — loopback, a LAN name, a forwarded port. The page's own origin is
+not that address everywhere: a packaged desktop renderer is a directory of static files with
+only `/ext-assets/…` bridged to the local backend, so the bare path misses there. The web host
+API's `resolveAssetUrl(environmentId, path)` resolves it the way the host resolves its own
+sidebar favicon, and answers `null` for an environment the client is not connected to. The answer is keyed by the same project ids
 `subscribeShell` uses; when a project's title, favicon or icon changes there, ask again.
 
 ## Where extensions come from
@@ -550,9 +553,9 @@ reached over SSH is mounted the same way, from the minted paths re-based onto th
 proxy above; an environment no backend of this client's can reach cannot be mounted at all,
 and the route says so instead of failing quietly.
 
-The host API a mounted bundle is handed is five things and no more: `mount`, `unmount`, the
-list of connected environments, an authenticated `fetch` scoped to one of them, and
-navigation into a thread. Everything else an extension needs, it already has as an ordinary
+The host API a mounted bundle is handed is six things and no more: `mount`, `unmount`, the
+list of connected environments, an authenticated `fetch` scoped to one of them, resolution of
+a host-minted asset path against one of them, and navigation into a thread. Everything else an extension needs, it already has as an ordinary
 client on its own socket, from its own process — so nothing else belongs here. Theme is
 deliberately absent: the container sits inside the host's document, so the app's CSS custom
 properties are already in scope, and an extension styled with them follows a theme change
