@@ -1113,7 +1113,8 @@ describe("server instructions", () => {
     // Too many names to list: the notice counts them instead.
     const counted = composeMcpInstructions(many, { host: "host.", budget });
     expect(counted.length).toBeLessThanOrEqual(budget);
-    expect(counted).toContain("Instructions from 40 more extensions did not fit");
+    // None of them was kept, so none is "more".
+    expect(counted).toContain("Instructions from 40 extensions did not fit");
 
     // Not even a counting notice fits: the host's paragraph goes alone.
     const bare = composeMcpInstructions(many, { host: "host.", budget: 20 });

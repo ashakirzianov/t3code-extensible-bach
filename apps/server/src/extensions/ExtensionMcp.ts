@@ -147,8 +147,12 @@ export const composeMcpInstructions = (
   const rendered = sections.map(
     (section) => `## ${section.extensionName}\n${section.instructions.trim()}`,
   );
-  const notice = (left: ReadonlyArray<string>, named: boolean): string =>
-    `Instructions from ${named ? left.join(", ") : `${left.length} more extension${left.length === 1 ? "" : "s"}`} did not fit and were left out; read ${EXTENSION_INSTALLED_URI} to see what is installed.`;
+  // "More" only when some sections were kept: with none, nothing came before.
+  const notice = (left: ReadonlyArray<string>, named: boolean): string => {
+    const more = left.length < sections.length ? "more " : "";
+    const counted = `${left.length} ${more}extension${left.length === 1 ? "" : "s"}`;
+    return `Instructions from ${named ? left.join(", ") : counted} did not fit and were left out; read ${EXTENSION_INSTALLED_URI} to see what is installed.`;
+  };
   // Every way to keep the first `keep` sections, best first: the notice names
   // what it left out, or — when a long list of names would itself cost a
   // section — only counts it.
