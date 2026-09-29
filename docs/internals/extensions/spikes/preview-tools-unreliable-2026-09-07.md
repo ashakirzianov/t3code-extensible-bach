@@ -48,14 +48,14 @@ hold up: a guest page gets no `desktopBridge` (the preview preload exposes
 nothing), so a T3 page under test is an ordinary web client and never hosts
 automation itself.
 
-| Symptom                               | Cause                                                                                                                                                                                                                                                                                                                           | State                                            |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| `locator:` wait always succeeds       | Playwright's injected `querySelector` returns `undefined` on no match; the probe tested `!== null`.                                                                                                                                                                                                                             | Fixed, tested against the real runtime.          |
-| `text:` wait always times out         | The desktop wait and the broker both defaulted to 15s, and the host spends part of that first, so a failing wait always lost to the broker, which also drops the host's connection. The text was probably really absent: the tab was on `/welcome`.                                                                             | Race fixed. Not a false negative in the matcher. |
-| `preview_evaluate` times out on `1+1` | Every action on a tab runs under one control lock, and evaluate had no deadline. One evaluate awaiting a promise that never settles holds the lock for good. Every later call on the tab then queues and times out. Awaiting a `requestAnimationFrame` in a tab that gets no frames is enough (see `bach/preview-raf-missing`). | Fixed: evaluate gives up before the broker does. |
-| `preview_snapshot` fails              | Most likely `capturePage` stalling: it needs the guest to produce frames, and a guest in a hidden or occluded app window produces none. The snapshot retries three 1s captures, then fails. A wedged control lock (above) has the same effect.                                                                                  | Likely fixed by keeping automated tabs painting. |
-| `preview_click` "failed on client"    | Not diagnosable from the message, and that is the defect: see below. Given the `/welcome` page, the likely underlying error is "target not found".                                                                                                                                                                              | Open.                                            |
-| Pairing never held                    | Not investigated.                                                                                                                                                                                                                                                                                                               | Open.                                            |
+| Symptom                               | Cause                                                                                                                                                                                                                                                                                                                           | State                                                                                                                                                |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `locator:` wait always succeeds       | Playwright's injected `querySelector` returns `undefined` on no match; the probe tested `!== null`.                                                                                                                                                                                                                             | Fixed, tested against the real runtime.                                                                                                              |
+| `text:` wait always times out         | The desktop wait and the broker both defaulted to 15s, and the host spends part of that first, so a failing wait always lost to the broker, which also drops the host's connection. The text was probably really absent: the tab was on `/welcome`.                                                                             | Race fixed. Not a false negative in the matcher.                                                                                                     |
+| `preview_evaluate` times out on `1+1` | Every action on a tab runs under one control lock, and evaluate had no deadline. One evaluate awaiting a promise that never settles holds the lock for good. Every later call on the tab then queues and times out. Awaiting a `requestAnimationFrame` in a tab that gets no frames is enough (see `bach/preview-raf-missing`). | Fixed: evaluate runs within the request's remaining budget, lock wait included, and a script still running synchronously at the limit is terminated. |
+| `preview_snapshot` fails              | Most likely `capturePage` stalling: it needs the guest to produce frames, and a guest in a hidden or occluded app window produces none. The snapshot retries three 1s captures, then fails. A wedged control lock (above) has the same effect.                                                                                  | Likely fixed by keeping automated tabs painting.                                                                                                     |
+| `preview_click` "failed on client"    | Not diagnosable from the message, and that is the defect: see below. Given the `/welcome` page, the likely underlying error is "target not found".                                                                                                                                                                              | Open.                                                                                                                                                |
+| Pairing never held                    | Not investigated.                                                                                                                                                                                                                                                                                                               | Open.                                                                                                                                                |
 
 **Open: desktop failures lose their type crossing Electron IPC.** Desktop
 automation errors reach the renderer through `ipcMain.handle`, which passes
@@ -72,7 +72,21 @@ screen) gets no animation frames at all while still reporting
 `visibilityState: "visible"`. A guest inside the window gets about 60 per
 second, even when it is behind the app's own content. Both were measured in
 a throwaway Electron 44.4.2 app. Automated tabs are now kept in the window
-and unthrottled until 30s after the agent's last call.
+and unthrottled until 30s after the agent's last call ends.
+
+**Caveats of the fixes.**
+
+- A timed-out evaluate frees the tab, but an async expression keeps running
+  in the page: only a script still executing synchronously is terminated,
+  and a pending promise chain carries on and can still change the page
+  after the agent was told the call failed.
+- A tab "kept in the window" is hidden only by being painted behind the app
+  (`z-index: -1` under the app's own content). Where the app has no opaque
+  background over that spot, the page would show through. Worth eyeballing
+  on routes without an opaque background.
+- Attaching the DevTools session to a tab (its first automation action) is
+  still unbounded, so a page already stuck in synchronous script when first
+  automated can still wedge that tab.
 
 ## What to do instead
 
