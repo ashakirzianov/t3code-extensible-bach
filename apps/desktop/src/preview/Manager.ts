@@ -696,7 +696,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   let pendingRecording: PendingRecording | null = null;
   const displayMediaHandlerSessions = new WeakSet<Session>();
   let frameCaptureWindowOpen = true;
-  const automationRenderingGenerations = new Map<string, number>();
+  const automationRendering = new Map<
+    string,
+    { readonly active: number; readonly generation: number }
+  >();
   let currentMainWindow: BrowserWindow | undefined;
   let mainWindowCleanupFiber: Fiber.Fiber<void, never> | undefined;
   const tabLifecycleLocks = new Map<
@@ -1495,7 +1498,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       startedAt,
     };
     yield* pushAction(tabId, actionEvent);
-    yield* keepAutomationRendering(tabId);
     const epoch = (yield* Ref.get(controlEpochRef)).get(tabId) ?? 0;
     const control = yield* ensureControlSession(wc);
     const execute = Effect.fn("PreviewManager.executeControlAction")(function* () {
@@ -1576,7 +1578,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       const tabs = yield* SynchronizedRef.get(tabsRef);
       if (tabs.has(tabId)) yield* update(tabId, { controller: "none" });
     });
-    return yield* control.semaphore.withPermit(execute().pipe(Effect.onExit(finalize)));
+    return yield* Effect.acquireUseRelease(
+      holdAutomationRendering(tabId),
+      () => control.semaphore.withPermit(execute().pipe(Effect.onExit(finalize))),
+      () => releaseAutomationRendering(tabId),
+    );
   });
 
   const evaluateWithDebugger = <A = unknown>(
@@ -3143,36 +3149,54 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   // Agents drive tabs the user is usually not watching, often while the app
   // window is occluded. Chromium then stops producing frames for the guest, so
   // requestAnimationFrame never fires and paint-dependent state never appears.
-  // Hold the tab unthrottled from each automation action until it has been idle
-  // for the linger period; a newer action supersedes an older release.
-  const keepAutomationRendering = Effect.fn("PreviewManager.keepAutomationRendering")(function* (
+  // Every automation action holds the tab unthrottled, including while it waits
+  // for the tab's control lock, and the hold outlives the last action by the
+  // linger period, measured from when that action finished.
+  const holdAutomationRendering = Effect.fn("PreviewManager.holdAutomationRendering")(function* (
     tabId: string,
   ) {
-    const generation = (automationRenderingGenerations.get(tabId) ?? 0) + 1;
-    automationRenderingGenerations.set(tabId, generation);
+    const current = automationRendering.get(tabId) ?? { active: 0, generation: 0 };
+    automationRendering.set(tabId, {
+      active: current.active + 1,
+      generation: current.generation + 1,
+    });
     yield* startFrameCapture(tabId, "automation").pipe(
       Effect.catch((error) =>
         Effect.logWarning("Failed to keep an automated preview tab rendering.", { tabId, error }),
       ),
     );
-    yield* Effect.forkIn(
-      Effect.sleep(PREVIEW_AUTOMATION_RENDERING_LINGER_MS).pipe(
-        Effect.andThen(
-          Effect.suspend(() =>
-            automationRenderingGenerations.get(tabId) === generation
-              ? stopAutomationRendering(tabId)
-              : Effect.void,
+  });
+
+  const releaseAutomationRendering = Effect.fn("PreviewManager.releaseAutomationRendering")(
+    function* (tabId: string) {
+      const current = automationRendering.get(tabId);
+      // Gone when the tab closed while the action ran.
+      if (!current) return;
+      const released = {
+        active: Math.max(0, current.active - 1),
+        generation: current.generation + 1,
+      };
+      automationRendering.set(tabId, released);
+      if (released.active > 0) return;
+      yield* Effect.forkIn(
+        Effect.sleep(PREVIEW_AUTOMATION_RENDERING_LINGER_MS).pipe(
+          Effect.andThen(
+            Effect.suspend(() =>
+              automationRendering.get(tabId)?.generation === released.generation
+                ? stopAutomationRendering(tabId)
+                : Effect.void,
+            ),
           ),
         ),
-      ),
-      parentScope,
-    );
-  });
+        parentScope,
+      );
+    },
+  );
 
   const stopAutomationRendering = Effect.fn("PreviewManager.stopAutomationRendering")(function* (
     tabId: string,
   ) {
-    automationRenderingGenerations.delete(tabId);
+    automationRendering.delete(tabId);
     yield* stopFrameCapture(tabId, "automation");
   });
 

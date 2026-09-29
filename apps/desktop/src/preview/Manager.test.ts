@@ -2744,6 +2744,49 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("keeps a tab unthrottled through an action longer than the linger", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const wc = makeTestPreviewWebContents(async () => {
+          throw new Error("unexpected capture");
+        });
+        Object.assign(wc, { isDevToolsOpened: () => false });
+        Object.assign(wc.debugger, {
+          sendCommand: vi.fn(async (method: string, params?: Record<string, unknown>) =>
+            method === "Runtime.evaluate"
+              ? {
+                  result: {
+                    value:
+                      params?.["expression"] === "Boolean(globalThis.__t3PlaywrightInjected)"
+                        ? true
+                        : { matched: false },
+                  },
+                }
+              : undefined,
+          ),
+        });
+        fromId.mockReturnValue(wc);
+        yield* manager.createTab("tab_1");
+        yield* manager.registerWebview("tab_1", 42);
+
+        const wait = yield* Effect.exit(
+          manager.automationWaitFor("tab_1", { locator: "css=.never", timeoutMs: 60_000 }),
+        ).pipe(Effect.forkChild({ startImmediately: true }));
+        yield* TestClock.adjust(PREVIEW_AUTOMATION_RENDERING_LINGER_MS + 15_000);
+        expect(wait.pollUnsafe()).toBeUndefined();
+        expect(wc.setBackgroundThrottling.mock.calls).toEqual([[false]]);
+
+        yield* TestClock.adjust(60_000 - PREVIEW_AUTOMATION_RENDERING_LINGER_MS - 15_000 + 200);
+        expect(Exit.isFailure(yield* Fiber.join(wait))).toBe(true);
+        // The linger is measured from the end of the action, not its start.
+        yield* TestClock.adjust(PREVIEW_AUTOMATION_RENDERING_LINGER_MS - 1_000);
+        expect(wc.setBackgroundThrottling.mock.calls).toEqual([[false]]);
+        yield* TestClock.adjust(1_000);
+        expect(wc.setBackgroundThrottling.mock.calls).toEqual([[false], [true]]);
+      }),
+    ),
+  );
+
   effectIt.live("fails a locator wait whose locator never matches", () =>
     withManager((manager) =>
       Effect.gen(function* () {
