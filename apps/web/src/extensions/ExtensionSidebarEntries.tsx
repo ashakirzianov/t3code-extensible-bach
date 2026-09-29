@@ -113,13 +113,19 @@ function ExtensionSidebarRow({ entry }: { entry: ExtensionNavEntry }) {
           </span>
         )}
         {badge === null ? null : (
-          <span
-            className={cn(
-              "shrink-0 rounded-full bg-primary text-primary-foreground",
-              badge === "" ? "size-1.5" : "min-w-4 px-1 text-center text-3xs leading-4",
-            )}
-          >
-            {badge}
+          // The badge occupies the same 16px box, 8px in from the row's end,
+          // as the icon of the footer button below it (16px centred in a 32px
+          // square), so the two share a vertical centre line. A dot is centred
+          // in that box; a count wider than one digit grows leftwards from it.
+          <span className="flex h-4 min-w-4 shrink-0 items-center justify-center">
+            <span
+              className={cn(
+                "rounded-full bg-primary text-primary-foreground",
+                badge === "" ? "size-1.5" : "min-w-4 px-1 text-center text-3xs leading-4",
+              )}
+            >
+              {badge}
+            </span>
           </span>
         )}
       </SidebarMenuButton>
@@ -129,7 +135,7 @@ function ExtensionSidebarRow({ entry }: { entry: ExtensionNavEntry }) {
             render={
               <Button
                 aria-label={`Deploy the new build of ${entry.label}`}
-                className="absolute top-1/2 right-1 size-5 -translate-y-1/2"
+                className="absolute top-1/2 right-1.5 size-5 -translate-y-1/2"
                 onClick={handleRedeploy}
                 size="icon-xs"
                 variant="ghost-muted"
