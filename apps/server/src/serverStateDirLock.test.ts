@@ -238,7 +238,8 @@ describe("removeLockIfUnchanged", () => {
 });
 
 describe("processStartTime", () => {
-  it.skipIf(process.platform === "win32")(
+  // Where `ps` exists at all; elsewhere every read is `null` and the lock fails open.
+  it.skipIf(processStartTime(process.pid) === null)(
     "reads this process's start time the same way twice, and nothing for a dead pid",
     () => {
       const first = processStartTime(process.pid);

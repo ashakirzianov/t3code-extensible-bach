@@ -78,7 +78,8 @@ export class ServerStateDirHeldError extends Schema.TaggedError<ServerStateDirHe
  * `null` when it cannot be read: no such process, no `ps`, or Windows.
  */
 export const processStartTime = (pid: number): string | null => {
-  if (process.platform === "win32") return null;
+  // No platform check: where there is no `ps` (Windows) the call throws, and
+  // that is the same `null` as any other unreadable start time.
   try {
     const output = NodeChildProcess.execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
       encoding: "utf8",
