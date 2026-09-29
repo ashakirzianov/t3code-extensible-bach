@@ -89,7 +89,11 @@ import {
   resolvePreviewAutomationOpenTab,
   resolvePreviewAutomationTarget,
 } from "./previewAutomationTarget";
-import { resolveHostWaitBudgetMs, waitForHostReadiness } from "./previewAutomationHostBudget";
+import {
+  remainingHostBudgetMs,
+  resolveHostWaitBudgetMs,
+  waitForHostReadiness,
+} from "./previewAutomationHostBudget";
 import { isPreviewViewportReady } from "./previewViewportReadiness";
 import { shouldRollbackPreviewViewport } from "./previewViewportRollback";
 
@@ -721,10 +725,11 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           }
           case "waitFor": {
             const ready = await requireReadyTab();
-            return await ready.bridge.automation.waitFor(
-              ready.runtimeTabId,
-              request.input as Parameters<typeof ready.bridge.automation.waitFor>[1],
-            );
+            const input = request.input as Parameters<typeof ready.bridge.automation.waitFor>[1];
+            return await ready.bridge.automation.waitFor(ready.runtimeTabId, {
+              ...input,
+              timeoutMs: remainingHostBudgetMs(hostDeadlineMs),
+            });
           }
           case "recordingStart": {
             const ready = await requireReadyTab();

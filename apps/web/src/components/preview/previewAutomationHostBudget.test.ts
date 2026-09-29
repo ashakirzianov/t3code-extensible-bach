@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import {
   PREVIEW_HOST_RESPONSE_MARGIN_MS,
+  remainingHostBudgetMs,
   resolveHostWaitBudgetMs,
   waitForHostReadiness,
 } from "./previewAutomationHostBudget";
@@ -21,6 +22,25 @@ describe("resolveHostWaitBudgetMs", () => {
     for (const invalid of [0, -5, Number.NaN, Number.POSITIVE_INFINITY]) {
       expect(resolveHostWaitBudgetMs(invalid)).toBeGreaterThanOrEqual(0);
     }
+  });
+});
+
+describe("remainingHostBudgetMs", () => {
+  it("ends a desktop wait before the broker times out the request", () => {
+    const startMs = 1_000;
+    const requestTimeoutMs = 15_000;
+    const deadlineMs = startMs + resolveHostWaitBudgetMs(requestTimeoutMs);
+    // Readiness work already spent part of the budget.
+    const nowMs = startMs + 400;
+    const waitMs = remainingHostBudgetMs(deadlineMs, nowMs);
+    expect(waitMs).toBe(15_000 - PREVIEW_HOST_RESPONSE_MARGIN_MS - 400);
+    expect(nowMs + waitMs).toBeLessThan(startMs + requestTimeoutMs);
+  });
+
+  it("stays a valid positive integer timeout once the budget is spent", () => {
+    expect(remainingHostBudgetMs(1_000, 1_000)).toBe(1);
+    expect(remainingHostBudgetMs(1_000, 5_000)).toBe(1);
+    expect(remainingHostBudgetMs(1_000.9, 0)).toBe(1_000);
   });
 });
 

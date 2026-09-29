@@ -14,6 +14,16 @@ export function resolveHostWaitBudgetMs(requestTimeoutMs: number): number {
   return Math.max(0, requestTimeoutMs - reservedMs);
 }
 
+/**
+ * The wait still available to a desktop operation that enforces its own
+ * deadline. Handing it the whole request timeout instead lets the broker's
+ * identical deadline fire first, which reports a broker timeout and drops this
+ * host's connection rather than returning the operation's own failure.
+ */
+export function remainingHostBudgetMs(deadlineMs: number, nowMs = Date.now()): number {
+  return Math.max(1, Math.floor(deadlineMs - nowMs));
+}
+
 /** Both readiness probes and polling delays share the request's host deadline. */
 export async function waitForHostReadiness(
   deadlineMs: number,
