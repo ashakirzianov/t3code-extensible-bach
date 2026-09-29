@@ -65,8 +65,12 @@ function ExtensionSidebarRow({ entry }: { entry: ExtensionNavEntry }) {
   const navigate = useNavigate();
   const { isMobile, setOpenMobile } = useSidebar();
   const deployExtension = useDeployExtension();
+  // Bounded by a slash so `bach` is not active on `/ext/<env>/bach-dev`.
   const isActive = useLocation({
-    select: (location) => location.pathname.startsWith(`/ext/${entry.environmentId}/${entry.name}`),
+    select: (location) => {
+      const route = `/ext/${entry.environmentId}/${entry.name}`;
+      return location.pathname === route || location.pathname.startsWith(`${route}/`);
+    },
   });
   const badge = badgeLabel(entry);
   const iconUrl = useExtensionIconUrl(entry);
@@ -90,7 +94,7 @@ function ExtensionSidebarRow({ entry }: { entry: ExtensionNavEntry }) {
   return (
     <SidebarMenuItem className="relative">
       <SidebarMenuButton
-        data-active={isActive ? "" : undefined}
+        isActive={isActive}
         onClick={handleOpen}
         title={entry.environmentLabel === null ? undefined : entry.environmentLabel}
       >
