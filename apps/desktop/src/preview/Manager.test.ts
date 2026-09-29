@@ -368,6 +368,42 @@ const makeTestPreviewWebContents = (
   } as unknown as TestPreviewWebContents;
 };
 
+/**
+ * A DevTools client for a page that can get stuck in synchronous script: while
+ * busy it answers no command until Runtime.terminateExecution. The agent's
+ * `while (true) {}` makes it busy; `stickPage` makes it busy on its own.
+ */
+const makeBusyPageDebugger = () => {
+  let busy: Promise<void> | null = null;
+  let endBusy: (() => void) | null = null;
+  const becomeBusy = () => {
+    busy = new Promise<void>((resolve) => {
+      endBusy = resolve;
+    });
+    return busy;
+  };
+  const sendCommand = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+    if (method === "Runtime.terminateExecution") {
+      endBusy?.();
+      busy = null;
+      endBusy = null;
+      return {};
+    }
+    if (method === "Runtime.evaluate" && params?.["expression"] === "while (true) {}") {
+      await becomeBusy();
+      return { exceptionDetails: { text: "Execution was terminated" } };
+    }
+    if (busy) await busy;
+    return method === "Runtime.evaluate" ? { result: { value: 2 } } : undefined;
+  });
+  return {
+    sendCommand,
+    stickPage: () => {
+      void becomeBusy();
+    },
+  };
+};
+
 /** Two ready tabs (41, 42) sharing one window, so they contend for the single display-media slot. */
 const setupRecordingRaceTabs = (manager: PreviewManager.PreviewManager["Service"]) =>
   Effect.gen(function* () {
@@ -2693,10 +2729,6 @@ describe("PreviewManager", () => {
         const stalled = yield* Effect.exit(
           manager.automationEvaluate("tab_1", { expression: "new Promise(requestAnimationFrame)" }),
         ).pipe(Effect.forkChild({ startImmediately: true }));
-        const next = yield* manager
-          .automationEvaluate("tab_1", { expression: "1+1" })
-          .pipe(Effect.forkChild({ startImmediately: true }));
-        expect(next.pollUnsafe()).toBeUndefined();
 
         yield* TestClock.adjust(PREVIEW_AUTOMATION_DEFAULT_TIMEOUT_MS);
         const exit = yield* Fiber.join(stalled);
@@ -2707,7 +2739,7 @@ describe("PreviewManager", () => {
           operation: "evaluate.timeout",
           cause: { _tag: "TimeoutError" },
         });
-        expect(yield* Fiber.join(next)).toBe(2);
+        expect(yield* manager.automationEvaluate("tab_1", { expression: "1+1" })).toBe(2);
         // The page answered, so nothing was running to terminate.
         expect(wc.debugger.sendCommand).not.toHaveBeenCalledWith("Runtime.terminateExecution");
       }),
@@ -2746,6 +2778,68 @@ describe("PreviewManager", () => {
     ),
   );
 
+  const setupBusyPage = Effect.fn("setupBusyPage")(function* (
+    manager: PreviewManager.PreviewManager["Service"],
+  ) {
+    const wc = makeTestPreviewWebContents(async () => {
+      throw new Error("unexpected capture");
+    });
+    Object.assign(wc, { isDevToolsOpened: () => false });
+    const page = makeBusyPageDebugger();
+    Object.assign(wc.debugger, { sendCommand: page.sendCommand });
+    fromId.mockReturnValue(wc);
+    yield* manager.createTab("tab_1");
+    yield* manager.registerWebview("tab_1", 42);
+    // Attach the DevTools session while the page still answers.
+    yield* manager.automationEvaluate("tab_1", { expression: "1+1" });
+    return page;
+  });
+
+  effectIt.effect("answers a short evaluate stuck in script by its deadline", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const page = yield* setupBusyPage(manager);
+        const looping = yield* Effect.exit(
+          manager.automationEvaluate("tab_1", { expression: "while (true) {}", timeoutMs: 2_000 }),
+        ).pipe(Effect.forkChild({ startImmediately: true }));
+        yield* TestClock.adjust(2_000);
+        expect(Exit.isFailure(yield* Fiber.join(looping))).toBe(true);
+        // Too little budget to probe the page properly, so it is left alone.
+        expect(page.sendCommand).not.toHaveBeenCalledWith("Runtime.terminateExecution", undefined);
+      }),
+    ),
+  );
+
+  effectIt.effect("leaves a page busy with its own script alone", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const page = yield* setupBusyPage(manager);
+        page.stickPage();
+        const evaluate = yield* Effect.exit(
+          manager.automationEvaluate("tab_1", { expression: "1+1", timeoutMs: 5_000 }),
+        ).pipe(Effect.forkChild({ startImmediately: true }));
+        yield* TestClock.adjust(5_000);
+        expect(Exit.isFailure(yield* Fiber.join(evaluate))).toBe(true);
+        // The agent's expression was never sent, so the busy script is not its own.
+        expect(page.sendCommand).not.toHaveBeenCalledWith("Runtime.terminateExecution", undefined);
+      }),
+    ),
+  );
+
+  effectIt.effect("answers a wait on a stuck page by the wait's own timeout", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const page = yield* setupBusyPage(manager);
+        page.stickPage();
+        const wait = yield* Effect.exit(
+          manager.automationWaitFor("tab_1", { urlIncludes: "/done", timeoutMs: 3_000 }),
+        ).pipe(Effect.forkChild({ startImmediately: true }));
+        yield* TestClock.adjust(3_000);
+        expect(Exit.isFailure(yield* Fiber.join(wait))).toBe(true);
+      }),
+    ),
+  );
+
   effectIt.effect("terminates an evaluation stuck in synchronous script", () =>
     withManager((manager) =>
       Effect.gen(function* () {
@@ -2780,9 +2874,10 @@ describe("PreviewManager", () => {
         yield* manager.registerWebview("tab_1", 42);
 
         const looping = yield* Effect.exit(
-          manager.automationEvaluate("tab_1", { expression: "while (true) {}", timeoutMs: 2_000 }),
+          manager.automationEvaluate("tab_1", { expression: "while (true) {}", timeoutMs: 5_000 }),
         ).pipe(Effect.forkChild({ startImmediately: true }));
-        yield* TestClock.adjust(3_000);
+        // Probe and termination fit inside the budget.
+        yield* TestClock.adjust(5_000);
         const exit = yield* Fiber.join(looping);
         expect(Exit.isFailure(exit)).toBe(true);
         expect(sendCommand).toHaveBeenCalledWith("Runtime.terminateExecution", undefined);
@@ -2828,7 +2923,8 @@ describe("PreviewManager", () => {
           manager.automationEvaluate("tab_1", { expression: "1+1", timeoutMs: 2_000 }),
         ).pipe(Effect.forkChild({ startImmediately: true }));
 
-        yield* TestClock.adjust(3_000);
+        // Answered by its own timeout, well before the broker's.
+        yield* TestClock.adjust(2_000);
         const exit = yield* Fiber.join(evaluate);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isSuccess(exit)) return;

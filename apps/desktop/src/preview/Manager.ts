@@ -134,20 +134,26 @@ const ZOOM_LEVELS: ReadonlyArray<number> = [
 const DEFAULT_ZOOM_FACTOR = 1.0;
 const ZOOM_EPSILON = 0.001;
 const MAX_EVALUATION_BYTES = 64_000;
-// For hosts that predate passing evaluate its remaining budget: assume the
+// For hosts that predate passing an action its remaining budget: assume the
 // broker default, less the host's margin and one more for its readiness work.
-const AUTOMATION_EVALUATE_TIMEOUT_MS =
+const AUTOMATION_FALLBACK_TIMEOUT_MS =
   PREVIEW_AUTOMATION_DEFAULT_TIMEOUT_MS - 2 * PREVIEW_AUTOMATION_RESPONSE_MARGIN_MS;
-// Room after a bounded action's deadline for its own timeout to finish
-// cleaning up before the lock wait's outer bound interrupts it.
-const AUTOMATION_TIMEOUT_CLEANUP_GRACE_MS = 750;
 // Bound on each DevTools command of an action that has no deadline of its own.
 // A page stuck in synchronous script never answers, and an unanswered command
 // would hold the tab's control lock for good.
-const AUTOMATION_COMMAND_TIMEOUT_MS = AUTOMATION_EVALUATE_TIMEOUT_MS;
-// How long a timed-out action waits to learn whether the page is still busy,
-// and for the busy script to be terminated.
-const AUTOMATION_BUSY_PAGE_PROBE_MS = 250;
+const AUTOMATION_COMMAND_TIMEOUT_MS = AUTOMATION_FALLBACK_TIMEOUT_MS;
+// Kept back from a bounded action's deadline so its failure is delivered by it.
+const AUTOMATION_SETTLE_MS = 100;
+// How long a timed-out evaluate waits for the page to answer a trivial
+// evaluation before treating it as stuck, and then for the termination.
+const AUTOMATION_BUSY_PAGE_PROBE_MS = 1_000;
+const AUTOMATION_TERMINATE_MS = 250;
+// Kept back from an evaluate's deadline for that probe and termination.
+const AUTOMATION_BUSY_PAGE_RESERVE_MS =
+  AUTOMATION_BUSY_PAGE_PROBE_MS + AUTOMATION_TERMINATE_MS + AUTOMATION_SETTLE_MS;
+// Below this budget the reserve would starve the evaluation itself, so a
+// timed-out evaluate fails without probing and leaves the page alone.
+const AUTOMATION_MIN_TERMINATION_BUDGET_MS = 2 * AUTOMATION_BUSY_PAGE_RESERVE_MS;
 const MAX_VISIBLE_TEXT_LENGTH = 20_000;
 const MAX_INTERACTIVE_ELEMENTS = 200;
 /**
@@ -1501,10 +1507,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       }),
     );
 
-  // A timed-out action's script may still be running synchronously (an
-  // endless loop), and then every later command on the page hangs behind it.
-  // Terminate it only when the page does not answer a trivial evaluation:
-  // terminating an idle page would instead kill its next script.
+  // Called when an agent's own expression timed out unanswered. If it is still
+  // running synchronously (an endless loop), every later command on the page
+  // hangs behind it, so terminate it, but only once the page has also left a
+  // trivial evaluation unanswered: a page that answers is idle or busy with
+  // its own work, and terminating would kill the page's next script instead.
   const terminateBusyScript = Effect.fn("PreviewManager.terminateBusyScript")(function* (
     sendCleanup: SendCommand,
   ) {
@@ -1512,12 +1519,20 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       expression: "0",
       returnByValue: true,
     }).pipe(Effect.timeoutOption(AUTOMATION_BUSY_PAGE_PROBE_MS), Effect.option);
-    if (Option.isSome(answered) && Option.isSome(answered.value)) return;
+    if (Option.isNone(answered) || Option.isSome(answered.value)) return;
     yield* sendCleanup("Runtime.terminateExecution").pipe(
-      Effect.timeout(AUTOMATION_BUSY_PAGE_PROBE_MS),
+      Effect.timeout(AUTOMATION_TERMINATE_MS),
       Effect.ignore,
     );
   });
+
+  interface ControlActionBound {
+    /** The action's whole budget: the wait for the tab's lock and the action. */
+    readonly timeoutMs: number;
+    /** Kept back from the deadline for `onTimeout`; defaults to a settle margin. */
+    readonly reserveMs?: number;
+    readonly onTimeout?: (sendCleanup: SendCommand) => Effect.Effect<void>;
+  }
 
   const withControlSession = Effect.fn("PreviewManager.withControlSession")(function* <A>(
     tabId: string,
@@ -1527,11 +1542,18 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       send: SendCommand,
       sendCleanup: SendCommand,
       checkControl: Effect.Effect<void, PreviewManagerError>,
+      /** When the action must have finished, if it is bounded. */
+      actionDeadlineMs: number | undefined,
     ) => Effect.Effect<A, PreviewManagerError>,
-    /** Bounds the wait for the tab's control lock and the action together. */
-    timeoutMs?: number,
+    bound?: ControlActionBound,
   ) {
-    const deadlineMs = timeoutMs === undefined ? undefined : (yield* currentMillis) + timeoutMs;
+    // Everything, including any cleanup after a timeout, ends by `deadlineMs`,
+    // so the failure reaches the broker before the request's own timeout.
+    const deadlineMs = bound === undefined ? undefined : (yield* currentMillis) + bound.timeoutMs;
+    const actionDeadlineMs =
+      bound === undefined || deadlineMs === undefined
+        ? undefined
+        : deadlineMs - (bound.reserveMs ?? AUTOMATION_SETTLE_MS);
     const sequence = yield* nextCounter(actionSequenceRef);
     const startedAt = yield* currentIso;
     const millis = yield* currentMillis;
@@ -1544,7 +1566,18 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     yield* pushAction(tabId, actionEvent);
     const epoch = (yield* Ref.get(controlEpochRef)).get(tabId) ?? 0;
     const control = yield* ensureControlSession(wc);
+    const acquireControlError = (cause?: unknown) =>
+      new PreviewOperationError({
+        operation: `${action}.acquireControl`,
+        tabId,
+        webContentsId: wc.id,
+        cause: cause ?? new Error("Timed out waiting for another action on this tab."),
+      });
     const execute = Effect.fn("PreviewManager.executeControlAction")(function* () {
+      // Too late to run and still clean up inside the budget.
+      if (actionDeadlineMs !== undefined && (yield* currentMillis) >= actionDeadlineMs) {
+        return yield* acquireControlError();
+      }
       yield* update(tabId, { controller: "agent" });
       const checkControl = Effect.gen(function* () {
         const currentEpoch = (yield* Ref.get(controlEpochRef)).get(tabId) ?? 0;
@@ -1567,7 +1600,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                 : control.debugger.sendCommand(method, commandParams, sessionId),
           );
           // A deadline-bound action bounds its commands through that deadline.
-          const result = yield* deadlineMs === undefined
+          const result = yield* actionDeadlineMs === undefined
             ? boundCommand(command, `${action}.${method}`)
             : command;
           yield* checkControl;
@@ -1595,14 +1628,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           );
         },
       );
-      const performed = use(send, sendCleanup, checkControl);
-      if (deadlineMs === undefined) return yield* performed;
+      const performed = use(send, sendCleanup, checkControl, actionDeadlineMs);
+      if (actionDeadlineMs === undefined) return yield* performed;
       return yield* performed.pipe(
-        Effect.timeout(Math.max(1, deadlineMs - (yield* currentMillis))),
+        Effect.timeout(Math.max(1, actionDeadlineMs - (yield* currentMillis))),
         Effect.catchTags({
           TimeoutError: (cause) =>
             Effect.gen(function* () {
-              yield* terminateBusyScript(sendCleanup);
+              if (bound?.onTimeout) yield* bound.onTimeout(sendCleanup);
               return yield* new PreviewOperationError({
                 operation: `${action}.timeout`,
                 tabId,
@@ -1652,13 +1685,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         return execute().pipe(Effect.onExit(finalize));
       }),
     );
-    // The action bounds itself once it holds the lock; this outer bound covers
-    // the wait for the lock, with grace for the action's own timeout to land.
+    // Once it holds the lock the action ends itself before the deadline, so
+    // this bound, at the deadline itself, only ever ends a wait for the lock.
     const bounded =
-      timeoutMs === undefined
+      deadlineMs === undefined
         ? run
         : run.pipe(
-            Effect.timeout(timeoutMs + AUTOMATION_TIMEOUT_CLEANUP_GRACE_MS),
+            Effect.timeout(Math.max(1, deadlineMs - (yield* currentMillis))),
             Effect.catchTags({
               TimeoutError: (cause) =>
                 Effect.gen(function* () {
@@ -1669,9 +1702,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                       completedAt: yield* currentIso,
                       error: "Timed out waiting for another action on this tab.",
                     });
+                    return yield* acquireControlError(cause);
                   }
                   return yield* new PreviewOperationError({
-                    operation: `${action}.${started ? "timeout" : "acquireControl"}`,
+                    operation: `${action}.timeout`,
                     tabId,
                     webContentsId: wc.id,
                     cause,
@@ -4081,8 +4115,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     input: PreviewAutomationClickInput,
   ) {
     const wc = yield* requireWebContents(tabId);
-    yield* withControlSession(tabId, wc, "click", (send) =>
-      performAutomationClick(tabId, input, send),
+    yield* withControlSession(
+      tabId,
+      wc,
+      "click",
+      (send) => performAutomationClick(tabId, input, send),
+      input.timeoutMs === undefined ? undefined : { timeoutMs: input.timeoutMs },
     );
   });
 
@@ -4207,8 +4245,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     input: PreviewAutomationTypeInput,
   ) {
     const wc = yield* requireWebContents(tabId);
-    yield* withControlSession(tabId, wc, "type", (send) =>
-      performAutomationType(tabId, input, send),
+    yield* withControlSession(
+      tabId,
+      wc,
+      "type",
+      (send) => performAutomationType(tabId, input, send),
+      input.timeoutMs === undefined ? undefined : { timeoutMs: input.timeoutMs },
     );
   });
 
@@ -4613,14 +4655,24 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   });
 
   const performAutomationEvaluate = Effect.fn("PreviewManager.performAutomationEvaluate")(
-    function* (tabId: string, input: PreviewAutomationEvaluateInput, send: SendCommand) {
+    function* (
+      tabId: string,
+      input: PreviewAutomationEvaluateInput,
+      send: SendCommand,
+      setAwaitingPage: (awaiting: boolean) => void,
+    ) {
       yield* send("Runtime.enable");
+      const answered = Effect.sync(() => setAwaitingPage(false));
+      yield* Effect.sync(() => setAwaitingPage(true));
       const value = yield* evaluateWithDebugger(
         tabId,
         send,
         input.expression,
         input.returnByValue ?? true,
         input.awaitPromise ?? true,
+      ).pipe(
+        Effect.tap(() => answered),
+        Effect.tapError(() => answered),
       );
       const serialized = yield* encodeJson(
         { operation: "automationEvaluate.encodeResult", tabId },
@@ -4643,12 +4695,25 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     input: PreviewAutomationEvaluateInput,
   ) {
     const wc = yield* requireWebContents(tabId);
+    const timeoutMs = input.timeoutMs ?? AUTOMATION_FALLBACK_TIMEOUT_MS;
+    // Set while the agent's own expression has been sent and not answered.
+    let awaitingPage = false;
     return yield* withControlSession(
       tabId,
       wc,
       "evaluate",
-      (send) => performAutomationEvaluate(tabId, input, send),
-      input.timeoutMs ?? AUTOMATION_EVALUATE_TIMEOUT_MS,
+      (send) =>
+        performAutomationEvaluate(tabId, input, send, (awaiting) => {
+          awaitingPage = awaiting;
+        }),
+      timeoutMs >= AUTOMATION_MIN_TERMINATION_BUDGET_MS
+        ? {
+            timeoutMs,
+            reserveMs: AUTOMATION_BUSY_PAGE_RESERVE_MS,
+            onTimeout: (sendCleanup) =>
+              awaitingPage ? terminateBusyScript(sendCleanup) : Effect.void,
+          }
+        : { timeoutMs },
     );
   });
 
@@ -4656,6 +4721,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     tabId: string,
     input: PreviewAutomationWaitForInput,
     send: SendCommand,
+    actionDeadlineMs: number | undefined,
   ) {
     const timeoutMs = input.timeoutMs ?? PREVIEW_AUTOMATION_DEFAULT_TIMEOUT_MS;
     yield* send("Runtime.enable");
@@ -4672,7 +4738,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         ? encodeJson({ operation: "automationWaitFor.encodeUrl", tabId }, input.urlIncludes)
         : Effect.succeed(null),
     ]);
-    const deadline = (yield* currentMillis) + timeoutMs;
+    // Report the condition's own timeout just ahead of the action's deadline.
+    const deadline =
+      actionDeadlineMs === undefined
+        ? (yield* currentMillis) + timeoutMs
+        : actionDeadlineMs - AUTOMATION_SETTLE_MS;
     while ((yield* currentMillis) <= deadline) {
       const result = yield* evaluateWithDebugger<
         { matched: boolean } | { invalidSelector: true; message: string }
@@ -4687,7 +4757,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         });
       }
       if (result.matched) return;
-      yield* Effect.sleep(100);
+      const remainingMs = deadline - (yield* currentMillis);
+      if (remainingMs <= 0) break;
+      yield* Effect.sleep(Math.min(100, remainingMs));
     }
     return yield* new PreviewAutomationTimeoutError({
       tabId,
@@ -4700,8 +4772,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     input: PreviewAutomationWaitForInput,
   ) {
     const wc = yield* requireWebContents(tabId);
-    yield* withControlSession(tabId, wc, "waitFor", (send) =>
-      performAutomationWaitFor(tabId, input, send),
+    yield* withControlSession(
+      tabId,
+      wc,
+      "waitFor",
+      (send, _sendCleanup, _checkControl, actionDeadlineMs) =>
+        performAutomationWaitFor(tabId, input, send, actionDeadlineMs),
+      { timeoutMs: input.timeoutMs ?? AUTOMATION_FALLBACK_TIMEOUT_MS },
     );
   });
 
