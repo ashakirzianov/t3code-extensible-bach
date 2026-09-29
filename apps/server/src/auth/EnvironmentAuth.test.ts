@@ -452,6 +452,30 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
     ),
   );
 
+  it.effect("replaces a subject's earlier bearer sessions only when asked", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const sessions = yield* SessionStore.SessionStore;
+      const issueFor = (subject: string) =>
+        serverAuth.issueSession({ subject, replaceActiveForSubject: true });
+      const other = yield* serverAuth.issueSession({ subject: "extension:other" });
+      const unreplaced = yield* serverAuth.issueSession({ subject: "extension:bach" });
+      const first = yield* issueFor("extension:bach");
+      const second = yield* issueFor("extension:bach");
+
+      for (const stale of [unreplaced, first]) {
+        const error = yield* sessions.verify(stale.token).pipe(Effect.flip);
+        expect(error._tag).toBe("SessionTokenRevokedError");
+      }
+      const live = yield* sessions.verify(second.token);
+      expect(live.sessionId).toBe(second.sessionId);
+      const untouched = yield* sessions.verify(other.token);
+      expect(untouched.sessionId).toBe(other.sessionId);
+      const active = yield* serverAuth.listSessions();
+      expect(active.filter((entry) => entry.subject === "extension:bach")).toHaveLength(1);
+    }).pipe(Effect.provide(makeEnvironmentAuthLayer())),
+  );
+
   it.effect("keeps user-issued administrative pairing links manageable", () =>
     Effect.gen(function* () {
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
