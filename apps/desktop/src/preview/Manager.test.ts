@@ -2708,6 +2708,90 @@ describe("PreviewManager", () => {
           cause: { _tag: "TimeoutError" },
         });
         expect(yield* Fiber.join(next)).toBe(2);
+        // The page answered, so nothing was running to terminate.
+        expect(wc.debugger.sendCommand).not.toHaveBeenCalledWith("Runtime.terminateExecution");
+      }),
+    ),
+  );
+
+  effectIt.effect("frees the tab when a command of an unbounded action never answers", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const wc = makeTestPreviewWebContents(async () => {
+          throw new Error("unexpected capture");
+        });
+        Object.assign(wc, { isDevToolsOpened: () => false });
+        let hang = false;
+        Object.assign(wc.debugger, {
+          sendCommand: vi.fn(async (method: string) => {
+            if (hang) return new Promise(() => {});
+            return method === "Runtime.evaluate" ? { result: { value: 2 } } : undefined;
+          }),
+        });
+        fromId.mockReturnValue(wc);
+        yield* manager.createTab("tab_1");
+        yield* manager.registerWebview("tab_1", 42);
+        yield* manager.automationEvaluate("tab_1", { expression: "1+1" });
+
+        hang = true;
+        const scroll = yield* Effect.exit(manager.automationScroll("tab_1", { deltaY: 100 })).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* TestClock.adjust(PREVIEW_AUTOMATION_DEFAULT_TIMEOUT_MS);
+        expect(Exit.isFailure(yield* Fiber.join(scroll))).toBe(true);
+
+        hang = false;
+        expect(yield* manager.automationEvaluate("tab_1", { expression: "1+1" })).toBe(2);
+      }),
+    ),
+  );
+
+  effectIt.effect("terminates an evaluation stuck in synchronous script", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const wc = makeTestPreviewWebContents(async () => {
+          throw new Error("unexpected capture");
+        });
+        Object.assign(wc, { isDevToolsOpened: () => false });
+        // A page busy in synchronous script answers no command until the script
+        // is terminated.
+        let busy: Promise<void> | null = null;
+        let endBusy: (() => void) | null = null;
+        const sendCommand = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+          if (method === "Runtime.terminateExecution") {
+            endBusy?.();
+            busy = null;
+            endBusy = null;
+            return {};
+          }
+          if (method === "Runtime.evaluate" && params?.["expression"] === "while (true) {}") {
+            busy = new Promise<void>((resolve) => {
+              endBusy = resolve;
+            });
+            await busy;
+            return { exceptionDetails: { text: "Execution was terminated" } };
+          }
+          if (busy) await busy;
+          return method === "Runtime.evaluate" ? { result: { value: 2 } } : undefined;
+        });
+        Object.assign(wc.debugger, { sendCommand });
+        fromId.mockReturnValue(wc);
+        yield* manager.createTab("tab_1");
+        yield* manager.registerWebview("tab_1", 42);
+
+        const looping = yield* Effect.exit(
+          manager.automationEvaluate("tab_1", { expression: "while (true) {}", timeoutMs: 2_000 }),
+        ).pipe(Effect.forkChild({ startImmediately: true }));
+        yield* TestClock.adjust(3_000);
+        const exit = yield* Fiber.join(looping);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(sendCommand).toHaveBeenCalledWith("Runtime.terminateExecution", undefined);
+
+        const next = yield* manager
+          .automationEvaluate("tab_1", { expression: "1+1", timeoutMs: 2_000 })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* TestClock.adjust(10);
+        expect(yield* Fiber.join(next)).toBe(2);
       }),
     ),
   );

@@ -141,6 +141,13 @@ const AUTOMATION_EVALUATE_TIMEOUT_MS =
 // Room after a bounded action's deadline for its own timeout to finish
 // cleaning up before the lock wait's outer bound interrupts it.
 const AUTOMATION_TIMEOUT_CLEANUP_GRACE_MS = 750;
+// Bound on each DevTools command of an action that has no deadline of its own.
+// A page stuck in synchronous script never answers, and an unanswered command
+// would hold the tab's control lock for good.
+const AUTOMATION_COMMAND_TIMEOUT_MS = AUTOMATION_EVALUATE_TIMEOUT_MS;
+// How long a timed-out action waits to learn whether the page is still busy,
+// and for the busy script to be terminated.
+const AUTOMATION_BUSY_PAGE_PROBE_MS = 250;
 const MAX_VISIBLE_TEXT_LENGTH = 20_000;
 const MAX_INTERACTIVE_ELEMENTS = 200;
 /**
@@ -1483,6 +1490,35 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   });
 
+  const boundCommand = <A>(
+    command: Effect.Effect<A, PreviewManagerError>,
+    operation: string,
+  ): Effect.Effect<A, PreviewManagerError> =>
+    command.pipe(
+      Effect.timeout(AUTOMATION_COMMAND_TIMEOUT_MS),
+      Effect.catchTags({
+        TimeoutError: (cause) => Effect.fail(new PreviewOperationError({ operation, cause })),
+      }),
+    );
+
+  // A timed-out action's script may still be running synchronously (an
+  // endless loop), and then every later command on the page hangs behind it.
+  // Terminate it only when the page does not answer a trivial evaluation:
+  // terminating an idle page would instead kill its next script.
+  const terminateBusyScript = Effect.fn("PreviewManager.terminateBusyScript")(function* (
+    sendCleanup: SendCommand,
+  ) {
+    const answered = yield* sendCleanup("Runtime.evaluate", {
+      expression: "0",
+      returnByValue: true,
+    }).pipe(Effect.timeoutOption(AUTOMATION_BUSY_PAGE_PROBE_MS), Effect.option);
+    if (Option.isSome(answered) && Option.isSome(answered.value)) return;
+    yield* sendCleanup("Runtime.terminateExecution").pipe(
+      Effect.timeout(AUTOMATION_BUSY_PAGE_PROBE_MS),
+      Effect.ignore,
+    );
+  });
+
   const withControlSession = Effect.fn("PreviewManager.withControlSession")(function* <A>(
     tabId: string,
     wc: Electron.WebContents,
@@ -1523,13 +1559,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       const send: SendCommand = Effect.fn("PreviewManager.sendCommand")(
         function* (method, commandParams, sessionId) {
           yield* checkControl;
-          const result = yield* attemptPromise(
+          const command = attemptPromise(
             { operation: `${action}.${method}`, tabId, webContentsId: wc.id },
             () =>
               sessionId === undefined
                 ? control.debugger.sendCommand(method, commandParams)
                 : control.debugger.sendCommand(method, commandParams, sessionId),
           );
+          // A deadline-bound action bounds its commands through that deadline.
+          const result = yield* deadlineMs === undefined
+            ? boundCommand(command, `${action}.${method}`)
+            : command;
           yield* checkControl;
           return result;
         },
@@ -1539,16 +1579,19 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       // with a held key or focus emulation enabled for subsequent actions.
       const sendCleanup: SendCommand = Effect.fn("PreviewManager.sendCleanupCommand")(
         function* (method, commandParams, sessionId) {
-          return yield* attemptPromise(
-            {
-              operation: `${action}.cleanup.${method}`,
-              tabId,
-              webContentsId: wc.id,
-            },
-            () =>
-              sessionId === undefined
-                ? control.debugger.sendCommand(method, commandParams)
-                : control.debugger.sendCommand(method, commandParams, sessionId),
+          return yield* boundCommand(
+            attemptPromise(
+              {
+                operation: `${action}.cleanup.${method}`,
+                tabId,
+                webContentsId: wc.id,
+              },
+              () =>
+                sessionId === undefined
+                  ? control.debugger.sendCommand(method, commandParams)
+                  : control.debugger.sendCommand(method, commandParams, sessionId),
+            ),
+            `${action}.cleanup.${method}`,
           );
         },
       );
@@ -1558,14 +1601,15 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         Effect.timeout(Math.max(1, deadlineMs - (yield* currentMillis))),
         Effect.catchTags({
           TimeoutError: (cause) =>
-            Effect.fail(
-              new PreviewOperationError({
+            Effect.gen(function* () {
+              yield* terminateBusyScript(sendCleanup);
+              return yield* new PreviewOperationError({
                 operation: `${action}.timeout`,
                 tabId,
                 webContentsId: wc.id,
                 cause,
-              }),
-            ),
+              });
+            }),
         }),
       );
     });
