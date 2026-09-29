@@ -157,7 +157,11 @@ export const ExtensionSidebarEntries = memo(function ExtensionSidebarEntries() {
   );
   if (entries.length === 0) return null;
   return (
-    <SidebarMenu>
+    // Rows sit 8px in rather than a labelled row's usual 10px: they stack
+    // directly above the footer's icon-only buttons, which centre a 16px icon
+    // in a 32px square, and the 2px step shows between the two. Set through
+    // the inset variable the button's own size reads, at both ends.
+    <SidebarMenu className="[--sidebar-row-content-inset:--spacing(2)]">
       {entries.map((entry) => (
         <ExtensionSidebarRow key={`${entry.environmentId}:${entry.name}`} entry={entry} />
       ))}
