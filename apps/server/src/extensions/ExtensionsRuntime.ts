@@ -58,11 +58,13 @@ export const layer = Layer.unwrap(
           // Minted per process start, and a restarted process never presents
           // its predecessor's token again, so only the newest session can be
           // live. Replacing in the issuing transaction keeps it one session
-          // per extension; the old process is already stopped by the time
-          // `runOnce` mints, and revocation does not close an open socket
-          // anyway. A `t3 pair` dev token for the same name is replaced too,
-          // which is right: the supervisor and a hand-run process cannot both
-          // be the extension.
+          // per extension. The old process has normally been stopped by the
+          // time `runOnce` mints, but not necessarily gone: its socket can
+          // outlive the stop, and revocation does not close it — only a
+          // reconnect with the old token is refused, which a process on its
+          // way out has no use for. A `t3 pair` dev token for the same name is
+          // replaced too (see protocol.md): the supervisor and a hand-run
+          // process cannot both be the extension.
           replaceActiveForSubject: true,
         })
         .pipe(

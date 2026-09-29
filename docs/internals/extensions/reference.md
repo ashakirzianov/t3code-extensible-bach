@@ -371,7 +371,11 @@ folder installed twice must introduce itself as the installation it was spawned 
 
 The host refuses `hello` for a name it does not already know. A name comes from a
 settings entry or an `--extension name=path` launch flag first; `npx t3 pair
---extension <name>` mints the credential and prints the environment block.
+--extension <name>` mints the credential and prints the environment block. The host keeps
+one session per extension name: every time it starts that extension itself, it revokes the
+name's other sessions, a hand-minted dev token included. Disable the entry while running the
+process by hand, or mint a fresh token after the host restarts it. A connection already open
+stays open; a reconnect with the revoked token is refused.
 
 **The URL is the host's ordinary client socket** (`ws://<host>:<port>/ws`), not a
 per-extension endpoint. An extension _is_ a plain client; what the `extension` scope
