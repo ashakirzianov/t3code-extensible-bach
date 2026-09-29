@@ -79,6 +79,9 @@ export function createExtensionHostApi(input: ExtensionHostApiInput): ExtensionH
     // The same resolution the host's own sidebar gives a favicon, so an
     // extension draws what the sidebar draws on every client.
     resolveAssetUrl: (environmentId, path) => {
+      // Root-relative only: `//host/…` is protocol-relative and would resolve
+      // to another origin, and an absolute URL is not a host-minted path.
+      if (!path.startsWith("/") || path.startsWith("//")) return null;
       const prepared = readPreparedConnection(environmentId);
       return prepared === null ? null : resolveAssetUrl(prepared.httpBaseUrl, path);
     },

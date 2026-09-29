@@ -1463,7 +1463,8 @@ export interface ExtensionHostApi {
    * resolved against that environment's HTTP base the way the host resolves
    * its own. The page's origin is not that base on every client (a packaged
    * desktop renderer is a static `t3code://app`), which is why the path cannot
-   * be used as is. `null` when the client is not connected to the environment.
+   * be used as is. `null` when the client is not connected to the environment,
+   * or when `path` is not root-relative (a single leading `/`).
    */
   readonly resolveAssetUrl: (environmentId: EnvironmentId, path: string) => string | null;
   /** Opens a thread in the host's chat view, leaving the extension's route. */

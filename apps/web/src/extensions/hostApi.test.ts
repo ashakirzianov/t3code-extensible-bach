@@ -35,6 +35,14 @@ describe("hostApi.resolveAssetUrl", () => {
     );
   });
 
+  it("answers null for anything but a root-relative path", () => {
+    readPreparedConnection.mockImplementation(() => ({ httpBaseUrl: "http://127.0.0.1:3773/" }));
+
+    expect(hostApi.resolveAssetUrl(primary, "//evil.example/favicon.svg")).toBeNull();
+    expect(hostApi.resolveAssetUrl(primary, "https://evil.example/favicon.svg")).toBeNull();
+    expect(hostApi.resolveAssetUrl(primary, "api/assets/token/favicon.svg")).toBeNull();
+  });
+
   it("answers null for an environment the client is not connected to", () => {
     readPreparedConnection.mockImplementation(() => null);
 
