@@ -43,7 +43,7 @@ import {
 } from "./extensions/ExtensionHttpRoutes.ts";
 import { websocketRpcRouteLayer } from "./ws.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
-import * as NodePtyAdapter from "./terminal/NodePtyAdapter.ts";
+import * as InertPtyAdapter from "./terminal/InertPtyAdapter.ts";
 import { pullRequestHttpApiLayer } from "./pullRequest/http.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
@@ -52,6 +52,7 @@ import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/
 import * as PullRequestFilesViewed from "./persistence/PullRequestFilesViewed.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
+import * as InertSpawner from "./process/inertSpawner.ts";
 import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionDirectory.ts";
 import * as ProviderSessionRuntime from "./persistence/ProviderSessionRuntime.ts";
 import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRegistry.ts";
@@ -199,7 +200,8 @@ const ApplicationObservabilityLive = EventLoopMonitor.layer.pipe(
   Layer.provideMerge(ResourceAttributionLayerLive),
 );
 
-const PtyAdapterLive = NodePtyAdapter.layer;
+// node-pty, or a refusal on an inert server (`ServerConfig.inert`).
+const PtyAdapterLive = InertPtyAdapter.layer;
 
 const ServerSettingsLayerLive = ServerSettings.layer.pipe(
   Layer.provide(ServerSecretStore.layer),
@@ -746,219 +748,238 @@ const makeServerLayer = Layer.unwrap(
           ),
         )
       : Layer.empty;
-    const cloudDesiredLinkReconcileLayer = Layer.effectDiscard(
-      Effect.gen(function* () {
-        const releaseManagedTunnel = releaseManagedTunnelOnShutdown().pipe(
-          Effect.timeout("10 seconds"),
-          Effect.tap((released) =>
-            released ? Effect.logInfo("Released the managed tunnel on shutdown") : Effect.void,
-          ),
-          Effect.catchCause((cause) =>
-            Effect.logWarning(
-              "Failed to release the managed tunnel on shutdown; the next link reuses it",
-              { errors: Cause.prettyErrors(cause).map((error) => error.message) },
-            ),
-          ),
-          Effect.asVoid,
-        );
-        // A launcher trial can be stopped before activation. The previous
-        // server is already gone, so the trial owns cleanup immediately; the
-        // pending-state check keeps the tunnel for normal commit or rollback,
-        // while the launcher's explicit-stop marker allows it to be released.
-        // Other runtimes wait for activation so a failed standby cannot tear
-        // down the active runtime's tunnel.
-        const cleanupBeforeActivation = yield* pendingServiceUpdateExists;
-        if (cleanupBeforeActivation) {
-          yield* Effect.addFinalizer(() => releaseManagedTunnel);
-        }
-        yield* forkParked(
-          Effect.gen(function* () {
-            if (!cleanupBeforeActivation) {
-              yield* Effect.addFinalizer(() => releaseManagedTunnel);
-            }
-            const server = yield* HttpServer.HttpServer;
-            const address = server.address;
-            if (typeof address === "string" || !("port" in address)) return;
-            const localOrigin = `http://127.0.0.1:${address.port}`;
-            const endpointRuntime = yield* CloudManagedEndpointRuntime.CloudManagedEndpointRuntime;
-            const recoveryLock = yield* Semaphore.make(1);
-            let lastRecoveryAtMillis = 0;
-            const recoverManagedTunnel = (config: RelayManagedEndpointRuntimeConfig) =>
-              recoveryLock.withPermits(1)(
+    // An inert server links no cloud tunnel: a copied `secrets/` would carry
+    // the live environment's identity and compete with the live host for it.
+    const cloudDesiredLinkReconcileLayer =
+      config.inert === true
+        ? Layer.effectDiscard(Deferred.succeed(cloudLinkParked, undefined).pipe(Effect.orDie))
+        : Layer.effectDiscard(
+            Effect.gen(function* () {
+              const releaseManagedTunnel = releaseManagedTunnelOnShutdown().pipe(
+                Effect.timeout("10 seconds"),
+                Effect.tap((released) =>
+                  released
+                    ? Effect.logInfo("Released the managed tunnel on shutdown")
+                    : Effect.void,
+                ),
+                Effect.catchCause((cause) =>
+                  Effect.logWarning(
+                    "Failed to release the managed tunnel on shutdown; the next link reuses it",
+                    { errors: Cause.prettyErrors(cause).map((error) => error.message) },
+                  ),
+                ),
+                Effect.asVoid,
+              );
+              // A launcher trial can be stopped before activation. The previous
+              // server is already gone, so the trial owns cleanup immediately; the
+              // pending-state check keeps the tunnel for normal commit or rollback,
+              // while the launcher's explicit-stop marker allows it to be released.
+              // Other runtimes wait for activation so a failed standby cannot tear
+              // down the active runtime's tunnel.
+              const cleanupBeforeActivation = yield* pendingServiceUpdateExists;
+              if (cleanupBeforeActivation) {
+                yield* Effect.addFinalizer(() => releaseManagedTunnel);
+              }
+              yield* forkParked(
                 Effect.gen(function* () {
-                  const elapsed = (yield* Clock.currentTimeMillis) - lastRecoveryAtMillis;
-                  const wait = Duration.toMillis(MANAGED_TUNNEL_RECOVERY_COOLDOWN) - elapsed;
-                  if (wait > 0) yield* Effect.sleep(Duration.millis(wait));
-                  lastRecoveryAtMillis = yield* Clock.currentTimeMillis;
-                }).pipe(
-                  Effect.andThen(
-                    recoverManagedCloudTunnel(localOrigin, config, {
+                  if (!cleanupBeforeActivation) {
+                    yield* Effect.addFinalizer(() => releaseManagedTunnel);
+                  }
+                  const server = yield* HttpServer.HttpServer;
+                  const address = server.address;
+                  if (typeof address === "string" || !("port" in address)) return;
+                  const localOrigin = `http://127.0.0.1:${address.port}`;
+                  const endpointRuntime =
+                    yield* CloudManagedEndpointRuntime.CloudManagedEndpointRuntime;
+                  const recoveryLock = yield* Semaphore.make(1);
+                  let lastRecoveryAtMillis = 0;
+                  const recoverManagedTunnel = (config: RelayManagedEndpointRuntimeConfig) =>
+                    recoveryLock.withPermits(1)(
+                      Effect.gen(function* () {
+                        const elapsed = (yield* Clock.currentTimeMillis) - lastRecoveryAtMillis;
+                        const wait = Duration.toMillis(MANAGED_TUNNEL_RECOVERY_COOLDOWN) - elapsed;
+                        if (wait > 0) yield* Effect.sleep(Duration.millis(wait));
+                        lastRecoveryAtMillis = yield* Clock.currentTimeMillis;
+                      }).pipe(
+                        Effect.andThen(
+                          recoverManagedCloudTunnel(localOrigin, config, {
+                            retryRuntimeFailures: true,
+                          }),
+                        ),
+                        Effect.retry({
+                          while: (error) =>
+                            shouldRetryCloudLink(error) &&
+                            error._tag !== "EnvironmentCloudEndpointUnavailableError",
+                          schedule: Schedule.exponential("1 second").pipe(
+                            Schedule.modifyDelay(({ duration }) =>
+                              Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+                            ),
+                            Schedule.jittered,
+                          ),
+                        }),
+                        Effect.tap((recovered) =>
+                          recovered
+                            ? Effect.logInfo("T3 Connect managed tunnel recovered")
+                            : Effect.void,
+                        ),
+                        Effect.catchCause((cause) =>
+                          Cause.hasInterrupts(cause)
+                            ? Effect.interrupt
+                            : Effect.logWarning("Failed to recover the T3 Connect managed tunnel", {
+                                cause,
+                              }),
+                        ),
+                      ),
+                    );
+                  yield* endpointRuntime.recoveryRequests.pipe(
+                    Stream.runForEach(recoverManagedTunnel),
+                    Effect.forkScoped,
+                  );
+                  // No settling delay before the first attempt: routes are already
+                  // serving by the time activation opens this gate (the startup
+                  // sequence awaits routesReady), and the retry schedule below
+                  // covers anything this sleep used to hedge against. Every
+                  // millisecond here is dead time on the path to remote
+                  // reachability after a restart.
+                  const wantsCliLink = hasCloudPublicConfig
+                    ? yield* CloudCliState.readCliDesiredCloudLink.pipe(
+                        Effect.catch((cause) =>
+                          Effect.logWarning("Failed to read the desired T3 Connect link", {
+                            cause,
+                          }).pipe(Effect.as(false)),
+                        ),
+                      )
+                    : false;
+                  // A failed read must not end this fiber before it registers
+                  // recovery and starts consuming recovery requests. "managed" is
+                  // what a missing value means, so it is the safe fallback.
+                  const desiredCliLinkMode = wantsCliLink
+                    ? yield* CloudCliState.readCliDesiredLinkMode.pipe(
+                        Effect.catch((cause) =>
+                          Effect.logWarning("Failed to read the desired T3 Connect link mode", {
+                            cause,
+                          }).pipe(Effect.as("managed" as const)),
+                        ),
+                      )
+                    : null;
+                  // A publish-only link must not expose the host, even if a managed
+                  // config from an earlier link is still stored.
+                  const startedConfirmed =
+                    desiredCliLinkMode === "publish_only"
+                      ? false
+                      : yield* startManagedCloudTunnelIfOriginConfirmed(localOrigin).pipe(
+                          Effect.catch((cause) =>
+                            Effect.logWarning("Failed to start the confirmed T3 Connect tunnel", {
+                              cause,
+                            }).pipe(Effect.as(false)),
+                          ),
+                        );
+                  const startStoredManagedTunnel = startManagedCloudTunnelIfOriginConfirmed(
+                    localOrigin,
+                    {
+                      requireConfirmedOrigin: false,
+                    },
+                  ).pipe(
+                    Effect.tap((started) =>
+                      started
+                        ? Effect.logWarning(
+                            "T3 Connect started the stored tunnel without relay confirmation",
+                          )
+                        : Effect.void,
+                    ),
+                    Effect.catch((cause) =>
+                      Effect.logWarning("Failed to start the stored T3 Connect tunnel", { cause }),
+                    ),
+                    Effect.asVoid,
+                  );
+                  const registerManagedTunnel = retryManagedTunnelRegistration(
+                    registerManagedCloudTunnelRecovery(localOrigin, {
                       retryRuntimeFailures: true,
                     }),
-                  ),
-                  Effect.retry({
-                    while: (error) =>
+                    (error) =>
                       shouldRetryCloudLink(error) &&
                       error._tag !== "EnvironmentCloudEndpointUnavailableError",
-                    schedule: Schedule.exponential("1 second").pipe(
-                      Schedule.modifyDelay(({ duration }) =>
-                        Effect.succeed(Duration.min(duration, Duration.seconds(30))),
-                      ),
-                      Schedule.jittered,
+                    startedConfirmed ? Effect.void : startStoredManagedTunnel,
+                  ).pipe(
+                    Effect.tap((result) =>
+                      result.status === "ready"
+                        ? Effect.logInfo("T3 Connect managed tunnel recovery registered")
+                        : Effect.void,
                     ),
-                  }),
-                  Effect.tap((recovered) =>
-                    recovered ? Effect.logInfo("T3 Connect managed tunnel recovered") : Effect.void,
-                  ),
-                  Effect.catchCause((cause) =>
-                    Cause.hasInterrupts(cause)
-                      ? Effect.interrupt
-                      : Effect.logWarning("Failed to recover the T3 Connect managed tunnel", {
-                          cause,
-                        }),
-                  ),
-                ),
-              );
-            yield* endpointRuntime.recoveryRequests.pipe(
-              Stream.runForEach(recoverManagedTunnel),
-              Effect.forkScoped,
-            );
-            // No settling delay before the first attempt: routes are already
-            // serving by the time activation opens this gate (the startup
-            // sequence awaits routesReady), and the retry schedule below
-            // covers anything this sleep used to hedge against. Every
-            // millisecond here is dead time on the path to remote
-            // reachability after a restart.
-            const wantsCliLink = hasCloudPublicConfig
-              ? yield* CloudCliState.readCliDesiredCloudLink.pipe(
-                  Effect.catch((cause) =>
-                    Effect.logWarning("Failed to read the desired T3 Connect link", { cause }).pipe(
-                      Effect.as(false),
-                    ),
-                  ),
-                )
-              : false;
-            // A failed read must not end this fiber before it registers
-            // recovery and starts consuming recovery requests. "managed" is
-            // what a missing value means, so it is the safe fallback.
-            const desiredCliLinkMode = wantsCliLink
-              ? yield* CloudCliState.readCliDesiredLinkMode.pipe(
-                  Effect.catch((cause) =>
-                    Effect.logWarning("Failed to read the desired T3 Connect link mode", {
-                      cause,
-                    }).pipe(Effect.as("managed" as const)),
-                  ),
-                )
-              : null;
-            // A publish-only link must not expose the host, even if a managed
-            // config from an earlier link is still stored.
-            const startedConfirmed =
-              desiredCliLinkMode === "publish_only"
-                ? false
-                : yield* startManagedCloudTunnelIfOriginConfirmed(localOrigin).pipe(
-                    Effect.catch((cause) =>
-                      Effect.logWarning("Failed to start the confirmed T3 Connect tunnel", {
-                        cause,
-                      }).pipe(Effect.as(false)),
+                    Effect.catchCause((cause) =>
+                      Cause.hasInterrupts(cause)
+                        ? Effect.interrupt
+                        : Effect.logWarning(
+                            "Failed to register T3 Connect managed tunnel recovery",
+                            {
+                              cause,
+                            },
+                          ).pipe(Effect.as({ status: "unavailable" as const })),
                     ),
                   );
-            const startStoredManagedTunnel = startManagedCloudTunnelIfOriginConfirmed(localOrigin, {
-              requireConfirmedOrigin: false,
-            }).pipe(
-              Effect.tap((started) =>
-                started
-                  ? Effect.logWarning(
-                      "T3 Connect started the stored tunnel without relay confirmation",
-                    )
-                  : Effect.void,
-              ),
-              Effect.catch((cause) =>
-                Effect.logWarning("Failed to start the stored T3 Connect tunnel", { cause }),
-              ),
-              Effect.asVoid,
-            );
-            const registerManagedTunnel = retryManagedTunnelRegistration(
-              registerManagedCloudTunnelRecovery(localOrigin, {
-                retryRuntimeFailures: true,
-              }),
-              (error) =>
-                shouldRetryCloudLink(error) &&
-                error._tag !== "EnvironmentCloudEndpointUnavailableError",
-              startedConfirmed ? Effect.void : startStoredManagedTunnel,
-            ).pipe(
-              Effect.tap((result) =>
-                result.status === "ready"
-                  ? Effect.logInfo("T3 Connect managed tunnel recovery registered")
-                  : Effect.void,
-              ),
-              Effect.catchCause((cause) =>
-                Cause.hasInterrupts(cause)
-                  ? Effect.interrupt
-                  : Effect.logWarning("Failed to register T3 Connect managed tunnel recovery", {
-                      cause,
-                    }).pipe(Effect.as({ status: "unavailable" as const })),
-              ),
-            );
-            // A host without a confirmed marker is on its first boot after the
-            // upgrade. Spread those registrations so an auto-update wave does
-            // not hit the relay all at once.
-            if (!startedConfirmed && desiredCliLinkMode !== "publish_only") {
-              const jitter = yield* Random.nextIntBetween(
-                0,
-                Duration.toMillis(MANAGED_TUNNEL_FIRST_REGISTRATION_JITTER),
-              );
-              yield* Effect.sleep(Duration.millis(jitter));
-            }
-            const registration =
-              desiredCliLinkMode === "publish_only"
-                ? { status: "not_linked" as const }
-                : yield* registerManagedTunnel;
-            // A terminal registration failure also allows the stored config
-            // to start. Transient outages use the fallback above and keep
-            // registration retrying in this scoped startup fiber.
-            if (registration.status === "unavailable" && !startedConfirmed) {
-              yield* startStoredManagedTunnel;
-            }
-            const startupAction = managedTunnelStartupAction({ wantsCliLink, registration });
-            if (startupAction.action === "request_recovery") {
-              yield* endpointRuntime.requestRecovery(startupAction.config);
-            }
-            if (startupAction.action === "reconcile_link") {
-              const reconciledMode = yield* reconcileDesiredCloudLinkIfStillDesired(
-                localOrigin,
-              ).pipe(
-                Effect.retry({
-                  while: shouldRetryCloudLink,
-                  schedule: Schedule.exponential("1 second").pipe(
-                    Schedule.modifyDelay(({ duration }) =>
-                      Effect.succeed(Duration.min(duration, Duration.seconds(30))),
-                    ),
-                    Schedule.upTo({ duration: "10 minutes" }),
-                  ),
+                  // A host without a confirmed marker is on its first boot after the
+                  // upgrade. Spread those registrations so an auto-update wave does
+                  // not hit the relay all at once.
+                  if (!startedConfirmed && desiredCliLinkMode !== "publish_only") {
+                    const jitter = yield* Random.nextIntBetween(
+                      0,
+                      Duration.toMillis(MANAGED_TUNNEL_FIRST_REGISTRATION_JITTER),
+                    );
+                    yield* Effect.sleep(Duration.millis(jitter));
+                  }
+                  const registration =
+                    desiredCliLinkMode === "publish_only"
+                      ? { status: "not_linked" as const }
+                      : yield* registerManagedTunnel;
+                  // A terminal registration failure also allows the stored config
+                  // to start. Transient outages use the fallback above and keep
+                  // registration retrying in this scoped startup fiber.
+                  if (registration.status === "unavailable" && !startedConfirmed) {
+                    yield* startStoredManagedTunnel;
+                  }
+                  const startupAction = managedTunnelStartupAction({ wantsCliLink, registration });
+                  if (startupAction.action === "request_recovery") {
+                    yield* endpointRuntime.requestRecovery(startupAction.config);
+                  }
+                  if (startupAction.action === "reconcile_link") {
+                    const reconciledMode = yield* reconcileDesiredCloudLinkIfStillDesired(
+                      localOrigin,
+                    ).pipe(
+                      Effect.retry({
+                        while: shouldRetryCloudLink,
+                        schedule: Schedule.exponential("1 second").pipe(
+                          Schedule.modifyDelay(({ duration }) =>
+                            Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+                          ),
+                          Schedule.upTo({ duration: "10 minutes" }),
+                        ),
+                      }),
+                      Effect.tap((mode) =>
+                        mode === null
+                          ? Effect.void
+                          : Effect.logInfo("T3 Connect desired link reconciled on startup"),
+                      ),
+                      Effect.catch((cause) =>
+                        Effect.logWarning(
+                          "Failed to reconcile T3 Connect desired link on startup",
+                          {
+                            cause,
+                          },
+                        ).pipe(Effect.as(null)),
+                      ),
+                    );
+                    if (reconciledMode === "managed") {
+                      const afterReconcile = yield* registerManagedTunnel;
+                      if (afterReconcile.status === "recovery_required") {
+                        yield* endpointRuntime.requestRecovery(afterReconcile.config);
+                      }
+                    }
+                  }
                 }),
-                Effect.tap((mode) =>
-                  mode === null
-                    ? Effect.void
-                    : Effect.logInfo("T3 Connect desired link reconciled on startup"),
-                ),
-                Effect.catch((cause) =>
-                  Effect.logWarning("Failed to reconcile T3 Connect desired link on startup", {
-                    cause,
-                  }).pipe(Effect.as(null)),
-                ),
               );
-              if (reconciledMode === "managed") {
-                const afterReconcile = yield* registerManagedTunnel;
-                if (afterReconcile.status === "recovery_required") {
-                  yield* endpointRuntime.requestRecovery(afterReconcile.config);
-                }
-              }
-            }
-          }),
-        );
-        yield* Deferred.succeed(cloudLinkParked, undefined).pipe(Effect.orDie);
-      }),
-    );
+              yield* Deferred.succeed(cloudLinkParked, undefined).pipe(Effect.orDie);
+            }),
+          );
 
     const runtimeServicesLive = ServerRuntimeStartup.layerWithOptions({
       activate: Deferred.succeed(activation, undefined).pipe(Effect.asVoid),
@@ -996,6 +1017,9 @@ const makeServerLayer = Layer.unwrap(
       Layer.provideMerge(FetchHttpClient.layer),
       // PR reads, Git operations, and WebSocket discovery share one process limiter.
       Layer.provide(VcsProcess.layer),
+      // On an inert server every spawn above passes through a gate that lets
+      // only an extension's `node` through (`process/inertSpawner.ts`).
+      Layer.provideMerge(config.inert === true ? InertSpawner.layer : Layer.empty),
       Layer.provideMerge(PlatformServicesLive),
     );
   }),
