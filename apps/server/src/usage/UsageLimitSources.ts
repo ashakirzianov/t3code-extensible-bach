@@ -101,10 +101,14 @@ export const make = Effect.gen(function* () {
   // must not publish after the change's own refresh and resurrect a removed
   // source. Callers queue behind the in-flight run and see current settings.
   const refreshLock = yield* Semaphore.make(1);
+  // An inert server (`ServerConfig.inert`) reads no hub: the list stays empty.
+  const inert = yield* ServerConfig.isInert;
   const refresh = Effect.gen(function* () {
-    const settings = yield* settingsService.getSettings.pipe(
-      Effect.orElseSucceed((): ServerSettings | null => null),
-    );
+    const settings = inert
+      ? null
+      : yield* settingsService.getSettings.pipe(
+          Effect.orElseSucceed((): ServerSettings | null => null),
+        );
     const entries = Object.entries(settings?.usageLimitSources ?? {}).filter(
       ([, config]) => config.enabled,
     );
@@ -137,39 +141,33 @@ export const make = Effect.gen(function* () {
       return result;
     }).pipe(refreshLock.withPermits(1));
 
-  // An inert server (`ServerConfig.inert`) polls no hub: the list stays empty.
-  if (!(yield* ServerConfig.isInert)) {
-    // Settings edits re-read straight away so a new hub shows up without
-    // waiting for the interval, and a removed one leaves the list.
-    yield* settingsService.streamChanges.pipe(
-      Stream.map((settings) => settings.usageLimitSources),
-      Stream.changes,
-      Stream.runForEach(() => refresh),
-      Effect.forkScoped,
-    );
+  // Settings edits re-read straight away so a new hub shows up without
+  // waiting for the interval, and a removed one leaves the list.
+  yield* settingsService.streamChanges.pipe(
+    Stream.map((settings) => settings.usageLimitSources),
+    Stream.changes,
+    Stream.runForEach(() => refresh),
+    Effect.forkScoped,
+  );
 
-    const interval = settingsService.getSettings.pipe(
-      Effect.map(
-        (settings) =>
-          resolveServerBackgroundActivitySettings(settings).providerHealthRefreshInterval,
+  const interval = settingsService.getSettings.pipe(
+    Effect.map(
+      (settings) => resolveServerBackgroundActivitySettings(settings).providerHealthRefreshInterval,
+    ),
+    Effect.orElseSucceed(() => DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL),
+  );
+  yield* Effect.forever(
+    interval.pipe(
+      Effect.flatMap((wait) =>
+        Effect.sleep(Duration.toMillis(Duration.fromInputUnsafe(wait)) <= 0 ? "60 seconds" : wait),
       ),
-      Effect.orElseSucceed(() => DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL),
-    );
-    yield* Effect.forever(
-      interval.pipe(
-        Effect.flatMap((wait) =>
-          Effect.sleep(
-            Duration.toMillis(Duration.fromInputUnsafe(wait)) <= 0 ? "60 seconds" : wait,
-          ),
-        ),
-        Effect.andThen(backgroundPolicy.shouldRunScopeWork({ type: "provider-status" })),
-        Effect.flatMap((shouldRun) => (shouldRun ? refresh : Effect.void)),
-        Effect.ignoreCause({ log: true }),
-      ),
-    ).pipe(Effect.forkScoped);
+      Effect.andThen(backgroundPolicy.shouldRunScopeWork({ type: "provider-status" })),
+      Effect.flatMap((shouldRun) => (shouldRun ? refresh : Effect.void)),
+      Effect.ignoreCause({ log: true }),
+    ),
+  ).pipe(Effect.forkScoped);
 
-    yield* refresh.pipe(Effect.forkScoped);
-  }
+  yield* refresh.pipe(Effect.forkScoped);
 
   return {
     current: Ref.get(stateRef),
