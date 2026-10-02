@@ -340,6 +340,8 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const config = yield* ServerConfig;
+  // An inert server (`ServerConfig.inert`) fetches nothing: the bundled data.
+  if (config.inert === true) return BundledOnlyModelManifest;
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const httpClient = yield* HttpClient.HttpClient;
   const serviceScope = yield* Effect.scope;

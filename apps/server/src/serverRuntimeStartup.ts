@@ -957,20 +957,31 @@ export const make = (options?: StartupOptions) =>
         ),
       );
 
-      yield* Effect.logDebug("startup phase: parking orchestration roots at activation");
-      yield* runStartupPhase(
-        "reactors.start",
-        Effect.gen(function* () {
-          yield* orchestrationReactor.start().pipe(Scope.provide(reactorScope));
-          yield* providerSessionReaper.start().pipe(Scope.provide(reactorScope));
-        }),
-      );
+      /*
+       * An inert server (`ServerConfig.inert`) is a copy of someone's live
+       * state, there to be looked at: it starts no reactor (provider commands,
+       * checkpoints, PR and settlement sweeps, storage cleanup, the awareness
+       * relay), reaps nothing, and neither continues nor settles the copied
+       * sessions and worktree setups — so the copy stays as it was copied.
+       */
+      if (serverConfig.inert === true) {
+        yield* Effect.logInfo("inert server: reactors, reconciles and auto-pull are off");
+      } else {
+        yield* Effect.logDebug("startup phase: parking orchestration roots at activation");
+        yield* runStartupPhase(
+          "reactors.start",
+          Effect.gen(function* () {
+            yield* orchestrationReactor.start().pipe(Scope.provide(reactorScope));
+            yield* providerSessionReaper.start().pipe(Scope.provide(reactorScope));
+          }),
+        );
 
-      yield* runStartupPhase("provider-sessions.reconcile", reconcileProviderSessions);
-      yield* runStartupPhase("worktree-setups.reconcile", reconcileWorktreeSetups);
+        yield* runStartupPhase("provider-sessions.reconcile", reconcileProviderSessions);
+        yield* runStartupPhase("worktree-setups.reconcile", reconcileWorktreeSetups);
 
-      yield* Effect.logDebug("startup phase: syncing clean projects");
-      yield* runStartupPhase("projects.auto-pull", syncAutoPullProjects);
+        yield* Effect.logDebug("startup phase: syncing clean projects");
+        yield* runStartupPhase("projects.auto-pull", syncAutoPullProjects);
+      }
 
       const welcomeBase = yield* resolveWelcomeBase;
       const environment = yield* serverEnvironment.getDescriptor;

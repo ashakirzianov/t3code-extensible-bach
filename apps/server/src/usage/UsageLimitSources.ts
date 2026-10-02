@@ -34,6 +34,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import * as ServerConfig from "../config.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { makeCliproxyApi } from "./cliproxyApi.ts";
 
@@ -136,33 +137,39 @@ export const make = Effect.gen(function* () {
       return result;
     }).pipe(refreshLock.withPermits(1));
 
-  // Settings edits re-read straight away so a new hub shows up without
-  // waiting for the interval, and a removed one leaves the list.
-  yield* settingsService.streamChanges.pipe(
-    Stream.map((settings) => settings.usageLimitSources),
-    Stream.changes,
-    Stream.runForEach(() => refresh),
-    Effect.forkScoped,
-  );
+  // An inert server (`ServerConfig.inert`) polls no hub: the list stays empty.
+  if (!(yield* ServerConfig.isInert)) {
+    // Settings edits re-read straight away so a new hub shows up without
+    // waiting for the interval, and a removed one leaves the list.
+    yield* settingsService.streamChanges.pipe(
+      Stream.map((settings) => settings.usageLimitSources),
+      Stream.changes,
+      Stream.runForEach(() => refresh),
+      Effect.forkScoped,
+    );
 
-  const interval = settingsService.getSettings.pipe(
-    Effect.map(
-      (settings) => resolveServerBackgroundActivitySettings(settings).providerHealthRefreshInterval,
-    ),
-    Effect.orElseSucceed(() => DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL),
-  );
-  yield* Effect.forever(
-    interval.pipe(
-      Effect.flatMap((wait) =>
-        Effect.sleep(Duration.toMillis(Duration.fromInputUnsafe(wait)) <= 0 ? "60 seconds" : wait),
+    const interval = settingsService.getSettings.pipe(
+      Effect.map(
+        (settings) =>
+          resolveServerBackgroundActivitySettings(settings).providerHealthRefreshInterval,
       ),
-      Effect.andThen(backgroundPolicy.shouldRunScopeWork({ type: "provider-status" })),
-      Effect.flatMap((shouldRun) => (shouldRun ? refresh : Effect.void)),
-      Effect.ignoreCause({ log: true }),
-    ),
-  ).pipe(Effect.forkScoped);
+      Effect.orElseSucceed(() => DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL),
+    );
+    yield* Effect.forever(
+      interval.pipe(
+        Effect.flatMap((wait) =>
+          Effect.sleep(
+            Duration.toMillis(Duration.fromInputUnsafe(wait)) <= 0 ? "60 seconds" : wait,
+          ),
+        ),
+        Effect.andThen(backgroundPolicy.shouldRunScopeWork({ type: "provider-status" })),
+        Effect.flatMap((shouldRun) => (shouldRun ? refresh : Effect.void)),
+        Effect.ignoreCause({ log: true }),
+      ),
+    ).pipe(Effect.forkScoped);
 
-  yield* refresh.pipe(Effect.forkScoped);
+    yield* refresh.pipe(Effect.forkScoped);
+  }
 
   return {
     current: Ref.get(stateRef),
