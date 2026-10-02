@@ -51,6 +51,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
+import * as ServerConfig from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { BUILT_IN_DRIVERS, type BuiltInDriversEnv } from "../builtInDrivers.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
@@ -165,8 +166,13 @@ export const ProviderInstanceRegistryHydrationLive: Layer.Layer<
         ? ({} as ProviderInstanceConfigMap)
         : deriveProviderInstanceConfigMap(initialSettings);
 
+    // An inert server (`ServerConfig.inert`) builds no driver at all: every
+    // configured instance lands in the registry's "unavailable" branch, so no
+    // adapter, probe, auth check, usage poll, text generation or session can
+    // exist. One choke point instead of a guard per provider.
+    const inert = yield* ServerConfig.isInert;
     const mutableLayer = ProviderInstanceRegistryMutableLayer({
-      drivers: BUILT_IN_DRIVERS,
+      drivers: inert ? [] : BUILT_IN_DRIVERS,
       configMap: initialConfigMap,
     });
 

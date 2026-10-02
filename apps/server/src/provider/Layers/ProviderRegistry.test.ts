@@ -2369,6 +2369,78 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         }),
       );
 
+      // An inert server (`ServerConfig.inert`) builds no driver: an enabled
+      // instance is listed as unavailable and nothing is spawned for it.
+      it.effect("builds no provider and spawns nothing on an inert server", () =>
+        Effect.gen(function* () {
+          const missingBinary = `t3code_codex_inert_`;
+          const spawnedCommands: Array<string> = [];
+          const serverSettings = yield* makeMutableServerSettingsService(
+            decodeServerSettings(
+              deepMerge(encodedDefaultServerSettings, {
+                providers: {
+                  codex: { enabled: true, binaryPath: missingBinary },
+                  claudeAgent: { enabled: false },
+                  cursor: { enabled: false },
+                  grok: { enabled: false },
+                  opencode: { enabled: false },
+                },
+              }),
+            ),
+          );
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          const providerRegistryLayer = ProviderRegistryLive.pipe(
+            Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+            Layer.provideMerge(AntigravityInstallation.layer),
+            Layer.provideMerge(
+              Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
+            ),
+            Layer.updateService(ServerConfig.ServerConfig, (config) => ({
+              ...config,
+              inert: true,
+            })),
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), {
+                prefix: "t3-provider-registry-inert-",
+              }),
+            ),
+            Layer.provideMerge(TestHttpClientLive),
+            Layer.provideMerge(
+              Layer.succeed(
+                ProviderEventLoggers.ProviderEventLoggers,
+                ProviderEventLoggers.NoOpProviderEventLoggers,
+              ),
+            ),
+            Layer.provideMerge(ModelManifest.layerTest),
+            Layer.provideMerge(ResetCreditCoordinator.layerTest),
+            Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
+            Layer.updateService(ChildProcessSpawner.ChildProcessSpawner, (spawner) =>
+              ChildProcessSpawner.make((command) => {
+                if (command._tag === "StandardCommand") spawnedCommands.push(command.command);
+                return spawner.spawn(command);
+              }),
+            ),
+            Layer.provideMerge(NodeServices.layer),
+            Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
+          );
+          const runtimeServices = yield* Layer.build(providerRegistryLayer).pipe(
+            Scope.provide(scope),
+          );
+
+          yield* Effect.gen(function* () {
+            const instances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+            for (let attempts = 0; attempts < 50; attempts += 1) yield* Effect.yieldNow;
+            assert.deepStrictEqual(yield* instances.listInstances, []);
+            const unavailable = (yield* instances.listUnavailable).map((provider) =>
+              String(provider.instanceId),
+            );
+            assert.include(unavailable, "codex");
+            assert.deepStrictEqual(spawnedCommands, []);
+          }).pipe(Effect.provide(runtimeServices));
+        }),
+      );
+
       // A binary path change must rebuild Codex and publish its new probe result.
       it.effect("re-probes when settings change the codex binaryPath", () =>
         Effect.gen(function* () {

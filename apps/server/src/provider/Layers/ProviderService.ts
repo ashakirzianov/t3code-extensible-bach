@@ -1402,8 +1402,17 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     );
   });
 
+  // An inert server (`ServerConfig.inert`) builds no provider driver, so no
+  // adapter exists to start or send on; this says so before anything is tried.
+  const inertRefusal = (operation: string) =>
+    new ProviderValidationError({
+      operation,
+      issue: "This server is inert: it runs no provider session.",
+    });
+
   const startSession: ProviderServiceMethod<"startSession"> = Effect.fn("startSession")(
     function* (threadId, rawInput) {
+      if (serverConfig.inert === true) return yield* inertRefusal("ProviderService.startSession");
       const parsed = yield* decodeInputOrValidationError({
         operation: "ProviderService.startSession",
         schema: ProviderSessionStartInput,
@@ -1575,6 +1584,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   );
 
   const sendTurn: ProviderServiceMethod<"sendTurn"> = Effect.fn("sendTurn")(function* (rawInput) {
+    if (serverConfig.inert === true) return yield* inertRefusal("ProviderService.sendTurn");
     const parsed = yield* decodeInputOrValidationError({
       operation: "ProviderService.sendTurn",
       schema: ProviderSendTurnInput,
