@@ -995,18 +995,22 @@ const makeServerLayer = Layer.unwrap(
       HeapSnapshot.layer,
     );
 
+    // On an inert server every spawn passes through a gate that lets only an
+    // extension's `node` through (`process/inertSpawner.ts`). It sits twice:
+    // `NodeHttpServer.layer` re-exports `NodeServices`, so the layers above
+    // `HttpServerLive` would otherwise see its ungated spawner, not the lower gate.
+    const inertGate = config.inert === true ? InertSpawner.layer : Layer.empty;
     return serverApplicationLayer.pipe(
       Layer.provideMerge(runtimeServicesLive),
       Layer.provide(activationLayer),
       Layer.provideMerge(serverRelayBrokerTracingLayer),
+      Layer.provideMerge(inertGate),
       Layer.provideMerge(HttpServerLive),
       Layer.provide(ApplicationObservabilityLive),
       Layer.provideMerge(FetchHttpClient.layer),
       // PR reads, Git operations, and WebSocket discovery share one process limiter.
       Layer.provide(VcsProcess.layer),
-      // On an inert server every spawn above passes through a gate that lets
-      // only an extension's `node` through (`process/inertSpawner.ts`).
-      Layer.provideMerge(config.inert === true ? InertSpawner.layer : Layer.empty),
+      Layer.provideMerge(inertGate),
       Layer.provideMerge(PlatformServicesLive),
     );
   }),
