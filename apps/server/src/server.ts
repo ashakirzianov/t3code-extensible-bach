@@ -652,7 +652,9 @@ const makeServerLayer = Layer.unwrap(
     const routesReady = yield* Deferred.make<void>();
     const launcherLayer = ServiceLauncherClient.layer;
 
-    yield* fixPath();
+    // An inert server spawns nothing a login PATH would serve, and must not run
+    // the user's shell rc (`$SHELL -ilc`) to learn one.
+    if (config.inert !== true) yield* fixPath();
 
     const httpListeningLayer = Layer.effectDiscard(
       Effect.gen(function* () {
