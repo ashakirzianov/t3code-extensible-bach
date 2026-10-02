@@ -12,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as LogLevel from "effect/LogLevel";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -107,6 +108,14 @@ export class ServerConfig extends Context.Service<
      * settings entries are read separately and win by name.
      */
     readonly extensionLaunchFlags?: ReadonlyArray<ExtensionLaunchFlag> | undefined;
+    /**
+     * `--inert` / `T3CODE_INERT`: a server on a copy of someone's live state,
+     * there to be looked at. It starts no provider (no session, probe, model
+     * call or continuation), spawns no process but an extension's `node`,
+     * runs no background reactor, and links no cloud tunnel — so the copied
+     * threads, worktrees and identity are never acted on. Absent is false.
+     */
+    readonly inert?: boolean | undefined;
   }
 >()("t3/config/ServerConfig") {
   /** @deprecated Import and use `layerTest` from this module. */
@@ -117,6 +126,15 @@ export class ServerConfig extends Context.Service<
 }
 
 export const make = (config: ServerConfig["Service"]) => ServerConfig.of(config);
+
+/**
+ * Whether this server is inert (`ServerConfig.inert`). Read as an option so a
+ * layer that checks it needs no new requirement; with no config in scope —
+ * only ever a test — it is not inert.
+ */
+export const isInert: Effect.Effect<boolean> = Effect.serviceOption(ServerConfig).pipe(
+  Effect.map((config) => Option.isSome(config) && config.value.inert === true),
+);
 
 /**
  * Resource attributes shared by every OTLP exporter, so traces, metrics, and

@@ -53,6 +53,12 @@ const noBrowserFlag = Flag.Boolean("no-browser").pipe(
   Flag.withDescription("Disable automatic browser opening."),
   Flag.optional,
 );
+const inertFlag = Flag.Boolean("inert").pipe(
+  Flag.withDescription(
+    "Serve a copy of live state without acting on it: no provider sessions, probes or model calls, no spawned processes but extensions, no background reactors, no cloud link (equivalent to T3CODE_INERT).",
+  ),
+  Flag.optional,
+);
 const bootstrapFdFlag = Flag.Int("bootstrap-fd").pipe(
   Flag.withSchema(Schema.Int),
   Flag.withDescription("Read one-time bootstrap secrets from the given file descriptor."),
@@ -154,6 +160,7 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  inert: Config.Boolean("T3CODE_INERT").pipe(Config.option, Config.map(Option.getOrUndefined)),
   bootstrapFd: Config.Int("T3CODE_BOOTSTRAP_FD").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -210,6 +217,7 @@ export interface CliServerFlags {
   readonly tailscaleServeEnabled: Option.Option<boolean>;
   readonly tailscaleServePort: Option.Option<number>;
   readonly extension?: Readonly<Record<string, string>>;
+  readonly inert?: Option.Option<boolean>;
 }
 
 export interface CliAuthLocationFlags {
@@ -245,6 +253,7 @@ export const sharedServerCommandFlags = {
   tailscaleServeEnabled: tailscaleServeFlag,
   tailscaleServePort: tailscaleServePortFlag,
   extension: extensionFlag,
+  inert: inertFlag,
 } as const;
 
 const resolveOptionPrecedence = <Value>(
@@ -289,6 +298,7 @@ export const resolveServerConfig = (
       tailscaleServeEnabled: flags.tailscaleServeEnabled ?? Option.none(),
       tailscaleServePort: flags.tailscaleServePort ?? Option.none(),
       extension: flags.extension ?? {},
+      inert: flags.inert ?? Option.none(),
     } satisfies CliServerFlags;
     const bootstrapFd = Option.getOrUndefined(normalizedFlags.bootstrapFd) ?? env.bootstrapFd;
     const bootstrapEnvelope =
@@ -364,8 +374,14 @@ export const resolveServerConfig = (
     const desktopTelemetryFd = bootstrap?.desktopTelemetryFd;
     const desktopTelemetryControlFd = bootstrap?.desktopTelemetryControlFd;
     const resourceMonitorPath = bootstrap?.resourceMonitorPath;
+    const inert = Option.getOrElse(
+      resolveOptionPrecedence(normalizedFlags.inert, Option.fromUndefinedOr(env.inert)),
+      () => false,
+    );
     const autoBootstrapProjectFromCwd = Option.getOrElse(
       resolveOptionPrecedence(
+        // An inert server makes no project of its own: it is a copy, looked at.
+        inert ? Option.some(false) : Option.none(),
         Option.fromUndefinedOr(options?.forceAutoBootstrapProjectFromCwd),
         isHeadlessStartup ? Option.some(false) : Option.none(),
         normalizedFlags.autoBootstrapProjectFromCwd,
@@ -382,6 +398,7 @@ export const resolveServerConfig = (
     );
     const tailscaleServeEnabled = Option.getOrElse(
       resolveOptionPrecedence(
+        inert ? Option.some(false) : Option.none(),
         normalizedFlags.tailscaleServeEnabled,
         Option.fromUndefinedOr(env.tailscaleServeEnabled),
         Option.fromUndefinedOr(bootstrap?.tailscaleServeEnabled),
@@ -476,6 +493,7 @@ export const resolveServerConfig = (
       // A malformed flag is reported and skipped rather than failing startup:
       // the server the user is trying to reach must still come up.
       extensionLaunchFlags: extensionLaunchFlagsFromRecord(normalizedFlags.extension ?? {}),
+      ...(inert ? { inert } : {}),
     };
 
     return config;

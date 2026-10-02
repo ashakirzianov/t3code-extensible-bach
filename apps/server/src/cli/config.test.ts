@@ -839,6 +839,54 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     }),
   );
 
+  it.effect(
+    "an inert server is inert from env or flag, and links no tailnet and makes no project",
+    () =>
+      Effect.gen(function* () {
+        const { join } = yield* Path.Path;
+        const baseDir = join(NodeOS.tmpdir(), "t3-cli-config-inert-base");
+        const flags = (inert: Option.Option<boolean>) => ({
+          mode: Option.some("web" as const),
+          port: Option.some(3773),
+          host: Option.none(),
+          baseDir: Option.some(baseDir),
+          cwd: Option.none(),
+          devUrl: Option.none(),
+          noBrowser: Option.some(true),
+          bootstrapFd: Option.none(),
+          autoBootstrapProjectFromCwd: Option.some(true),
+          logWebSocketEvents: Option.none(),
+          tailscaleServeEnabled: Option.some(true),
+          tailscaleServePort: Option.none(),
+          inert,
+        });
+        const withEnv = (env: Record<string, string>) =>
+          Effect.provide(
+            Layer.mergeAll(ConfigProvider.layer(ConfigProvider.fromEnv({ env })), NetService.layer),
+          );
+
+        const fromEnv = yield* resolveServerConfig(flags(Option.none()), Option.none()).pipe(
+          withEnv({ T3CODE_INERT: "true" }),
+        );
+        expect(fromEnv.inert).toBe(true);
+        expect(fromEnv.tailscaleServeEnabled).toBe(false);
+        expect(fromEnv.autoBootstrapProjectFromCwd).toBe(false);
+
+        const fromFlag = yield* resolveServerConfig(flags(Option.some(true)), Option.none()).pipe(
+          withEnv({}),
+        );
+        expect(fromFlag.inert).toBe(true);
+
+        // The flag wins over the env, as every other flag does.
+        const overridden = yield* resolveServerConfig(
+          flags(Option.some(false)),
+          Option.none(),
+        ).pipe(withEnv({ T3CODE_INERT: "true" }));
+        expect(overridden.inert).toBeUndefined();
+        expect(overridden.tailscaleServeEnabled).toBe(true);
+      }),
+  );
+
   it.effect("decodes percent-encoded OTLP headers from env", () =>
     Effect.gen(function* () {
       const { join } = yield* Path.Path;
